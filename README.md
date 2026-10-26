@@ -138,4 +138,18 @@ Full detail, coverage table and the list of what is *not* verified:
 
 ## 6. License
 
-No license file is included — add the one you want before publishing.
+Dual-licensed under either of
+
+* MIT License (`LICENSE-MIT`)
+* Apache License, Version 2.0 (`LICENSE-APACHE`)
+
+at your option. You choose whichever licence suits you; you do not have to comply
+with both. This is the same arrangement the Rust project uses.
+
+`SPDX-License-Identifier: MIT OR Apache-2.0`
+
+The Apache-2.0 option carries an explicit patent grant, which is why it is the
+usual choice for hardware designs. The MIT option is shorter and simpler. Unless
+you explicitly state otherwise, any contribution you intentionally submit for
+inclusion in this work shall be dual-licensed as above, with no additional terms
+or conditions.
