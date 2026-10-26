@@ -192,6 +192,37 @@ CSRs at `0x7C0`-`0x7C2` are arbitrated with the machine CSR file.
 2.0 x 3.0 exactly and reading back 6.0, both bridges, `ncfg` reading its reset
 value 0x2020, and `nflags` clean.
 
+The numeric path is now exercised by **ten in-CPU tests** plus the standalone
+vector suite, and all pass:
+
+| Test | Covers |
+| --- | --- |
+| `test_numeric_abi` | mul, add, both bridges, quire, CSRs |
+| `test_numeric_arith_in_cpu` | QADD, QSUB, QMUL |
+| `test_numeric_saturation` | overflow with the saturate bit clamps to INT64_MAX |
+| `test_numeric_quire_multi` | two exact accumulations then one read |
+| `test_numeric_adaptive_truncation` | prec=40 truncation + inexact flag |
+| `test_numeric_adaptive_round` | round-half-up carries into the kept bits |
+| `test_numeric_flags_w1c` | sticky flags cleared by writing ones |
+| `test_numeric_error_tracking` | `nerr` reports the dropped bits |
+| `test_numeric_reserved_op_invalid` | a reserved opcode raises the invalid flag |
+| `test_numeric_cfg_rw` | `ncfg` writes and reads back |
+
+Two further defects were found by this suite:
+
+* **`nerr` lagged by one operation.** The numeric CSR latched the unit's
+  *registered* error at the same edge that register updated, so `nerr` always
+  showed the previous operation's bound. The unit now also exports the current
+  bound combinationally (`err_cur`) and the CSR latches that.
+* **The saturation rail was taken from the wrapped sum.** `add_ext[63]` is the
+  sign of the *overflowed* result, so a too-large positive sum saturated to
+  INT64_MIN instead of INT64_MAX. The rail now comes from the operand signs, in
+  the RTL and in the Python model that had encoded the same mistake.
+
+Also fixed: `tb_num_top.sv` never drove the unit's one-shot `op_valid`, so the
+error register never advanced and the standalone suite reported 73 mismatches
+until the testbench asserted it.
+
 Two defects were found during integration:
 
 * **Interlock deadlock.** The stall tested `ex_mem_is_num` without its stage

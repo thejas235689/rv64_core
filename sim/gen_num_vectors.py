@@ -97,7 +97,14 @@ def model(op, a, b, cfg, quire, err_q):
         ovf = ((ext >> 64) & 1) != ((ext >> 63) & 1)
         y = ext & M64
         if ovf and f["sat"]:
-            y = (1 << 63) if (ext >> 63) & 1 else (1 << 63) - 1
+            # The rail comes from the OPERAND signs, not from the extended
+            # result: on a positive overflow the wrapped result has its sign bit
+            # set, so testing ext[63] saturates a too-large positive sum to
+            # INT64_MIN. The RTL had the same defect and was fixed with it.
+            a_neg = (opa >> 63) & 1
+            b_neg = (opb >> 63) & 1
+            neg = (a_neg and b_neg) if op == QADD else (a_neg and not b_neg)
+            y = (1 << 63) if neg else (1 << 63) - 1
         if ovf:
             flags |= 1 << 0                      # FLAG_OVERFLOW
             if f["sat"]:

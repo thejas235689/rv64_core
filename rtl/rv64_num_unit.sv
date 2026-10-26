@@ -31,7 +31,8 @@ module rv64_num_unit (
 
   output logic [63:0] y,
   output logic [7:0]  flags,      // per-operation flags, not sticky
-  output logic [63:0] err,        // error bound of this operation
+  output logic [63:0] err,
+  output logic [63:0] err_cur,   // this operation's bound, unregistered        // error bound of this operation
 
   output logic [127:0] quire      // exact accumulator
 );
@@ -102,12 +103,15 @@ module rv64_num_unit (
 
   always_comb begin
     // the sign bit of the truncated result says which rail to saturate to
-    if (add_ovf && cfg_sat) qadd_y = add_ext[63] ? 64'h8000_0000_0000_0000
-                                                 : 64'h7FFF_FFFF_FFFF_FFFF;
+    // The rail comes from the operands, not from the sum: on a positive
+    // overflow the wrapped sum has its sign bit set, so testing add_ext[63]
+    // would saturate a too-large positive result to INT64_MIN.
+    if (add_ovf && cfg_sat) qadd_y = (opa[63] && opb[63]) ? 64'h8000_0000_0000_0000
+                                                         : 64'h7FFF_FFFF_FFFF_FFFF;
     else qadd_y = add_ext[63:0];
 
-    if (sub_ovf && cfg_sat) qsub_y = sub_ext[63] ? 64'h8000_0000_0000_0000
-                                                 : 64'h7FFF_FFFF_FFFF_FFFF;
+    if (sub_ovf && cfg_sat) qsub_y = (opa[63] && !opb[63]) ? 64'h8000_0000_0000_0000
+                                                           : 64'h7FFF_FFFF_FFFF_FFFF;
     else qsub_y = sub_ext[63:0];
   end
 
@@ -170,6 +174,7 @@ module rv64_num_unit (
   // ---- error bound of the last operation -----------------------------------
   logic [63:0] err_q;
   logic [63:0] err_now;
+  assign err_cur = err_now;
 
   always_comb begin
     err_now = 64'd0;

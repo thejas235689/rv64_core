@@ -209,8 +209,9 @@ Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
   UVM mode, so the run needs ~1000 s and cannot finish inside one simulation call.
   The same sweep passes against the core through the cocotb harness (24,861
   retirements, zero mismatches).
-* **29 cocotb tests pass** across three suites: 22 core (including the numeric ABI
-  and Xcetask reached from executed instructions), 5 PMP unit, 2 PLIC unit. The
+* **32 cocotb tests pass** across three suites: 25 core (including ten numeric-ABI tests and
+  Xcetask reached from executed instructions), 5 PMP unit, 2 PLIC unit. The
+  standalone numeric vector suite adds 4548 checks with zero mismatches. The
   UVM environment adds a class-based agent (driver owns the memory model,
   backpressure and error injection), an observability monitor, a scoreboard
   comparing the full retirement and trap streams against golden vectors from the

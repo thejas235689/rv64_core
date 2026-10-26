@@ -22,6 +22,11 @@ module tb_num_top;
   logic [4:0]   op;
   logic [2:0]   fmt;
   logic [63:0]  a, b, cfg;
+  // each vector is one executed operation, so the unit's one-shot execute
+  // qualifier is held high: one vector spans exactly one clock, and therefore
+  // exactly one posedge, so the quire and error register advance once per
+  // vector. Without this the stateful registers never update at all.
+  logic         op_valid;
   logic [63:0]  y, err;
   logic [7:0]   flags;
   logic [127:0] quire;
@@ -42,9 +47,11 @@ module tb_num_top;
     .a     (a),
     .b     (b),
     .cfg   (cfg),
+    .op_valid (op_valid),
     .y     (y),
     .flags (flags),
     .err   (err),
+    .err_cur (),
     .quire (quire)
   );
 
@@ -64,7 +71,7 @@ module tb_num_top;
     n = nvec[0];
     $display("tb_num_top: %0d vectors", n);
 
-    op = 0; fmt = 0; a = 0; b = 0; cfg = 0;
+    op = 0; fmt = 0; a = 0; b = 0; cfg = 0; op_valid = 1'b1;
     repeat (3) @(posedge clk);
     rst_n = 1'b1;
     repeat (2) @(posedge clk);

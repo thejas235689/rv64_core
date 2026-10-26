@@ -287,7 +287,7 @@ module riscv_core_top #(
   // ===========================================================================
   logic [63:0] nrf_rs1_data, nrf_rs2_data;
   logic [63:0] nrs1_data, nrs2_data;
-  logic [63:0] num_y, num_err, num_cfg;
+  logic [63:0] num_y, num_err, num_err_cur, num_cfg;
   logic [7:0]  num_flags;
   logic [127:0] num_quire;
   logic        num_csr_valid;
@@ -365,6 +365,7 @@ module riscv_core_top #(
     .y     (num_y),
     .flags (num_flags),
     .err   (num_err),
+    .err_cur (num_err_cur),
     .quire (num_quire)
   );
 
@@ -382,7 +383,7 @@ module riscv_core_top #(
     .csr_valid  (num_csr_valid),
     .op_flags   (num_flags),
     .op_valid   (num_exec),
-    .op_err     (num_err),
+    .op_err     (num_err_cur),
     .ncfg_o     (num_cfg)
   );
 
