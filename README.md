@@ -64,11 +64,16 @@ rv64_core/
 │   ├── rv64_bpu.sv              tournament branch predictor, BTB, RAS
 │   ├── rv64_fetch.sv            fetch buffer + instruction interface
 │   ├── rv64_plic_lite.sv        4-source interrupt controller
+│   ├── rv64_num_pkg.sv          custom numeric ABI: opcodes, cfg/flag layout
+│   ├── rv64_numfile.sv          32 x 64-bit numeric register bank
+│   ├── rv64_num_unit.sv         numeric datapath: fixed-Q, quire, adaptive, error
+│   ├── rv64_num_csr.sv          ncfg / nflags / nerr CSRs
 │   └── riscv_core_top.sv        pipeline top level
 ├── tb/
 │   ├── tb_core_top.sv           core harness: memory, host load, backpressure, error injection
 │   ├── tb_plic_top.sv           PLIC-lite harness
 │   ├── tb_pmp_top.sv            PMP matcher harness
+│   ├── tb_num_top.sv            numeric unit testbench (vector-driven)
 │   ├── tb_uvm_top.sv            UVM testbench top level
 │   ├── uvm/                     UVM environment: interface, agent, monitors,
 │   │                            scoreboard, coverage, sequences, tests
@@ -81,6 +86,7 @@ rv64_core/
 ├── sim/
 │   ├── run.py                   build + run without make
 │   ├── Makefile                 same flow via cocotb's Makefile.sim
+│   ├── gen_num_vectors.py       numeric reference model + unit vectors
 │   ├── gen_uvm_vectors.py       golden vectors for the UVM scoreboard, from the ISS
 │   ├── run_uvm.sh               UVM regression (needs a UVM-capable simulator)
 │   ├── synth.sh                 sv2v + Yosys generic synthesis flow
@@ -160,7 +166,35 @@ warnings.
 Full detail, coverage table and the list of what is *not* verified:
 `docs/VERIFICATION_REPORT.md`.
 
-## 6. Synthesis
+## 6. Custom numeric ABI (in progress)
+
+A separate numeric side to the machine: its own 32 x 64-bit register bank
+(`rv64_numfile.sv`), its own arithmetic datapath (`rv64_num_unit.sv`) and its own
+configuration and sticky-flag CSRs (`rv64_num_csr.sv`, at `0x7C0`-`0x7C2`).
+
+Implemented and verified (1137 vectors, 4548 checks, zero mismatches):
+
+* **Fixed-Q Q32.32** add / subtract / multiply, with configurable rounding
+  (truncate or round-half-up), saturating or wrapping overflow, and overflow /
+  inexact / saturate flags.
+* **Quire** — a 128-bit exact accumulator. The product of two Q32.32 values is a
+  Q64.64 value and fits with no rounding, which is the property a quire exists
+  to provide. Clear, accumulate and read-back (arithmetic shift, since the quire
+  is two's complement).
+* **Adaptive precision** — truncate an operand to a configured mantissa width
+  (1..64 bits), applied standalone or to both operands of an arithmetic op.
+* **Error tracking** — per-operation error bound (the dropped bits, or half an
+  LSB when rounding), latched into `nerr`.
+* **Sticky flags** — overflow, underflow, inexact, invalid, divide-by-zero,
+  saturate, precision-loss and quire-overflow, write-one-to-clear.
+
+**Reserved but not implemented:** posit/quire-code, logarithmic (LNS), residue
+(RNS) and IEEE FP16/32/64 families. Their opcodes are fixed in `rv64_num_pkg.sv`
+and currently raise the invalid flag. The block is also **not yet wired into the
+pipeline** — there is no custom-0 decode path yet, so software cannot reach it
+from the core. Both are the next increment; see `docs/ROADMAP.md`.
+
+## 7. Synthesis
 
 Generic synthesis (sv2v 0.0.13 + Yosys 0.70), for structural sanity rather than
 timing:
@@ -176,7 +210,7 @@ levels ending at the MDU result register. There is no timing library or clock
 constraint in this flow, so **no frequency should be inferred from it** — the
 MDU multiplier is the known critical path and would need sequencing at speed.
 
-## 7. License
+## 8. License
 
 Dual-licensed under either of
 

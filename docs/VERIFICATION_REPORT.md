@@ -82,6 +82,25 @@ ISA, and closure is a P5 activity (see `PROJECT_PLAN.md`).
 | `test_plic_priority_and_threshold` | PASS | priority arbitration, enable mask, threshold, claim → in-service → complete |
 | `test_plic_config_readback` | PASS | configuration register readback |
 
+### Numeric unit (`rv64_num_unit`)
+
+```
+tb_num_top : 1137 vectors, 4548 checks, 0 mismatches   PASS
+```
+
+Vector-driven against a Python model written from the same specification
+(`sim/gen_num_vectors.py`), covering fixed-Q add/sub/mul across overflow,
+saturation and rounding boundaries, quire accumulate/read chains, adaptive
+truncation at precisions 8/16/24/32/48/63/64, error reporting, and the reserved
+families reporting invalid.
+
+One defect was found and fixed during bring-up: the adaptive-precision field was
+6 bits wide, so `prec >= 64` was vacuously true and truncation never fired. The
+field is now 7 bits.
+
+Not covered: the block is not yet instantiated in the core, so none of this is
+reachable from software. Posit, LNS, RNS and IEEE families are unimplemented.
+
 ### Generic synthesis (Yosys 0.70 via sv2v 0.0.13)
 
 First synthesis pass — P6 in `PROJECT_PLAN.md`. This is **generic** synthesis:
