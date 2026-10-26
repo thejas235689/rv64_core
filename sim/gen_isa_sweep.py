@@ -96,7 +96,13 @@ def li2(rd, v):
     return [f"lui x{rd}, {hi & 0xFFFFF}", f"addi x{rd}, x{rd}, {lo}"]
 
 
-def build_isa_program():
+def build_isa_program(small=False):
+    """small=True emits a reduced sweep (~400 instructions) that the UVM
+    wrapper can complete at its current driver throughput."""
+    n_edge   = 2 if small else len(EDGE)
+    sh_max   = 4 if small else 64
+    wsh_max  = 4 if small else 32
+    bit_max  = 4 if small else 64
     L = []
     L.append("# ---- operand pool ----")
     for i, v in enumerate(EDGE):
@@ -109,15 +115,15 @@ def build_isa_program():
     # ---- every ALU op across the operand matrix ----------------------------
     L.append("# ---- ALU: every op x operand matrix ----")
     for op in R_TYPE + R_TYPE_W + MDU_OPS:
-        for a in range(len(EDGE)):
-            for b in range(len(EDGE)):
+        for a in range(n_edge):
+            for b in range(n_edge):
                 L.append(f"{op} x{rd_for(n)}, x{POOL_BASE+a}, x{POOL_BASE+b}")
                 n += 1
 
     # ---- immediate forms across boundary immediates ------------------------
     L.append("# ---- I-type: every op x boundary immediates ----")
     for op in I_OPS:
-        for a in range(len(EDGE)):
+        for a in range(n_edge):
             for imm in (0, 1, -1, 2047, -2048):
                 L.append(f"{op} x{rd_for(n)}, x{POOL_BASE+a}, {imm}")
                 n += 1
@@ -126,17 +132,17 @@ def build_isa_program():
     L.append("# ---- shifts: every immediate amount 0..63 ----")
     for op in ["slli", "srli", "srai", "rori"]:
         for a in range(3):
-            for s in range(64):
+            for s in range(sh_max):
                 L.append(f"{op} x{rd_for(n)}, x{POOL_BASE+a}, {s}")
                 n += 1
     for op in ["slliw", "srliw", "sraiw"]:
         for a in range(3):
-            for s in range(32):
+            for s in range(wsh_max):
                 L.append(f"{op} x{rd_for(n)}, x{POOL_BASE+a}, {s}")
                 n += 1
     L.append("# ---- shifts: register amounts from the shift pool ----")
     for op in ["sll", "srl", "sra", "rol", "ror"]:
-        for a in range(len(EDGE)):
+        for a in range(n_edge):
             for si in range(len(SHAMTS)):
                 L.append(f"{op} x{rd_for(n)}, x{POOL_BASE+a}, x{SH_BASE+si}")
                 n += 1
@@ -145,12 +151,12 @@ def build_isa_program():
     L.append("# ---- single-bit: every index 0..63 (immediate forms) ----")
     for op in SINGLE_BIT_IMM:
         for a in range(3):
-            for b in range(64):
+            for b in range(bit_max):
                 L.append(f"{op} x{rd_for(n)}, x{POOL_BASE+a}, {b}")
                 n += 1
     L.append("# ---- single-bit: register forms over the shift pool ----")
     for op in ["bset", "bclr", "binv", "bext"]:
-        for a in range(len(EDGE)):
+        for a in range(n_edge):
             for si in range(len(SHAMTS)):
                 L.append(f"{op} x{rd_for(n)}, x{POOL_BASE+a}, x{SH_BASE+si}")
                 n += 1
@@ -158,7 +164,7 @@ def build_isa_program():
     # ---- unary ops over the operand matrix --------------------------------
     L.append("# ---- unary ops ----")
     for op in UNARY:
-        for a in range(len(EDGE)):
+        for a in range(n_edge):
             L.append(f"{op} x{rd_for(n)}, x{POOL_BASE+a}")
             n += 1
 
@@ -343,6 +349,10 @@ def main():
     isa_words, _ = assemble(isa_src)
     # the sweep is straight-line: one pass retires almost every instruction
     emit("isa", isa_src, max_retire=len(isa_words) - 1)
+
+    small_src = with_handler(build_isa_program(small=True))
+    small_words, _ = assemble(small_src)
+    emit("isa_small", small_src, max_retire=len(small_words) - 1)
 
     ill_src = with_handler(build_illegal_program())
     ill_words, _ = assemble(ill_src)

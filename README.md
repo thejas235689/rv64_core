@@ -158,8 +158,11 @@ Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
   correct and `!=` is the operator that misbehaves here. What blocks the ISA
   wrapper is throughput -- the driver delivers ~3250 simulated cycles per retired
   instruction, so a 4444-retirement run needs ~14M cycles and cannot finish in
-  one call. Fixing the driver is the next item.
-* **7 UVM tests: 6 pass, 1 is throughput-blocked.** `rv64_illegal_test` (120 unimplemented
+  one call. A reduced-size variant of the same sweep (`rv64_isa_small_test`,
+  780 retirements) **passes** through the UVM wrapper, so the wrapper itself is
+  proven; only the full 4444-retirement run is out of reach at this driver
+  speed. Fixing the driver is the next item.
+* **8 UVM tests: 7 pass, 1 is throughput-blocked.** `rv64_illegal_test` (120 unimplemented
   encodings, each expected to trap) passes and in doing so found two real
   defects: MRET/EBREAK let the younger instruction advance into MEM and execute
   on the wrong path, and OP-IMM-32 accepted funct3=7 as `srliw`. Both are fixed.

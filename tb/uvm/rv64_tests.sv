@@ -114,6 +114,16 @@ class rv64_isa_test extends rv64_base_test;
   endfunction
 endclass
 
+// ---- reduced ISA sweep, sized to complete at the driver's throughput ------
+class rv64_isa_small_test extends rv64_base_test;
+  `uvm_component_utils(rv64_isa_small_test)
+  function new(string name = "rv64_isa_small_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/isa_small";
+    max_cycles = 200000;
+  endfunction
+endclass
+
 // ---- negative sweep: every unimplemented encoding must trap ---------------
 class rv64_illegal_test extends rv64_base_test;
   `uvm_component_utils(rv64_illegal_test)
