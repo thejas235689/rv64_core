@@ -1,4 +1,4 @@
-name: regression
+name: CI
 
 on:
   push:
@@ -7,46 +7,72 @@ on:
   workflow_dispatch:
 
 jobs:
-  simulate:
+  regression:
+    name: cocotb regression (Icarus)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install simulator
-        run: |
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends iverilog
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
+      - name: Install oss-cad-suite (Icarus, Yosys)
+        run: ./ci/install-oss-cad-suite.sh "$HOME/ocs/oss-cad-suite"
+
       - name: Install cocotb
         run: pip install cocotb
 
-      - name: Report tool versions
-        run: |
-          iverilog -V | head -1
-          python -c "import cocotb; print('cocotb', cocotb.__version__)"
-
-      - name: Lint (Icarus, -Wall)
-        run: |
-          iverilog -g2012 -Wall -o /dev/null -s riscv_core_top \
-            rtl/rv64_pkg.sv rtl/rv64_alu.sv rtl/rv64_mdu.sv rtl/rv64_regfile.sv \
-            rtl/rv64_decoder.sv rtl/rv64_pmp.sv rtl/rv64_csr.sv rtl/rv64_lsu.sv \
-            rtl/rv64_bpu.sv rtl/rv64_fetch.sv rtl/rv64_plic_lite.sv \
-            rtl/riscv_core_top.sv
-
       - name: Core regression
         run: python3 sim/run.py
+        env:
+          PATH: ${{ env.HOME }}/ocs/oss-cad-suite/bin:${{ env.PATH }}
 
-      - name: PLIC-lite regression
+      - name: PMP unit
+        run: python3 sim/run.py --suite pmp
+
+      - name: PLIC unit
         run: python3 sim/run.py --suite plic
 
-      - name: Upload results
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Elaborate the core
+        run: |
+          export PATH="$HOME/ocs/oss-cad-suite/bin:$PATH"
+          iverilog -g2012 -o /tmp/core.vvp -s riscv_core_top rtl/*.sv
+
+  uvm:
+    name: UVM regression (xezim)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
         with:
-          name: cocotb-results
-          path: sim/**/results.xml
-          if-no-files-found: ignore
+          python-version: "3.12"
+
+      - name: Install xezim
+        run: ./ci/install-xezim.sh "$HOME/xezim"
+
+      - name: Generate golden vectors
+        run: |
+          python3 sim/gen_uvm_vectors.py
+          python3 sim/gen_isa_sweep.py
+
+      - name: UVM regression
+        run: bash sim/run_uvm.sh
+        env:
+          XEZIM: ${{ env.HOME }}/xezim/bin/xezim
+          UVM_HOME: ${{ env.HOME }}/xezim/share/uvm/src
+
+  synthesis:
+    name: Synthesis (sv2v + Yosys)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install oss-cad-suite
+        run: ./ci/install-oss-cad-suite.sh "$HOME/ocs/oss-cad-suite"
+
+      - name: Synthesize
+        run: ./sim/synth.sh
+        env:
+          PATH: ${{ env.HOME }}/ocs/oss-cad-suite/bin:${{ env.PATH }}

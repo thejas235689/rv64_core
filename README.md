@@ -1,8 +1,42 @@
-# rv64_core — RV64IM machine-mode core with a self-checking verification environment
+Licensed under either of Apache License, Version 2.0 or MIT license at your option.
 
-A synthesizable 64-bit RISC-V core and the cocotb verification environment that
-proves it correct, delivered as a project tree you can build, simulate and push
-to a private repository as-is.
+# rv64_core
+
+[![CI](https://github.com/thejas235689/rv64_core/actions/workflows/ci.yml/badge.svg)](https://github.com/thejas235689/rv64_core/actions/workflows/ci.yml)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#9-license)
+
+**rv64_core** is a synthesizable 64-bit RISC-V core and the verification
+environment that proves it correct. Five-stage in-order, RV64IM with Zicsr and
+the ratified bit-manipulation extensions, machine mode only, plus two custom
+blocks: a 32x64-bit numeric register bank with fixed-Q arithmetic, an exact
+128-bit quire and sticky-flag CSRs, and bounded custom task slots with a
+completion/timeout lifecycle and an optional completion interrupt.
+
+Two regressions ship with it. A cocotb harness on Icarus drives every retirement
+against a Python ISA model — the model is the oracle, so tests assert nothing
+about expected values. A UVM environment on xezim proves the same design under a
+phase-based, transaction-level testbench with a scoreboard, constrained-random
+stimulus and request backpressure.
+
+It is a working core with honest gaps: nineteen design defects have been found and
+fixed by this verification, and what is absent is listed as absent.
+
+| | |
+|---|---|
+| Status | [`STATUS.md`](STATUS.md) — what is verified, and what is not |
+| Tour | [`TOUR.md`](TOUR.md) — ten minutes, what exists and where |
+| Feature contract | [`docs/ARCHITECTURE_FEATURE_CONTRACT.md`](docs/ARCHITECTURE_FEATURE_CONTRACT.md) |
+| Verification report | [`docs/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md) |
+| Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) — per-feature status |
+| Plan | [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) |
+| Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+
+```sh
+pip install cocotb && export PATH=/path/to/oss-cad-suite/bin:$PATH
+python3 sim/run.py                 # 22/22 PASS
+python3 sim/run.py --suite pmp     #  5/5  PASS
+python3 sim/run.py --suite plic    #  2/2  PASS
+```
 
 ---
 
