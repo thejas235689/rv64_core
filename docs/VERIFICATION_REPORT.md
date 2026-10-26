@@ -21,7 +21,24 @@ No commercial simulator, synthesis tool or STA run was performed.
 core regression   : TESTS=20  PASS=20  FAIL=0
 PMP unit tests    : TESTS=5   PASS=5   FAIL=0
 PLIC-lite tests   : TESTS=2   PASS=2   FAIL=0
+UVM regression    : TESTS=5   PASS=5   FAIL=0
 ```
+
+### UVM regression (xezim 0.11.3, UVM 1800.2-2020.3.2)
+
+| Test | Result | Scoreboard verdict |
+| --- | --- | --- |
+| `rv64_alu_test` | PASS | 44 retirements and 1 trap matched the golden vectors |
+| `rv64_mem_test` | PASS | 22 retirements and 1 trap matched |
+| `rv64_trap_test` | PASS | 30 retirements and 5 traps matched |
+| `rv64_random_test` | PASS | 148 retirements and 1 trap matched |
+| `rv64_backpressure_test` | PASS | 22 retirements and 1 trap matched under 40 % backpressure |
+
+The UVM environment reuses the Python ISS as its reference: `gen_uvm_vectors.py`
+emits the expected retirement and trap streams, and the scoreboard compares the
+DUT against them. Covergroup instance coverage ranged 52–70 % across these five
+programs, which is expected — each program exercises a different slice of the
+ISA, and closure is a P5 activity (see `PROJECT_PLAN.md`).
 
 ### Core regression
 

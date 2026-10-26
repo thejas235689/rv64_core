@@ -69,16 +69,22 @@ rv64_core/
 │   ├── tb_core_top.sv           core harness: memory, host load, backpressure, error injection
 │   ├── tb_plic_top.sv           PLIC-lite harness
 │   ├── tb_pmp_top.sv            PMP matcher harness
+│   ├── tb_uvm_top.sv            UVM testbench top level
+│   ├── uvm/                     UVM environment: interface, agent, monitors,
+│   │                            scoreboard, coverage, sequences, tests
 │   └── cocotb/
-│       ├── test_core.py         core regression (13 tests)
+│       ├── test_core.py         core regression (20 tests)
 │       ├── test_plic.py         PLIC-lite regression (2 tests)
 │       ├── test_pmp_unit.py     PMP matcher unit tests (5 tests)
 │       ├── rv64_asm.py          assembler used to build test programs
 │       └── rv64_iss.py          independent golden-model ISS
 ├── sim/
 │   ├── run.py                   build + run without make
-│   └── Makefile                 same flow via cocotb's Makefile.sim
+│   ├── Makefile                 same flow via cocotb's Makefile.sim
+│   ├── gen_uvm_vectors.py       golden vectors for the UVM scoreboard, from the ISS
+│   └── run_uvm.sh               UVM regression (needs a UVM-capable simulator)
 ├── docs/
+│   ├── PROJECT_PLAN.md          phases, exit criteria, status, risks
 │   ├── ARCHITECTURE_FEATURE_CONTRACT.md
 │   ├── TESTPLAN.md
 │   ├── VERIFICATION_REPORT.md
@@ -100,6 +106,17 @@ python3 sim/run.py --suite pmp     # PMP matcher unit tests
 python3 sim/run.py --testcase test_alu
 python3 sim/run.py --sim verilator # alternate simulator
 ```
+
+The UVM environment needs a simulator that supports UVM — Icarus and Verilator
+do not. With xezim (which ships a UVM library) and its install on `PATH`:
+
+```bash
+XEZIM=/path/to/xezim UVM_HOME=/path/to/uvm/src bash sim/run_uvm.sh
+bash sim/run_uvm.sh rv64_alu_test        # a single test
+```
+
+`run_uvm.sh` first regenerates the golden vectors with the Python ISS, then runs
+each test and reports pass/fail from the UVM error count.
 
 With `make` available, `cd sim && make` runs the same core regression.
 
@@ -123,6 +140,11 @@ Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
 * **5/5 PMP matcher unit tests pass** (TOR, NA4, NAPOT boundaries, permission
   bits, M-mode lock rule, entry priority).
 * **2/2 PLIC-lite tests pass.**
+* **5/5 UVM tests pass** under xezim 0.11.3: a class-based environment with a
+  memory agent (driver owns the memory model, backpressure and error injection),
+  an observability monitor, a scoreboard comparing the full retirement and trap
+  streams against golden vectors from the same Python ISS, and functional
+  coverage. That is 32 tests across four suites.
 * 56,698 randomly generated instructions matched the golden model across five
   seeds, in addition to the directed suites.
 * The regression found and fixed 14 real RTL bugs (see

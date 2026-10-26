@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# =============================================================================
+# run_uvm.sh -- generate golden vectors and run the UVM regression under xezim.
+#
+#   ./sim/run_uvm.sh                      # all tests
+#   ./sim/run_uvm.sh rv64_alu_test        # one test
+#
+# xezim is an open-source SystemVerilog simulator with a bundled UVM library.
+# Set XEZIM to the binary path if it is not on PATH, and UVM_HOME to the UVM
+# source directory if it is not under the xezim install.
+# =============================================================================
+set -uo pipefail
+
+ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+XEZIM="${XEZIM:-xezim}"
+UVM="${UVM_HOME:-$(dirname "$(dirname "$(command -v "$XEZIM" 2>/dev/null || echo /nonexistent)")")/share/uvm/src}"
+
+if ! command -v "$XEZIM" >/dev/null 2>&1; then
+  echo "error: xezim not found. Set XEZIM=/path/to/xezim" >&2
+  exit 1
+fi
+if [ ! -f "$UVM/uvm_pkg.sv" ]; then
+  echo "error: UVM sources not found at $UVM. Set UVM_HOME=/path/to/uvm/src" >&2
+  exit 1
+fi
+
+cd "$ROOT"
+
+echo "== generating golden vectors =="
+python3 sim/gen_uvm_vectors.py || exit 1
+
+# xezim needs a large address space in constrained containers
+ulimit -v unlimited 2>/dev/null || true
+
+TESTS=("$@")
+if [ ${#TESTS[@]} -eq 0 ]; then
+  TESTS=(rv64_alu_test rv64_mem_test rv64_trap_test rv64_random_test rv64_backpressure_test)
+fi
+
+RTL="rtl/rv64_pkg.sv rtl/rv64_alu.sv rtl/rv64_mdu.sv rtl/rv64_regfile.sv \
+rtl/rv64_decoder.sv rtl/rv64_pmp.sv rtl/rv64_csr.sv rtl/rv64_lsu.sv \
+rtl/rv64_bpu.sv rtl/rv64_fetch.sv rtl/rv64_plic_lite.sv rtl/riscv_core_top.sv"
+
+FAIL=0
+for T in "${TESTS[@]}"; do
+  echo
+  echo "== $T =="
+  OUT=$("$XEZIM" -s tb_uvm_top \
+      -I "$UVM" -I "$ROOT/tb/uvm" \
+      -D UVM_NO_DPI -D UVM_REPORT_DISABLE_FILE_LINE \
+      "$UVM/uvm_pkg.sv" $RTL \
+      tb/uvm/rv64_uvm_if.sv tb/uvm/rv64_uvm_pkg.sv tb/tb_uvm_top.sv \
+      +UVM_TESTNAME="$T" 2>&1)
+  echo "$OUT" | grep -E "UVM_(ERROR|FATAL|INFO).*(\[SB\]|\[TEST\]|\[COV\]|\[MEMDRV\])" | tail -8
+  if echo "$OUT" | grep -qE "UVM_ERROR :|UVM_FATAL :"; then
+    NERR=$(echo "$OUT" | grep -E "UVM_ERROR :" | tail -1 | awk '{print $NF}')
+    NFAT=$(echo "$OUT" | grep -E "UVM_FATAL :" | tail -1 | awk '{print $NF}')
+    if [ "${NERR:-0}" != "0" ] || [ "${NFAT:-0}" != "0" ]; then
+      echo "  RESULT: FAIL (errors=${NERR:-0} fatals=${NFAT:-0})"
+      FAIL=$((FAIL+1))
+      continue
+    fi
+  fi
+  echo "  RESULT: PASS"
+done
+
+echo
+if [ $FAIL -eq 0 ]; then
+  echo "UVM regression: PASS (${#TESTS[@]} tests)"
+else
+  echo "UVM regression: FAIL ($FAIL of ${#TESTS[@]} tests)"
+  exit 1
+fi

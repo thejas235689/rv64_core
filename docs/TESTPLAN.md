@@ -44,6 +44,36 @@ independent Python ISS in `tb/cocotb/rv64_iss.py`.
 | 34 | RAS overflow (10-deep recursion) and indirect jump target | `test_predictor_stress` | golden trace + memory | `ras_overflow`, `indirect_target` |
 | 35 | Mid-stream reset restarts at RESET_PC | `test_reset` | golden trace from pc 0 | `mid_stream_reset` |
 
+## UVM environment (`tb/uvm/`)
+
+The UVM regression reuses the same golden model, driven through a class-based
+environment. Golden vectors are produced by `sim/gen_uvm_vectors.py` from
+`tb/cocotb/rv64_iss.py`, so the scoreboard checks the DUT against the model that
+was validated separately, rather than a second hand-written copy of the ISA.
+
+| Test | Program | Checks |
+| --- | --- | --- |
+| `rv64_alu_test` | directed ALU/bitmanip/MDU mix | 44 retirements + 1 trap vs golden vectors |
+| `rv64_mem_test` | all load/store widths and lanes | 22 retirements + 1 trap |
+| `rv64_trap_test` | illegal, illegal CSR, misaligned load/store, ecall | 30 retirements + 5 traps |
+| `rv64_random_test` | 120-instruction random stream (seed 7) | 148 retirements + 1 trap |
+| `rv64_backpressure_test` | memory program with 40 % request backpressure on both ports | 22 retirements + 1 trap |
+
+Environment structure:
+
+* `rv64_mem_agent` — driver owns the memory model, answers both ports with a
+  one-cycle response, applies byte-strobed writes, injects backpressure and
+  error responses, and owns reset so a sequence can load a program while the
+  core is held in reset.
+* `rv64_obs_monitor` — passive; turns the retirement and trap streams into
+  transactions.
+* `rv64_scoreboard` — compares pc, instruction, write-enable, destination and
+  write data for every retirement, and pc/cause for every trap. Retirements
+  after the golden window are ignored, not judged. A write indication to `x0`
+  is accepted as no write, because the register file suppresses it.
+* `rv64_coverage` — covergroup on instruction class, write/no-write, destination
+  register and the class x write cross.
+
 ## Stimulus notes
 
 * **Directed programs** are written in assembly (`tb/cocotb/rv64_asm.py`) so the
