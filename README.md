@@ -150,7 +150,12 @@ Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
 * **5/5 PMP matcher unit tests pass** (TOR, NA4, NAPOT boundaries, permission
   bits, M-mode lock rule, entry priority).
 * **2/2 PLIC-lite tests pass.**
-* **5/5 UVM tests pass** under xezim 0.11.3: a class-based environment with a
+* **7 UVM tests exist; 5 pass and 2 are failing.** `rv64_isa_test` (a 4445-
+  instruction systematic ISA sweep) and `rv64_illegal_test` (120 unimplemented
+  encodings, each expected to trap) currently disagree with the golden model and
+  are **not root-caused**. See `docs/VERIFICATION_REPORT.md` -- ISA compliance
+  should not be claimed until they pass.
+* **5/5 of the earlier UVM tests pass** under xezim 0.11.3: a class-based environment with a
   memory agent (driver owns the memory model, backpressure and error injection),
   an observability monitor, a scoreboard comparing the full retirement and trap
   streams against golden vectors from the same Python ISS, and functional

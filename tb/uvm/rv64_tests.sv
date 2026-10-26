@@ -104,6 +104,26 @@ class rv64_random_test extends rv64_base_test;
   endfunction
 endclass
 
+// ---- systematic ISA sweep: every op x its own exhaustive dimension ---------
+class rv64_isa_test extends rv64_base_test;
+  `uvm_component_utils(rv64_isa_test)
+  function new(string name = "rv64_isa_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/isa";
+    max_cycles = 120000;
+  endfunction
+endclass
+
+// ---- negative sweep: every unimplemented encoding must trap ---------------
+class rv64_illegal_test extends rv64_base_test;
+  `uvm_component_utils(rv64_illegal_test)
+  function new(string name = "rv64_illegal_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/illegal";
+    max_cycles = 40000;
+  endfunction
+endclass
+
 // ---- same program with request backpressure on both ports ------------------
 class rv64_backpressure_test extends rv64_base_test;
   `uvm_component_utils(rv64_backpressure_test)

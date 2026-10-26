@@ -82,6 +82,40 @@ ISA, and closure is a P5 activity (see `PROJECT_PLAN.md`).
 | `test_plic_priority_and_threshold` | PASS | priority arbitration, enable mask, threshold, claim → in-service → complete |
 | `test_plic_config_readback` | PASS | configuration register readback |
 
+### ISA sweep (`rv64_isa_test`, `rv64_illegal_test`) -- FAILING, not root-caused
+
+`sim/gen_isa_sweep.py` builds two systematic programs and their golden vectors:
+
+* **isa** — 4445 instructions: every ALU/MDU op across a boundary-operand
+  matrix; every shift amount 0..63 (and 0..31 for word shifts) on both immediate
+  and register forms; every bit index 0..63 on the single-bit immediate forms;
+  every load/store width x byte lane; every branch polarity taken and not taken;
+  jal/jalr; every implemented CSR read and read-modify-write.
+* **illegal** — every unimplemented major opcode plus the reserved funct3/funct7
+  combinations inside implemented opcodes, each expected to trap as illegal
+  (120 traps).
+
+**Current status: both tests fail against the DUT.** Observed symptoms:
+
+| Test | Symptom |
+| --- | --- |
+| `rv64_isa_test` | from retirement 1000 onward the scoreboard reports pc mismatches where the DUT and expected values **print identically** (`DUT=...0fa0 expected=...0fa0`). That points at the comparison or the vector load rather than at the core, but it is not yet explained. |
+| `rv64_illegal_test` | the first illegal trap matches, but the handler then reads `mepc = 0x234` where the model expects `0x10`. `0x234` is one past the end of the program, which suggests the core is trapping again after the handler runs, overwriting `mepc`. |
+
+Both need root-causing before anything is claimed about ISA compliance. The
+generator and tests are committed so the failures are reproducible:
+
+```
+python3 sim/gen_isa_sweep.py
+# then run rv64_isa_test / rv64_illegal_test through sim/run_uvm.sh
+```
+
+Separately, the UVM memory driver is pathologically slow: roughly 5000 simulated
+cycles per retired instruction, so a 4445-instruction sweep takes millions of
+cycles. That is a harness performance problem, not a core problem, and it is why
+the sweep is impractical to iterate on in this environment. The cocotb
+regression remains the fast path for functional checks.
+
 ### Numeric unit (`rv64_num_unit`)
 
 ```

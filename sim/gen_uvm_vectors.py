@@ -135,6 +135,8 @@ def pad_to(src, target_addr, fill="nop"):
     words, _ = assemble(src)
     n = (target_addr - 4 * len(words)) // 4
     assert n >= 0, f"program already past {target_addr:#x}"
+    if not src.endswith("\n"):
+        src += "\n"
     return src + (fill + "\n") * n
 
 
