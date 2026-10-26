@@ -43,7 +43,7 @@ exists; **absent** = not in this repository.
 | RVV subset (VLEN=64, LMUL=1) | **absent** | |
 | Custom numeric ABI (posit/quire, LNS, RNS, fixed-Q, error tracking) | **partial** | 32x64 numeric bank, fixed-Q Q32.32, 128-bit quire, adaptive precision, error tracking and sticky-flag/config CSRs are implemented and verified; posit/LNS/RNS/IEEE families reserved but unimplemented; not yet wired into the pipeline |
 | XRV512 (32×512-bit bank) | **absent** | |
-| Xcetask (task slots, completion, timeout IRQ) | **absent** | |
+| Xcetask (task slots, completion, timeout IRQ) | **partial** | bounded slot lifecycle, token ownership, per-slot timeout, cancel/free, stray-completion rejection and optional completion interrupt implemented and verified (38 checks); not yet wired into the core (no CSR or opcode path) | |
 | QISA (8-entry qubit model) | **absent** | |
 | AI accelerator (INT8 4×4×4) | **absent** | |
 | Adaptive cache / AMCCE compression sidecar | **absent** | |

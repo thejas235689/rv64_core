@@ -68,12 +68,14 @@ rv64_core/
 │   ├── rv64_numfile.sv          32 x 64-bit numeric register bank
 │   ├── rv64_num_unit.sv         numeric datapath: fixed-Q, quire, adaptive, error
 │   ├── rv64_num_csr.sv          ncfg / nflags / nerr CSRs
+│   ├── rv64_xcetask.sv          bounded task slots: lifecycle, timeout, completion IRQ
 │   └── riscv_core_top.sv        pipeline top level
 ├── tb/
 │   ├── tb_core_top.sv           core harness: memory, host load, backpressure, error injection
 │   ├── tb_plic_top.sv           PLIC-lite harness
 │   ├── tb_pmp_top.sv            PMP matcher harness
 │   ├── tb_num_top.sv            numeric unit testbench (vector-driven)
+│   ├── tb_xcetask_top.sv        Xcetask directed lifecycle testbench
 │   ├── tb_uvm_top.sv            UVM testbench top level
 │   ├── uvm/                     UVM environment: interface, agent, monitors,
 │   │                            scoreboard, coverage, sequences, tests
@@ -194,7 +196,33 @@ and currently raise the invalid flag. The block is also **not yet wired into the
 pipeline** — there is no custom-0 decode path yet, so software cannot reach it
 from the core. Both are the next increment; see `docs/ROADMAP.md`.
 
-## 7. Synthesis
+## 7. Xcetask (in progress)
+
+Bounded custom task slots (`rv64_xcetask.sv`) — four by default. Each slot moves
+IDLE -> ACTIVE -> DONE on completion, or IDLE -> ACTIVE -> TIMEOUT on expiry, with
+cancel (ACTIVE -> IDLE) and free (DONE/TIMEOUT -> IDLE).
+
+* a 64-bit token travels with each task and is retained in the slot, so a
+  consumer can match a completion to the task it belongs to
+* per-slot timeout countdown in cycles; 0 means no timeout
+* a completion for a slot that is not ACTIVE is ignored, so a late or duplicate
+  engine response cannot land on a task that has already moved on
+* optional completion interrupt: per-slot pending bits, level-style, gated by an
+  interrupt-enable bit — a completion that arrives while masked stays pending and
+  raises the interrupt as soon as it is unmasked
+* control port: commands on write (start / cancel / free / clear-irq), status on
+  read (per-slot state, completion count, result, token, pending bits)
+* auto-allocation picks the first idle slot when the slot field is 0xF
+
+Verified by a directed suite: **38 checks, 0 mismatches** — explicit and
+auto-allocated start, completion, out-of-order completion across slots, timeout
+expiry, cancel, free, stray completions, and masked/unmasked interrupt.
+
+**Not wired into the core** — there is no CSR decode path to the block and no
+custom-0 opcode for it yet. Like the numeric unit it is a verified standalone
+block awaiting integration.
+
+## 8. Synthesis
 
 Generic synthesis (sv2v 0.0.13 + Yosys 0.70), for structural sanity rather than
 timing:
@@ -210,7 +238,7 @@ levels ending at the MDU result register. There is no timing library or clock
 constraint in this flow, so **no frequency should be inferred from it** — the
 MDU multiplier is the known critical path and would need sequencing at speed.
 
-## 8. License
+## 9. License
 
 Dual-licensed under either of
 

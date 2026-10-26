@@ -101,6 +101,27 @@ field is now 7 bits.
 Not covered: the block is not yet instantiated in the core, so none of this is
 reachable from software. Posit, LNS, RNS and IEEE families are unimplemented.
 
+### Xcetask (`rv64_xcetask`)
+
+```
+tb_xcetask_top : 38 checks, 0 mismatches   PASS
+```
+
+Directed lifecycle suite: explicit and auto-allocated start, completion,
+out-of-order completion across slots, timeout expiry, cancel, free, stray
+completions for non-active slots, and the masked/unmasked interrupt.
+
+Two defects were found during bring-up:
+
+* **RTL:** the interrupt used `|pend_q` on an *unpacked* array. Reduction
+  operators do not apply to unpacked arrays, so the expression evaluated false
+  and the completion interrupt never asserted. Replaced with an explicit OR loop.
+* **Harness:** a 32-bit literal inside a concatenation (`{56'd0, 4'd1, 0}`)
+  shifted the command fields, so a slot-select wrote a different op. Fixed to
+  sized literals.
+
+The block also elaborates and maps through ABC with the latch assertion passing.
+
 ### Generic synthesis (Yosys 0.70 via sv2v 0.0.13)
 
 First synthesis pass — P6 in `PROJECT_PLAN.md`. This is **generic** synthesis:
