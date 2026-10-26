@@ -74,6 +74,7 @@ module riscv_core_top #(
   output logic [63:0] minstret_o
 );
   import rv64_pkg::*;
+  import rv64_num_pkg::*;
 
   // ===========================================================================
   // Pipeline state
@@ -97,6 +98,8 @@ module riscv_core_top #(
   logic [63:0] id_ex_rs1_data, id_ex_rs2_data;
   logic        id_ex_ptaken;
   logic [63:0] id_ex_ptarget;
+  logic        id_ex_is_num;
+  logic [63:0] id_ex_nrs1_data, id_ex_nrs2_data;
 
   // EX/MEM
   logic        ex_mem_v;
@@ -116,6 +119,7 @@ module riscv_core_top #(
   logic        ex_mem_is_wfi;
   logic        ex_mem_is_ebreak;
   logic        ex_mem_is_ecall;
+  logic        ex_mem_is_num;
   logic        ex_mem_exc;
   logic [63:0] ex_mem_exc_cause;
   logic [63:0] ex_mem_exc_tval;
@@ -126,6 +130,7 @@ module riscv_core_top #(
   logic [31:0] mem_wb_insn;
   logic [4:0]  mem_wb_rd;
   logic        mem_wb_reg_we;
+  logic        mem_wb_is_num;
   logic [63:0] mem_wb_wdata;
 
   // ===========================================================================
@@ -268,11 +273,93 @@ module riscv_core_top #(
   end
 
   // ===========================================================================
+  // Custom numeric ABI: its own register bank, datapath and CSRs
+  // ===========================================================================
+  logic [63:0] nrf_rs1_data, nrf_rs2_data;
+  logic [63:0] nrs1_data, nrs2_data;
+  logic [63:0] num_y, num_err, num_cfg;
+  logic [7:0]  num_flags;
+  logic [127:0] num_quire;
+  logic        num_csr_valid;
+  logic [63:0] num_csr_rdata;
+  logic        num_csr_sel;
+
+  rv64_numfile u_numfile (
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .rs1_addr (dec_rs1),
+    .rs2_addr (dec_rs2),
+    .rs1_data (nrf_rs1_data),
+    .rs2_data (nrf_rs2_data),
+    // a numeric op writes the numeric bank; NUM_TOINT is the one case that sets
+    // reg_we as well (it lands in the integer file), so exclude it here or the
+    // bridge would clobber a numeric register with its own result
+    .we       (mem_wb_v && mem_wb_is_num && !mem_wb_reg_we),
+    .rd_addr  (mem_wb_rd),
+    .rd_data  (mem_wb_wdata),
+    .dbg_addr (5'd0),
+    .dbg_data ()
+  );
+
+  // same write-through rule as the integer bank: no forwarding path exists on
+  // the numeric side, so a producer retiring in WB must bypass into ID
+  always_comb begin
+    nrs1_data = nrf_rs1_data;
+    nrs2_data = nrf_rs2_data;
+    if (mem_wb_v && mem_wb_is_num) begin
+      if (mem_wb_rd == dec_rs1) nrs1_data = mem_wb_wdata;
+      if (mem_wb_rd == dec_rs2) nrs2_data = mem_wb_wdata;
+    end
+  end
+
+  // exactly one pulse per numeric instruction, however long EX is held
+  logic num_exec;
+  assign num_exec = id_ex_v && id_ex_ctrl.is_num && ex_advance && !trap_taken;
+
+  rv64_num_unit u_num_unit (
+    .clk   (clk),
+    .rst_n (rst_n),
+    .op    (id_ex_ctrl.num_op),
+    .fmt   (id_ex_ctrl.num_fmt),
+    .a     (id_ex_nrs1_data),
+    .b     (id_ex_nrs2_data),
+    .cfg   (num_cfg),
+    .op_valid (num_exec),
+    .y     (num_y),
+    .flags (num_flags),
+    .err   (num_err),
+    .quire (num_quire)
+  );
+
+  assign num_csr_sel = (id_ex_ctrl.csr_addr >= CSR_NCFG) &&
+                       (id_ex_ctrl.csr_addr <= CSR_NERR);
+
+  rv64_num_csr u_num_csr (
+    .clk        (clk),
+    .rst_n      (rst_n),
+    .csr_addr   (id_ex_ctrl.csr_addr),
+    .csr_op     (id_ex_ctrl.csr_op),
+    .csr_wdata  (csr_wdata),
+    .csr_we     (csr_we),
+    .csr_rdata  (num_csr_rdata),
+    .csr_valid  (num_csr_valid),
+    .op_flags   (num_flags),
+    .op_valid   (num_exec),
+    .op_err     (num_err),
+    .ncfg_o     (num_cfg)
+  );
+
+  // ===========================================================================
   // EX stage
   // ===========================================================================
   logic [63:0] op_a, op_b;
   logic [63:0] alu_a, alu_b, alu_y;
   logic [63:0] csr_rdata;
+  logic [63:0] main_csr_rdata;
+
+  always_comb begin
+    csr_rdata = num_csr_sel ? num_csr_rdata : main_csr_rdata;
+  end
   logic        csr_valid;
   logic [63:0] mdu_result;
   logic        mdu_busy, mdu_done;
@@ -334,7 +421,11 @@ module riscv_core_top #(
     .result (mdu_result)
   );
 
-  assign ex_alu_out = id_ex_ctrl.is_mdu ? mdu_result : alu_y;
+  assign ex_alu_out = id_ex_ctrl.is_mdu ? mdu_result :
+                      (id_ex_ctrl.is_num
+                         ? ((id_ex_ctrl.num_op == NUM_TOINT)   ? id_ex_nrs1_data :
+                            (id_ex_ctrl.num_op == NUM_FROMINT) ? op_a : num_y)
+                         : alu_y);
 
   // ---- branch / jump resolution --------------------------------------------
   assign eq_x  = (op_a == op_b);
@@ -378,7 +469,8 @@ module riscv_core_top #(
     ex_exc_cause = 64'd0;
     ex_exc_tval  = 64'd0;
 
-    if (id_ex_ctrl.illegal || (id_ex_ctrl.is_csr && !csr_valid)) begin
+    if (id_ex_ctrl.illegal ||
+        (id_ex_ctrl.is_csr && !csr_valid && !num_csr_valid)) begin
       ex_exc       = 1'b1;
       ex_exc_cause = CAUSE_ILLEGAL;
       ex_exc_tval  = {32'd0, id_ex_insn};
@@ -455,7 +547,10 @@ module riscv_core_top #(
 
 
   assign csr_wdata = id_ex_ctrl.csr_imm ? {59'd0, id_ex_rs1} : op_a;
-  assign csr_we    = id_ex_v && id_ex_ctrl.is_csr && csr_valid && !trap_to_csr && !ex_hold;
+  // the numeric CSRs live outside the machine CSR file, so the access is
+  // arbitrated here: address decode picks exactly one of the two files
+  assign csr_we    = id_ex_v && id_ex_ctrl.is_csr && (csr_valid || num_csr_valid) &&
+                     !trap_to_csr && !ex_hold;
 
   rv64_csr u_csr (
     .clk            (clk),
@@ -464,7 +559,7 @@ module riscv_core_top #(
     .csr_op         (id_ex_ctrl.csr_op),
     .csr_wdata      (csr_wdata),
     .csr_we         (csr_we),
-    .csr_rdata      (csr_rdata),
+    .csr_rdata      (main_csr_rdata),
     .csr_valid      (csr_valid),
     .trap_valid     (trap_to_csr),
     .trap_cause     (trap_cause_sel),
@@ -597,6 +692,16 @@ module riscv_core_top #(
 
   always_comb begin
     stall_id = 1'b0;
+    // conservative numeric interlock: hold ID while a numeric write is anywhere
+    // in the pipeline and the instruction in ID is itself a numeric op
+    // the flag must be qualified by the stage valid bit: ex_mem_is_num keeps
+    // its old value when ex_mem takes a bubble, and an unqualified check
+    // deadlocks the pipeline on a stale flag
+    if (dec_ctrl.is_num &&
+        ((id_ex_v  && id_ex_is_num)  ||
+         (ex_mem_v && ex_mem_is_num) ||
+         (mem_wb_v && mem_wb_is_num)))
+      stall_id = 1'b1;
     if (id_ex_v && id_ex_ctrl.is_load && (id_ex_rd != 5'd0) && if_id_v) begin
       if ((dec_rs1 == id_ex_rd) || (dec_rs2 == id_ex_rd)) stall_id = 1'b1;
     end
@@ -701,6 +806,9 @@ module riscv_core_top #(
       id_ex_rs2_data <= rs2_data;
       id_ex_ptaken   <= if_id_ptaken;
       id_ex_ptarget  <= if_id_ptarget;
+      id_ex_is_num   <= dec_ctrl.is_num;
+      id_ex_nrs1_data <= nrs1_data;
+      id_ex_nrs2_data <= nrs2_data;
     end else begin
       id_ex_v <= 1'b0;
     end
@@ -725,6 +833,7 @@ module riscv_core_top #(
       ex_mem_is_wfi     <= 1'b0;
       ex_mem_is_ebreak  <= 1'b0;
       ex_mem_is_ecall   <= 1'b0;
+      ex_mem_is_num     <= 1'b0;
       ex_mem_exc        <= 1'b0;
       ex_mem_exc_cause  <= 64'd0;
       ex_mem_exc_tval   <= 64'd0;
@@ -757,6 +866,7 @@ module riscv_core_top #(
       ex_mem_is_wfi     <= id_ex_ctrl.is_wfi;
       ex_mem_is_ebreak  <= id_ex_ctrl.is_ebreak;
       ex_mem_is_ecall   <= id_ex_ctrl.is_ecall;
+      ex_mem_is_num     <= id_ex_ctrl.is_num;
       ex_mem_exc        <= ex_exc;
       ex_mem_exc_cause  <= ex_exc_cause;
       ex_mem_exc_tval   <= ex_exc_tval;
@@ -772,6 +882,7 @@ module riscv_core_top #(
       mem_wb_insn   <= 32'd0;
       mem_wb_rd     <= 5'd0;
       mem_wb_reg_we <= 1'b0;
+      mem_wb_is_num <= 1'b0;
       mem_wb_wdata  <= 64'd0;
     end else if (mem_stall || mem_trap) begin
       mem_wb_v <= 1'b0;
@@ -781,6 +892,7 @@ module riscv_core_top #(
       mem_wb_insn   <= ex_mem_insn;
       mem_wb_rd     <= ex_mem_rd;
       mem_wb_reg_we <= ex_mem_reg_we;
+      mem_wb_is_num <= ex_mem_is_num;
       mem_wb_wdata  <= (ex_mem_wb_sel == WB_MEM) ? lsu_load_data : ex_mem_wb_val;
     end else begin
       mem_wb_v <= 1'b0;

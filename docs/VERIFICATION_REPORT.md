@@ -135,8 +135,35 @@ One defect was found and fixed during bring-up: the adaptive-precision field was
 6 bits wide, so `prec >= 64` was vacuously true and truncation never fired. The
 field is now 7 bits.
 
-Not covered: the block is not yet instantiated in the core, so none of this is
-reachable from software. Posit, LNS, RNS and IEEE families are unimplemented.
+**Integrated and reachable from software.** The bank is wired into the pipeline
+through custom-0 (`0x0B`), with `funct7` selecting the operation, `funct3` the
+format, and the register fields indexing the numeric bank. Two bridge
+instructions (`NUM_TOINT` funct7 0x12, `NUM_FROMINT` funct7 0x13) connect the two
+banks — without them a numeric result has no route back to software. The numeric
+CSRs at `0x7C0`-`0x7C2` are arbitrated with the machine CSR file.
+
+`test_numeric_abi` checks it end-to-end from executed instructions: 2.0 x 3.0 =
+6.0 through the multiply, 2.0 + 3.0 = 5.0 through the add, the quire accumulating
+2.0 x 3.0 exactly and reading back 6.0, both bridges, `ncfg` reading its reset
+value 0x2020, and `nflags` clean.
+
+Two defects were found during integration:
+
+* **Interlock deadlock.** The stall tested `ex_mem_is_num` without its stage
+  valid bit. `ex_mem_is_num` keeps its old value when `ex_mem` takes a bubble, so
+  a stale flag stalled the pipeline forever — the program retired two
+  instructions and stopped. Qualified with the valid bits.
+* **The quire accumulated every cycle in EX.** The accumulator is stateful but
+  was gated only by the opcode, so an instruction held in EX for four cycles
+  added its product four times: 2.0 x 3.0 produced 24.0. Now gated by a
+  one-shot `op_valid` pulse that is true exactly once per instruction.
+
+Also worth recording: my first version of the test used `lui x1, 0x18000`
+believing it produced 0x1_8000_0000. `lui` shifts by 12, so it produces
+0x1800_0000. The RTL was right and the test constants were wrong — a reminder
+that a failing assertion indicts the testbench before the design.
+
+Posit, LNS, RNS and IEEE families remain unimplemented.
 
 ### Xcetask (`rv64_xcetask`)
 

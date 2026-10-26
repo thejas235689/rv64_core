@@ -19,6 +19,10 @@ RTL_SRCS := \
   $(RTL_DIR)/rv64_bpu.sv \
   $(RTL_DIR)/rv64_fetch.sv \
   $(RTL_DIR)/rv64_plic_lite.sv \
+  $(RTL_DIR)/rv64_num_pkg.sv \
+  $(RTL_DIR)/rv64_numfile.sv \
+  $(RTL_DIR)/rv64_num_unit.sv \
+  $(RTL_DIR)/rv64_num_csr.sv \
   $(RTL_DIR)/riscv_core_top.sv
 
 VERILOG_SOURCES := $(RTL_SRCS) $(TB_DIR)/tb_core_top.sv

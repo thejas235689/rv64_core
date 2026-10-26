@@ -41,7 +41,7 @@ exists; **absent** = not in this repository.
 | Fetch-fault metadata | **done** | instruction access fault with faulting address |
 | Transactional data memory | **partial** | separate response channel, backpressure, response error; no SC-failure channel |
 | RVV subset (VLEN=64, LMUL=1) | **absent** | |
-| Custom numeric ABI (posit/quire, LNS, RNS, fixed-Q, error tracking) | **partial** | 32x64 numeric bank, fixed-Q Q32.32, 128-bit quire, adaptive precision, error tracking and sticky-flag/config CSRs are implemented and verified; posit/LNS/RNS/IEEE families reserved but unimplemented; not yet wired into the pipeline |
+| Custom numeric ABI (posit/quire, LNS, RNS, fixed-Q, error tracking) | **partial** | 32x64 numeric bank, fixed-Q Q32.32, 128-bit quire, adaptive precision, error tracking and sticky-flag/config CSRs are implemented and verified; posit/LNS/RNS/IEEE families reserved but unimplemented; wired into the pipeline via the custom-0 opcode with int<->numeric bridges, interlock and CSRs; reachable from software |
 | XRV512 (32×512-bit bank) | **absent** | |
 | Xcetask (task slots, completion, timeout IRQ) | **partial** | bounded slot lifecycle, token ownership, per-slot timeout, cancel/free, stray-completion rejection and optional completion interrupt implemented and verified (38 checks); not yet wired into the core (no CSR or opcode path) | |
 | QISA (8-entry qubit model) | **absent** | |

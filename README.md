@@ -181,6 +181,12 @@ A separate numeric side to the machine: its own 32 x 64-bit register bank
 (`rv64_numfile.sv`), its own arithmetic datapath (`rv64_num_unit.sv`) and its own
 configuration and sticky-flag CSRs (`rv64_num_csr.sv`, at `0x7C0`-`0x7C2`).
 
+Verified two ways: as a unit against 1137 vectors / 4548 checks / zero
+mismatches, and end-to-end from executed instructions (`test_numeric_abi`):
+2.0 x 3.0 = 6.0 through the multiply, 2.0 + 3.0 = 5.0 through the add, the quire
+accumulating 2.0 x 3.0 exactly and reading back 6.0, both bridges, and the
+config/sticky CSRs.
+
 Implemented and verified (1137 vectors, 4548 checks, zero mismatches):
 
 * **Fixed-Q Q32.32** add / subtract / multiply, with configurable rounding
@@ -197,11 +203,25 @@ Implemented and verified (1137 vectors, 4548 checks, zero mismatches):
 * **Sticky flags** — overflow, underflow, inexact, invalid, divide-by-zero,
   saturate, precision-loss and quire-overflow, write-one-to-clear.
 
+**Reachable from software.** The bank is wired into the pipeline through the
+custom-0 opcode (`0x0B`): `funct7[4:0]` selects the operation, `funct3` the
+format, and `rd`/`rs1`/`rs2` index the numeric bank instead of the integer file.
+The CSRs live at `0x7C0`-`0x7C2` and are arbitrated alongside the machine CSRs.
+
+Two bridge instructions make the bank observable, which it otherwise would not
+be — a numeric result has nowhere to go without them:
+
+```
+funct7 0x12  NUM_TOINT    int rd     <- numeric nrs1
+funct7 0x13  NUM_FROMINT  numeric nrd <- int rs1
+```
+
+There is no forwarding on the numeric side, so a conservative interlock holds ID
+while any numeric write is still in flight. Correct, and deliberately simple.
+
 **Reserved but not implemented:** posit/quire-code, logarithmic (LNS), residue
 (RNS) and IEEE FP16/32/64 families. Their opcodes are fixed in `rv64_num_pkg.sv`
-and currently raise the invalid flag. The block is also **not yet wired into the
-pipeline** — there is no custom-0 decode path yet, so software cannot reach it
-from the core. Both are the next increment; see `docs/ROADMAP.md`.
+and currently raise the invalid flag. See `docs/ROADMAP.md`.
 
 ## 7. Xcetask (in progress)
 

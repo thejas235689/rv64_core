@@ -183,6 +183,9 @@ package rv64_pkg;
     logic        is_csr;
     logic        is_mdu;
     logic        csr_imm;
+    logic        is_num;          // custom-0 numeric-ABI instruction
+    logic [4:0]  num_op;
+    logic [2:0]  num_fmt;
     logic        illegal;
   } ctrl_t;
 
@@ -196,6 +199,9 @@ package rv64_pkg;
     c.wb_sel   = WB_ALU;
     c.csr_op   = CSR_NONE;
     c.branch_op= BR_NONE;
+    c.is_num   = 1'b0;
+    c.num_op   = 5'd0;
+    c.num_fmt  = 3'd0;
     return c;
   endfunction
 

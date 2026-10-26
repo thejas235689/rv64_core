@@ -375,6 +375,24 @@ module rv64_decoder (
         end
       end
 
+      // ------------------------------------------------------- custom-0: numeric
+      7'b0001011: begin
+        // funct7[4:0] selects the numeric operation, funct3 the format.
+        // rd/rs1/rs2 index the numeric register bank, never the integer file,
+        // so reg_we stays low here.
+        ctrl.imm_sel = IMM_NONE;
+        ctrl.reg_we  = 1'b0;
+        if (funct7[6:5] != 2'b00) begin
+          ctrl.illegal = 1'b1;
+        end else begin
+          ctrl.is_num  = 1'b1;
+          ctrl.num_op  = funct7[4:0];
+          ctrl.num_fmt = funct3;
+          // NUM_TOINT lands its result in the integer register file
+          if (funct7[4:0] == 5'd18) ctrl.reg_we = 1'b1;
+        end
+      end
+
       default: ctrl.illegal = 1'b1;
     endcase
 

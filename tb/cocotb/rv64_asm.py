@@ -20,7 +20,9 @@ CSRS = {
     "mcounteren": 0x306, "mscratch": 0x340, "mepc": 0x341, "mcause": 0x342,
     "mtval": 0x343, "mip": 0x344, "pmpcfg0": 0x3A0,
     "mcycle": 0xB00, "minstret": 0xB02, "mcycleh": 0xB80, "minstreth": 0xB82,
-    "mvendorid": 0xF11, "marchid": 0xF12, "mimpid": 0xF13, "mhartid": 0xF14,
+    "mvendorid": 0xF11, "marchid": 0xF12, "mimpid": 0xF13, "mhartid": 0xF14,    # custom numeric ABI
+    "ncfg": 0x7C0, "nflags": 0x7C1, "nerr": 0x7C2,
+
 }
 for _i in range(8):
     CSRS[f"pmpaddr{_i}"] = 0x3B0 + _i

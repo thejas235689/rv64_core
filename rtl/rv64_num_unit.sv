@@ -27,6 +27,7 @@ module rv64_num_unit (
   input  logic [63:0] a,
   input  logic [63:0] b,
   input  logic [63:0] cfg,
+  input  logic        op_valid,   // one-cycle pulse: execute this operation once
 
   output logic [63:0] y,
   output logic [7:0]  flags,      // per-operation flags, not sticky
@@ -49,21 +50,24 @@ module rv64_num_unit (
   assign cfg_erren = cfg[CFG_ERREN_SHIFT];
 
   // ---- adaptive precision: truncate an operand to cfg_prec bits ------------
-  function automatic logic [63:0] adapt(input logic [63:0] v,
-                                        input logic [CFG_PREC_W-1:0] prec,
-                                        input logic        round_up,
-                                        output logic       lost);
+  // Functions may only take input arguments (both simulators agree here), so
+  // the value and the lost-bits flag are separate functions.
+  function automatic logic [63:0] adapt_val(input logic [63:0] v,
+                                            input logic [CFG_PREC_W-1:0] prec,
+                                            input logic        round_up);
     int drop;
-    logic [63:0] q;
-    if (prec >= 7'd64) begin
-      lost = 1'b0;
-      return v;
-    end
+    if (prec >= 7'd64) return v;
     drop = 64 - prec;
-    if (round_up) q = (v + (64'd1 << (drop - 1))) & ~((64'd1 << drop) - 64'd1);
-    else          q = v & ~((64'd1 << drop) - 64'd1);
-    lost = (v & ((64'd1 << drop) - 64'd1)) != 64'd0;
-    return q;
+    if (round_up) return (v + (64'd1 << (drop - 1))) & ~((64'd1 << drop) - 64'd1);
+    else          return v & ~((64'd1 << drop) - 64'd1);
+  endfunction
+
+  function automatic logic adapt_lost(input logic [63:0] v,
+                                      input logic [CFG_PREC_W-1:0] prec);
+    int drop;
+    if (prec >= 7'd64) return 1'b0;
+    drop = 64 - prec;
+    return (v & ((64'd1 << drop) - 64'd1)) != 64'd0;
   endfunction
 
   // ---- fixed-Q arithmetic --------------------------------------------------
@@ -81,8 +85,10 @@ module rv64_num_unit (
     adapt_lost_a = 1'b0;
     adapt_lost_b = 1'b0;
     if (cfg_adapt && (op == NUM_QADD || op == NUM_QSUB || op == NUM_QMUL)) begin
-      opa = adapt(a, cfg_prec, cfg_round[0], adapt_lost_a);
-      opb = adapt(b, cfg_prec, cfg_round[0], adapt_lost_b);
+      opa = adapt_val(a, cfg_prec, cfg_round[0]);
+      opb = adapt_val(b, cfg_prec, cfg_round[0]);
+      adapt_lost_a = adapt_lost(a, cfg_prec);
+      adapt_lost_b = adapt_lost(b, cfg_prec);
     end
   end
 
@@ -152,9 +158,12 @@ module rv64_num_unit (
     qget_dropped = quire_q[31:0];
   end
 
+  // The quire is stateful, so it must advance exactly once per instruction.
+  // Gating on op_valid matters: an instruction can sit in EX for several cycles
+  // behind a stall, and an ungated accumulator adds the product every cycle.
   always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) quire_q <= 128'd0;
-    else        quire_q <= quire_next;
+    if (!rst_n)          quire_q <= 128'd0;
+    else if (op_valid)   quire_q <= quire_next;
   end
   assign quire = quire_q;
 
@@ -178,7 +187,7 @@ module rv64_num_unit (
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) err_q <= 64'd0;
-    else if (cfg_erren) err_q <= err_now;
+    else if (cfg_erren && op_valid) err_q <= err_now;
   end
   assign err = err_q;
 
@@ -186,7 +195,8 @@ module rv64_num_unit (
   logic [63:0] adapt_y;
   logic        adapt_lost_self;
   always_comb begin
-    adapt_y = adapt(a, cfg_prec, cfg_round[0], adapt_lost_self);
+    adapt_y         = adapt_val(a, cfg_prec, cfg_round[0]);
+    adapt_lost_self = adapt_lost(a, cfg_prec);
   end
 
   // ---- result and flags ----------------------------------------------------
@@ -242,6 +252,9 @@ module rv64_num_unit (
       end
 
       NUM_ERR: y = err_q;
+
+      // bridge ops carry data between the banks; the unit itself does nothing
+      NUM_TOINT, NUM_FROMINT: y = 64'd0;
 
       default: begin
         // reserved families (posit / log / residue / IEEE) are not implemented

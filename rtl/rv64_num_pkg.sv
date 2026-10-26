@@ -53,6 +53,10 @@ package rv64_num_pkg;
   localparam logic [4:0] NUM_RMUL  = 5'd15;
   localparam logic [4:0] NUM_FADD  = 5'd16;
   localparam logic [4:0] NUM_FMUL  = 5'd17;
+  // bridges between the numeric bank and the integer register file, without
+  // which software could never observe a numeric result
+  localparam logic [4:0] NUM_TOINT   = 5'd18;   // int rd  <- numeric nrs1
+  localparam logic [4:0] NUM_FROMINT = 5'd19;   // numeric nrd <- int rs1
 
   // ------------------------------------------------------------------ ncfg
   // Configuration CSR layout.

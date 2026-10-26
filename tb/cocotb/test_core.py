@@ -1251,3 +1251,64 @@ hfetch:
     csrrw x0, mepc, x21
     mret
 """
+
+
+# ===========================================================================
+# Custom numeric ABI reached from executed instructions
+# ===========================================================================
+def num_insn(op, fmt=0, rd=0, rs1=0, rs2=0):
+    """Encode a custom-0 numeric-ABI instruction."""
+    return (op << 25) | (rs2 << 20) | (rs1 << 15) | (fmt << 12) | (rd << 7) | 0x0B
+
+
+NUM_QADD, NUM_QSUB, NUM_QMUL, NUM_QCLR, NUM_QACC, NUM_QGET = 0, 1, 2, 3, 4, 5
+NUM_TOINT, NUM_FROMINT = 18, 19
+
+
+@cocotb.test()
+async def test_numeric_abi(dut):
+    """Numeric ops executed by the core, with results read back through the
+    integer register file. The ISS has no numeric model, so this test asserts
+    explicit expected values rather than comparing a trace."""
+    h = Harness(dut)
+    await h.startup()
+
+    src = f"""
+    lui   x1, 0x20000
+    slli  x1, x1, 4                                        # x1 = 2.0 in Q32.32
+    .word 0x{num_insn(NUM_FROMINT, rd=1, rs1=1):08x}
+    .word 0x{num_insn(NUM_TOINT, rd=8, rs1=1):08x}          # probe n1 -> x8
+    lui   x2, 0x30000
+    slli  x2, x2, 4                                        # x2 = 3.0 in Q32.32
+    .word 0x{num_insn(NUM_FROMINT, rd=2, rs1=2):08x}
+    .word 0x{num_insn(NUM_TOINT, rd=9, rs1=2):08x}          # probe n2 -> x9
+    .word 0x{num_insn(NUM_QMUL, rd=3, rs1=1, rs2=2):08x}    # n3 = 6.0
+    .word 0x{num_insn(NUM_QADD, rd=4, rs1=1, rs2=2):08x}    # n4 = 5.0
+    .word 0x{num_insn(NUM_TOINT, rd=3, rs1=3):08x}          # x3 = n3
+    .word 0x{num_insn(NUM_TOINT, rd=4, rs1=4):08x}          # x4 = n4
+    csrrs x5, ncfg, x0                                      # default config
+    csrrs x6, nflags, x0                                    # no flags so far
+    .word 0x{num_insn(NUM_QCLR, rd=0, rs1=0):08x}
+    .word 0x{num_insn(NUM_QACC, rd=0, rs1=1, rs2=2):08x}    # quire += 2.0*3.0
+    .word 0x{num_insn(NUM_QGET, rd=5, rs1=0):08x}           # n5 = 6.0
+    .word 0x{num_insn(NUM_TOINT, rd=7, rs1=5):08x}          # x7 = n5
+    ecall
+"""
+    words, _ = assemble(src)
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=4000, stop_on_ecall=True)
+
+    vals = await halt_and_read(h, [3, 4, 5, 6, 7, 8, 9])
+    dut._log.info(f"n1={vals[8]:#x} n2={vals[9]:#x} mul={vals[3]:#x} add={vals[4]:#x} "
+                  f"ncfg={vals[5]:#x} nflags={vals[6]:#x} quire={vals[7]:#x}")
+    assert vals[8] == 0x2_0000_0000, f"bridge int->num: n1 = {vals[8]:#x}"
+    assert vals[9] == 0x3_0000_0000, f"bridge int->num: n2 = {vals[9]:#x}"
+    assert vals[3] == 0x6_0000_0000, f"nqmul 2.0*3.0: x3 = {vals[3]:#x}, expected 0x600000000"
+    assert vals[4] == 0x5_0000_0000, f"nqadd 2.0+3.0: x4 = {vals[4]:#x}, expected 0x500000000"
+    assert vals[5] == 0x2020,        f"ncfg default = {vals[5]:#x}, expected 0x2020"
+    assert vals[6] == 0,             f"nflags = {vals[6]:#x}, expected 0"
+    assert vals[7] == 0x6_0000_0000, f"quire 2.0*3.0: x7 = {vals[7]:#x}, expected 0x600000000"
+    cov("numeric_abi_ops")
+    dut._log.info("numeric ABI: mul, add, bridges, quire and CSRs all correct")
