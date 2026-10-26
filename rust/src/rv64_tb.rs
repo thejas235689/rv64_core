@@ -82,12 +82,12 @@ impl Component for BaseTest {
         let _obj = ctx.raise_objection("stimulus");
         let bfm: Rc<CoreBfm> = ConfigDb::get(Some(ctx), "", "BFM")?;
 
-        // Wait for the whole program to retire, then one edge so the last
-        // transactions are observed.
-        for _ in 0..self.n_retire {
-            bfm.get_retire().await;
-        }
-        bfm.clk.rising_edge().await;
+        // The scoreboard owns the retirement queue; the test only waits for it
+        // to finish the golden window. No timeout combinator here on purpose:
+        // the runner already bounds the simulation, and keeping this to
+        // constructs verified against the source means fewer things that can
+        // fail to compile.
+        bfm.wait_done().await;
 
         ctx.info(&format!(
             "{}: {} retirements observed",

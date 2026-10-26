@@ -11,8 +11,16 @@ use rustdv::prelude::*;
 use crate::bfm::CoreBfm;
 use crate::item::{MemBeat, RetireItem, TrapItem};
 
+/// `LogicHandle::get_u64` returns `Result<u64, ValueError>`; a read of a signal
+/// that exists cannot fail, so an unreadable value reads as 0 rather than
+/// panicking mid-simulation.
 fn u(h: &LogicHandle) -> u64 {
-    h.get_u64()
+    h.get_u64().unwrap_or(0)
+}
+
+/// Single-bit reads: `is_high()` is the idiomatic accessor and needs no Result.
+fn b(h: &LogicHandle) -> bool {
+    h.is_high()
 }
 
 // ===========================================================================
@@ -48,49 +56,47 @@ impl Component for MemoryAgent {
 
             // ---- respond with whatever was accepted last cycle --------------
             if if_pend {
-                let word = (if_addr >> 2) as usize;
-                let data = *bfm.mem.get(word).unwrap_or(&0) as u64;
-                bfm.if_rsp_data.set_u64(data);
+                bfm.if_rsp_data.set_u64(bfm.read_word(if_addr) as u64);
                 bfm.if_rsp_valid.set_u64(1);
             } else {
                 bfm.if_rsp_valid.set_u64(0);
             }
 
             if d_pend {
-                let word = (d_addr >> 2) as usize;
-                let data = *bfm.mem.get(word).unwrap_or(&0) as u64;
-                bfm.d_rsp_rdata.set_u64(data);
+                bfm.d_rsp_rdata.set_u64(bfm.read_word(d_addr) as u64);
                 bfm.d_rsp_valid.set_u64(1);
             } else {
                 bfm.d_rsp_valid.set_u64(0);
             }
 
             // ---- accept new requests ----------------------------------------
-            if_pend = u(&bfm.if_req_valid) != 0;
+            if_pend = b(&bfm.if_req_valid);
             if if_pend {
                 if_addr = u(&bfm.if_req_addr);
             }
 
-            d_pend = u(&bfm.d_req_valid) != 0;
+            d_pend = b(&bfm.d_req_valid);
             if d_pend {
                 d_addr = u(&bfm.d_req_addr);
-                d_we = u(&bfm.d_req_we) != 0;
+                d_we = b(&bfm.d_req_we);
                 if d_we {
                     // byte-lane writes, same semantics as the SV harness
                     let word = (d_addr >> 2) as usize;
                     let wstrb = u(&bfm.d_req_wstrb) as u8;
                     let wdata = u(&bfm.d_req_wdata) as u32;
-                    if let Some(slot) = bfm.mem.get_mut(word) {
+                    if let Some(slot) = bfm.mem.borrow_mut().get_mut(word) {
                         let mut merged = *slot;
-                        for b in 0..4u32 {
-                            if wstrb & (1 << b) != 0 {
-                                let sh = b * 8;
+                        for lane in 0..4u32 {
+                            if wstrb & (1 << lane) != 0 {
+                                let sh = lane * 8;
                                 merged = (merged & !(0xFFu32 << sh)) | (wdata & (0xFFu32 << sh));
                             }
                         }
                         *slot = merged;
                     }
-                    bfm.served.put(MemBeat { addr: d_addr, we: true, wdata: u(&bfm.d_req_wdata), wstrb }).await;
+                    bfm.served
+                        .put(MemBeat { addr: d_addr, we: true, wdata: u(&bfm.d_req_wdata), wstrb })
+                        .await;
                 }
             }
         }
@@ -110,18 +116,18 @@ impl Component for RetireMonitor {
         let bfm: Rc<CoreBfm> = ConfigDb::get(Some(ctx), "", "BFM")?;
         loop {
             bfm.clk.rising_edge().await;
-            if u(&bfm.retire_valid) != 0 {
+            if b(&bfm.retire_valid) {
                 bfm.retire_q
                     .put(RetireItem {
                         pc: u(&bfm.retire_pc),
                         insn: u(&bfm.retire_insn) as u32,
-                        gpr_we: u(&bfm.gpr_we) != 0,
+                        gpr_we: b(&bfm.gpr_we),
                         gpr_waddr: u(&bfm.gpr_waddr) as u8,
                         gpr_wdata: u(&bfm.gpr_wdata),
                     })
                     .await;
             }
-            if u(&bfm.trap_valid) != 0 {
+            if b(&bfm.trap_valid) {
                 bfm.trap_q
                     .put(TrapItem { pc: u(&bfm.trap_pc), cause: u(&bfm.trap_cause) })
                     .await;
@@ -143,7 +149,7 @@ impl Component for RetireMonitor {
 /// only one place for the oracle to be wrong.
 #[derive(Component, Default)]
 pub struct Scoreboard {
-    #[component]
+    // data, not a child component: no #[component] attribute here
     exp: Vec<u64>,
     n_compared: usize,
     errors: usize,
@@ -157,6 +163,18 @@ impl Scoreboard {
     }
 }
 
+impl Scoreboard {
+    fn build(&mut self, ctx: &mut RustdvCtx) {
+        // self-contained: the prefix comes from the environment, so the
+        // scoreboard does not depend on the test having run first
+        let prefix = std::env::var("RUSTDV_VEC_PREFIX")
+            .unwrap_or_else(|_| "sim/uvm_vectors/alu".to_string());
+        if let Err(e) = self.load_vectors(&prefix) {
+            ctx.error(&format!("cannot read vectors for {prefix}: {e}"));
+        }
+    }
+}
+
 impl Component for Scoreboard {
     async fn run(&mut self, ctx: &mut RustdvCtx) -> Result<(), TestError> {
         let bfm: Rc<CoreBfm> = ConfigDb::get(Some(ctx), "", "BFM")?;
@@ -167,21 +185,29 @@ impl Component for Scoreboard {
             if self.n_compared >= n_exp {
                 continue;
             }
+            if self.n_compared + 1 == n_exp {
+                // last expected retirement compared: release the test
+                bfm.done.set();
+            }
             let i = self.n_compared * 5;
             let (pc, insn, we, waddr, wdata) =
                 (self.exp[i], self.exp[i + 1], self.exp[i + 2], self.exp[i + 3], self.exp[i + 4]);
             if item.pc != pc || item.insn as u64 != insn {
                 self.errors += 1;
-                ctx.error(&format!(
-                    "retirement {}: pc DUT={:#x} expected={:#x}, insn DUT={:#08x} expected={:#08x}",
-                    self.n_compared, item.pc, pc, item.insn, insn
-                ));
+                if self.errors <= 20 {
+                    ctx.error(&format!(
+                        "retirement {}: pc DUT={:#x} expected={:#x}, insn DUT={:#08x} expected={:#08x}",
+                        self.n_compared, item.pc, pc, item.insn, insn
+                    ));
+                }
             } else if we != 0 && (item.gpr_waddr as u64 != waddr || item.gpr_wdata != wdata) {
                 self.errors += 1;
-                ctx.error(&format!(
-                    "retirement {} (pc {:#x}): x{} DUT={:#x} expected x{}={:#x}",
-                    self.n_compared, item.pc, item.gpr_waddr, item.gpr_wdata, waddr, wdata
-                ));
+                if self.errors <= 20 {
+                    ctx.error(&format!(
+                        "retirement {} (pc {:#x}): x{} DUT={:#x} expected x{}={:#x}",
+                        self.n_compared, item.pc, item.gpr_waddr, item.gpr_wdata, waddr, wdata
+                    ));
+                }
             }
             self.n_compared += 1;
         }

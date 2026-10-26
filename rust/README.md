@@ -54,21 +54,29 @@ to `build/rv64_tb.vpi`, Icarus compiles **the DUT only** (`-s riscv_core_top`,
 no Verilog testbench), and `vvp -M build -m rv64_tb` loads the VPI module, which
 bootstraps the regression from Rust.
 
-## If it does not compile
+## What was checked against the rustdv source
 
-Two details were taken from `rustdv/tinyalu_tb` but could not be checked against
-a compiler, and are the most likely points of friction:
+Every API call was reviewed against the rustdv tree (`rustdv/rustdv/`) rather
+than guessed, and five real errors were found and fixed this way:
 
-1. **Reading a signal.** The code uses `LogicHandle::get_u64()`, matching the
-   `set_u64()` seen in the reference BFM. If the reader is named differently
-   (e.g. `get()` returning `u64`), it is a mechanical rename in
-   `src/components.rs` — the helper `fn u(&LogicHandle) -> u64` is the single
-   place to change.
-2. **Creating a child component.** `MemoryAgent::new_comp()` and
-   `ConfigDb::set(None, "*", "BFM", Rc::new(bfm))` follow the reference
-   testbench's `build` phase. If the constructor is generated differently, only
-   `src/env.rs` and `src/rv64_tb.rs` need touching.
+| Was | Is | Why |
+| --- | --- | --- |
+| `h.get_u64()` | `h.get_u64().unwrap_or(0)` | it returns `Result<u64, ValueError>` |
+| `bfm.mem.get_mut(..)` through `Rc` | `RefCell<Vec<u32>>` + `borrow_mut()` | cannot mutate through `Rc` |
+| `#[component] exp: Vec<u64>` | plain field | `#[component]` is for child components, not data |
+| test and scoreboard both drained `retire_q` | scoreboard owns it; test waits on an `Event` | two consumers on one queue steal items |
+| `with_timeout(dur, fut)` | plain `await` | the real order is `(fut, dur)`, so the combinator was removed rather than half-fixed |
 
-Nothing else depends on an API guess: the port names in `src/bfm.rs` were taken
-from `riscv_core_top`'s own port list, and the vector format from
-`sim/gen_uvm_vectors.py`.
+Confirmed against the source: `HierarchyHandle::signal(&str) -> Result<LogicHandle, HandleError>`,
+`LogicHandle::{get_u64, set_u64, is_high}`, `rising_edge()/falling_edge() -> Edge`
+(awaitable), `Queue::{unbounded, put, get, try_get}`, `Event::{new, set, wait}`,
+`ConfigDb::{set, get}`, `Component::{build, connect, run, extract, check, report, new_comp}`
+with `fn build(&mut self, ctx: &mut RustdvCtx)` and
+`async fn run(&mut self, ctx: &mut RustdvCtx) -> Result<(), TestError>`.
+
+## What is still unverified
+
+The crate has not been through `rustc`, so type inference, trait imports and
+borrow lifetimes are unchecked. If it does not build, the errors will be of that
+kind rather than "this method does not exist" — the method surface was read from
+the source.

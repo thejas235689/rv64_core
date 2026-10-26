@@ -6,7 +6,7 @@
 //! testbench rather than a wrapper: every fetch the core performs is served
 //! from Rust.
 
-use std::collections::HashMap;
+use std::cell::RefCell;
 
 use rustdv::prelude::*;
 
@@ -48,7 +48,11 @@ pub struct CoreBfm {
     pub trap_cause: LogicHandle,
 
     /// Program image, word-addressed: `mem[addr >> 2]`.
-    pub mem: Vec<u32>,
+    ///
+    /// `RefCell` because the memory agent holds the BFM as `Rc<CoreBfm>` and
+    /// still has to store into it on a write beat; the borrow is short and
+    /// never held across an `await`.
+    pub mem: RefCell<Vec<u32>>,
 
     /// Beats the memory agent served, for the scoreboard and for coverage.
     pub served: Queue<MemBeat>,
@@ -56,6 +60,11 @@ pub struct CoreBfm {
     pub retire_q: Queue<RetireItem>,
     /// Traps seen.
     pub trap_q: Queue<TrapItem>,
+
+    /// Set by the scoreboard once it has compared the whole golden window.
+    /// The test waits on this instead of draining `retire_q` itself -- two
+    /// consumers on one queue would steal each other's items.
+    pub done: Event,
 }
 
 impl std::fmt::Debug for CoreBfm {
@@ -97,17 +106,22 @@ impl CoreBfm {
             trap_pc: dut.signal("trap_pc_o")?,
             trap_cause: dut.signal("trap_cause_o")?,
 
-            mem: Vec::new(),
+            mem: RefCell::new(Vec::new()),
             served: Queue::unbounded(),
             retire_q: Queue::unbounded(),
             trap_q: Queue::unbounded(),
+            done: Event::new(),
         })
     }
 
     /// Load a program image, one 32-bit word per element.
     pub fn load(&mut self, words: &[u32]) {
-        self.mem.clear();
-        self.mem.extend_from_slice(words);
+        *self.mem.borrow_mut() = words.to_vec();
+    }
+
+    pub fn read_word(&self, addr: u64) -> u32 {
+        let word = (addr >> 2) as usize;
+        *self.mem.borrow().get(word).unwrap_or(&0)
     }
 
     /// Hold reset for a few edges, then release. The core samples `rst_n`
@@ -129,6 +143,11 @@ impl CoreBfm {
 
     pub async fn get_retire(&self) -> RetireItem {
         self.retire_q.get().await
+    }
+
+    /// Wait until the scoreboard has compared every expected retirement.
+    pub async fn wait_done(&self) {
+        self.done.wait().await
     }
 
     pub async fn get_trap(&self) -> TrapItem {
