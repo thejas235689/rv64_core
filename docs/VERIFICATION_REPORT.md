@@ -82,6 +82,39 @@ ISA, and closure is a P5 activity (see `PROJECT_PLAN.md`).
 | `test_plic_priority_and_threshold` | PASS | priority arbitration, enable mask, threshold, claim → in-service → complete |
 | `test_plic_config_readback` | PASS | configuration register readback |
 
+### Generic synthesis (Yosys 0.70 via sv2v 0.0.13)
+
+First synthesis pass — P6 in `PROJECT_PLAN.md`. This is **generic** synthesis:
+no timing library, no clock constraint, no wire delay. It establishes that the
+RTL is buildable and structurally sound. It is **not** a timing result.
+
+```
+elaboration        : complete hierarchy, check -assert clean
+inferred latches   : none  (select -assert-none t:$dlatch t:$latch t:$sr passes)
+total cells        : 144,090   (generic gates after ABC)
+  flip-flops       :  15,039
+  combinational    : 129,051
+longest path       : 203 logic levels
+  endpoint         : u_mdu.res_q[63]   (MDU result register)
+```
+
+Two findings worth acting on:
+
+* **The MDU is the critical path**, exactly as predicted in the plan. The
+  64x64 multiplier that produces the 128-bit product for `mulh`/`mulhu` is fully
+  combinational, and it dominates the path. Any real implementation at speed
+  needs it sequenced or pipelined.
+* **The small arrays map to flip-flops, not memories** — the 32x64 register
+  file, the 64-entry BTB, the 256-entry BHT and the return-address stack are all
+  inferred as flops. That is correct for this microarchitecture but is a
+  deliberate area trade-off, not an oversight.
+
+Yosys's own SystemVerilog frontend cannot parse `rv64_pkg.sv`'s
+`ctrl_default()`, which returns a packed struct — legal SystemVerilog accepted
+by all three simulators. The flow therefore runs `sv2v` first and synthesises the
+converted Verilog; the RTL itself is unchanged. `sim/synth.sh` runs the whole
+flow.
+
 ### Coverage accumulated in one run
 
 ```

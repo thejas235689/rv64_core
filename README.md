@@ -82,7 +82,9 @@ rv64_core/
 │   ├── run.py                   build + run without make
 │   ├── Makefile                 same flow via cocotb's Makefile.sim
 │   ├── gen_uvm_vectors.py       golden vectors for the UVM scoreboard, from the ISS
-│   └── run_uvm.sh               UVM regression (needs a UVM-capable simulator)
+│   ├── run_uvm.sh               UVM regression (needs a UVM-capable simulator)
+│   ├── synth.sh                 sv2v + Yosys generic synthesis flow
+│   └── synth.ys                 Yosys script: structural checks, stats, path depth
 ├── docs/
 │   ├── PROJECT_PLAN.md          phases, exit criteria, status, risks
 │   ├── ARCHITECTURE_FEATURE_CONTRACT.md
@@ -158,7 +160,23 @@ warnings.
 Full detail, coverage table and the list of what is *not* verified:
 `docs/VERIFICATION_REPORT.md`.
 
-## 6. License
+## 6. Synthesis
+
+Generic synthesis (sv2v 0.0.13 + Yosys 0.70), for structural sanity rather than
+timing:
+
+```bash
+pip install yowasp-yosys          # or use a yosys binary
+SV2V=/path/to/sv2v YOSYS=yosys bash sim/synth.sh
+```
+
+Result: complete hierarchy, **no inferred latches**, 144,090 generic cells of
+which 15,039 are flip-flops, and a longest combinational path of 203 logic
+levels ending at the MDU result register. There is no timing library or clock
+constraint in this flow, so **no frequency should be inferred from it** — the
+MDU multiplier is the known critical path and would need sequencing at speed.
+
+## 7. License
 
 Dual-licensed under either of
 

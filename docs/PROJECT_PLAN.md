@@ -158,7 +158,7 @@ it has caught: 14 RTL defects and 10 harness defects to date, all listed in
 | P3 Feature completion | **done** | + 5/5 PMP unit tests, 2/2 PLIC tests; 27 tests total |
 | P4 UVM environment | **done** | 5/5 UVM tests under xezim, scoreboard vs golden vectors |
 | P5 Coverage closure | **partial** | ISA classes and all exception causes hit; covergroup instance coverage 52–70 %, no stated closure target yet |
-| P6 Hardening and sign-off | **not started** | no synthesis, STA, formal or CDC report exists |
+| P6 Hardening and sign-off | **started** | generic synthesis clean: no latches, 144,090 cells (15,039 FF), 203 logic levels, MDU result path critical. No library timing, STA, formal or CDC report yet |
 
 ### Test totals
 
