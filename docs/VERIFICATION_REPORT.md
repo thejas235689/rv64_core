@@ -88,7 +88,7 @@ ISA, and closure is a P5 activity (see `PROJECT_PLAN.md`).
 
 | Test | Program | Status |
 | --- | --- | --- |
-| `rv64_illegal_test` | every unimplemented major opcode plus reserved funct3/funct7 combinations (120 expected traps) | **PASS** -- 846 retirements and 120 traps matched |
+| `rv64_illegal_test` | every unimplemented major opcode plus reserved funct3/funct7 combinations | **PASS** -- 822 retirements and 119 traps matched |
 | `rv64_isa_test` | 4445 instructions: every ALU/MDU op x boundary-operand matrix, every shift amount 0..63, every bit index 0..63, every width x byte lane, every branch polarity, every CSR | **core PASSES the sweep** (see below); the UVM wrapper is unverified |
 
 The illegal sweep found two real defects, both now fixed:
@@ -123,11 +123,22 @@ diagnosed as harness-side, not core-side:
 * The mismatch therefore sits in the comparison: two values that are equal and
   print identically were failing `!==`. Every operand here is 2-state (`bit`), so
   case-inequality buys nothing; the comparisons are now plain `!=`.
-* That change is **not yet re-verified end to end**, because the UVM memory
-  driver runs at roughly 3200 simulated cycles per retired instruction, so a
-  4448-retirement run needs ~14M cycles and does not finish inside a single
-  simulation call. Fixing the driver's throughput is the prerequisite for
-  closing this out, and it is the next item.
+* Reverting to `!==` restored `rv64_illegal_test` to passing, which confirms
+  `!==` was the right operator and `!=` is the one that misbehaves on this
+  simulator. The ISA wrapper therefore has no identified defect left to fix --
+  what blocks it is throughput.
+
+**Blocker for the UVM ISA wrapper: driver throughput.** The UVM memory driver
+delivers roughly 3250 simulated cycles per retired instruction (the illegal
+sweep needs 2.67M cycles for 822 retirements), so a 4444-retirement run needs
+~14M cycles and cannot finish inside one simulation call. The cocotb harness does
+the same work at ~2.5 cycles per instruction. Fixing the driver is the
+prerequisite for closing the UVM ISA test, and it is the next item.
+
+One stale expectation was found in the generator while re-running this: opcode
+`0x0B` (custom-0) was still listed as unimplemented after the numeric ABI made
+it legal, so the illegal sweep expected a trap where the core correctly executed
+a numeric instruction. Removed from the list; the sweep is now 119 traps.
 
 Harness note: the UVM memory driver runs at roughly 3200 simulated cycles per
 retired instruction, so the 4445-instruction sweep takes ~14M cycles. That is a

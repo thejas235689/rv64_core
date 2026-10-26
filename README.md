@@ -154,9 +154,12 @@ Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
   4445-instruction program through the cocotb harness and matches the golden
   model for 24,861 retirements with zero mismatches. The UVM wrapper for that
   program is still unverified — the vectors load correctly and the comparison was
-  the suspect (now `!=` instead of `!==`), but a 4448-retirement UVM run does not
-  finish inside one call at the driver's current throughput.
-* **7 UVM tests: 6 pass, 1 fails.** `rv64_illegal_test` (120 unimplemented
+  ruled out: reverting to `!==` restored the illegal sweep, confirming `!==` is
+  correct and `!=` is the operator that misbehaves here. What blocks the ISA
+  wrapper is throughput -- the driver delivers ~3250 simulated cycles per retired
+  instruction, so a 4444-retirement run needs ~14M cycles and cannot finish in
+  one call. Fixing the driver is the next item.
+* **7 UVM tests: 6 pass, 1 is throughput-blocked.** `rv64_illegal_test` (120 unimplemented
   encodings, each expected to trap) passes and in doing so found two real
   defects: MRET/EBREAK let the younger instruction advance into MEM and execute
   on the wrong path, and OP-IMM-32 accepted funct3=7 as `srliw`. Both are fixed.

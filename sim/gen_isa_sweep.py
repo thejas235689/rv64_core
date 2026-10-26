@@ -194,6 +194,11 @@ def build_isa_program():
     for name in sorted(CSRS):
         if name in ("mcycle", "minstret", "mcycleh", "minstreth"):
             continue                      # free-running, not value-compared
+        if name in ("ncfg", "nflags", "nerr"):
+            continue                      # numeric CSRs: the ISS does not model
+                                          # them, so including them makes the
+                                          # golden vectors diverge from the DUT.
+                                          # They are covered by test_numeric_abi.
         L.append(f"csrrs x{rd_for(n)}, {name}, x0")
         n += 1
         # mtvec is excluded from the write sweep: clobbering it would send every
@@ -210,8 +215,11 @@ def build_isa_program():
 
 def build_illegal_program():
     """Every unimplemented major opcode and reserved sub-encoding must trap."""
+    # 0x0B (custom-0) is implemented by the numeric ABI and must not be listed
+    # as illegal; the ISS has no numeric model, so it would disagree with the
+    # DUT on every such encoding
     implemented = {0x37, 0x17, 0x6F, 0x67, 0x63, 0x03, 0x23, 0x13, 0x33,
-                   0x1B, 0x3B, 0x0F, 0x73}
+                   0x1B, 0x3B, 0x0F, 0x73, 0x0B}
     L = []
 
     # one instruction per unimplemented major opcode
