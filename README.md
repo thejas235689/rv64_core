@@ -30,6 +30,7 @@ fixed by this verification, and what is absent is listed as absent.
 | Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) — per-feature status |
 | Plan | [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) |
 | Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
+| Rust testbench | [`rust/README.md`](rust/README.md) — a rustdv environment; **unverified, never compiled** |
 
 ```sh
 pip install cocotb && export PATH=/path/to/oss-cad-suite/bin:$PATH

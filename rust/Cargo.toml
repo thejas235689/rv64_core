@@ -1,0 +1,20 @@
+[package]
+name = "rv64_tb"
+version = "0.1.0"
+edition = "2021"
+description = "rustdv testbench for rv64_core: memory agent, retire monitor, scoreboard"
+license = "MIT OR Apache-2.0"
+
+[lib]
+# Crate root named after the crate (rustdv convention D29), not lib.rs.
+path = "src/rv64_tb.rs"
+# cdylib: loaded by the simulator as a VPI module.
+# rlib: lets `cargo test` run the pure-Rust unit tests without a simulator.
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# Pin to whatever rustdv version you build against.
+rustdv = "0.1"
+
+[profile.release]
+opt-level = 2
