@@ -135,12 +135,24 @@ retirements and 17 traps matched, zero errors. So the scoreboard, monitors,
 agent and vector path are all correct end to end; what remains out of reach is
 only the full-size 4444-retirement run.
 
-**Blocker for the full-size UVM ISA run: driver throughput.** The UVM memory driver
-delivers roughly 3250 simulated cycles per retired instruction (the illegal
-sweep needs 2.67M cycles for 822 retirements), so a 4444-retirement run needs
-~14M cycles and cannot finish inside one simulation call. The cocotb harness does
-the same work at ~2.5 cycles per instruction. Fixing the driver is the
-prerequisite for closing the UVM ISA test, and it is the next item.
+**Blocker for the full-size UVM ISA run: simulator wall-clock throughput, not
+the driver.** An earlier version of this report claimed the memory driver
+delivered ~3250 simulated cycles per retired instruction. **That was wrong**, and
+the error was mine: xezim reports UVM timestamps in picoseconds, and I divided
+those by a 10 ns clock period, inflating every figure by 1000.
+
+Measured directly by instrumenting the driver and logging every 100 cycles:
+
+| Test | Sim time | Cycles | Retirements | Cycles/instr |
+| --- | --- | --- | --- | --- |
+| `rv64_alu_test` | 2,735,000 ps | ~274 | 44 | **6.2** |
+| `rv64_illegal_test` | 26,506,000 ps | ~2650 | 822 | **3.2** |
+
+The driver is behaving as designed: it accepts one request per cycle per port
+with a one-cycle response, and the core fetches two instructions per beat. What
+limits the full-size run is xezim itself -- roughly 13 simulated cycles per
+wall-clock second in UVM mode, so a 4444-retirement run needs about 1000 s and
+cannot finish inside one simulation call. There is nothing to fix in the driver.
 
 One stale expectation was found in the generator while re-running this: opcode
 `0x0B` (custom-0) was still listed as unimplemented after the numeric ABI made
