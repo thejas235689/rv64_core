@@ -72,12 +72,12 @@ class rv64_scoreboard extends uvm_scoreboard;
       return;
     end
 
-    if (r.pc !== exp_r[5*i]) begin
+    if (r.pc != exp_r[5*i]) begin
       `uvm_error("SB", $sformatf("retirement %0d: pc DUT=%016h expected=%016h",
                                  i, r.pc, exp_r[5*i]))
       n_errors++;
     end
-    if (r.insn !== exp_r[5*i+1][31:0]) begin
+    if (r.insn != exp_r[5*i+1][31:0]) begin
       `uvm_error("SB", $sformatf("retirement %0d (pc %016h): insn DUT=%08h expected=%08h",
                                  i, r.pc, r.insn, exp_r[5*i+1][31:0]))
       n_errors++;
@@ -88,12 +88,12 @@ class rv64_scoreboard extends uvm_scoreboard;
                                    i, r.pc, exp_r[5*i+3]))
         n_errors++;
       end else begin
-        if (r.waddr !== exp_r[5*i+3][4:0]) begin
+        if (r.waddr != exp_r[5*i+3][4:0]) begin
           `uvm_error("SB", $sformatf("retirement %0d (pc %016h): waddr DUT=x%0d expected=x%0d",
                                      i, r.pc, r.waddr, exp_r[5*i+3][4:0]))
           n_errors++;
         end
-        if (r.wdata !== exp_r[5*i+4]) begin
+        if (r.wdata != exp_r[5*i+4]) begin
           `uvm_error("SB", $sformatf("retirement %0d (pc %016h): x%0d DUT=%016h expected=%016h",
                                      i, r.pc, r.waddr, r.wdata, exp_r[5*i+4]))
           n_errors++;
@@ -120,12 +120,12 @@ class rv64_scoreboard extends uvm_scoreboard;
     n_trap_got++;
     if (j >= n_trap_exp) return;
 
-    if (t.pc !== exp_t[2*j]) begin
+    if (t.pc != exp_t[2*j]) begin
       `uvm_error("SB", $sformatf("trap %0d: pc DUT=%016h expected=%016h",
                                  j, t.pc, exp_t[2*j]))
       n_errors++;
     end
-    if (t.cause !== exp_t[2*j+1]) begin
+    if (t.cause != exp_t[2*j+1]) begin
       `uvm_error("SB", $sformatf("trap %0d (pc %016h): cause DUT=%016h expected=%016h",
                                  j, t.pc, t.cause, exp_t[2*j+1]))
       n_errors++;

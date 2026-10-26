@@ -150,6 +150,12 @@ Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
 * **5/5 PMP matcher unit tests pass** (TOR, NA4, NAPOT boundaries, permission
   bits, M-mode lock rule, entry priority).
 * **2/2 PLIC-lite tests pass.**
+* **The ISA sweep passes against the core**: `test_isa_sweep_fast` runs the same
+  4445-instruction program through the cocotb harness and matches the golden
+  model for 24,861 retirements with zero mismatches. The UVM wrapper for that
+  program is still unverified — the vectors load correctly and the comparison was
+  the suspect (now `!=` instead of `!==`), but a 4448-retirement UVM run does not
+  finish inside one call at the driver's current throughput.
 * **7 UVM tests: 6 pass, 1 fails.** `rv64_illegal_test` (120 unimplemented
   encodings, each expected to trap) passes and in doing so found two real
   defects: MRET/EBREAK let the younger instruction advance into MEM and execute

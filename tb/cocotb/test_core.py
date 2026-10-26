@@ -1383,3 +1383,32 @@ poll:
     assert vals[9] == 0x77,    f"result = {vals[9]:#x}, expected 0x77"
     cov("xcetask_csr_path")
     dut._log.info("Xcetask: start, completion, result, pending and slot state all correct")
+
+
+@cocotb.test()
+async def test_isa_sweep_fast(dut):
+    """The same 4445-instruction ISA sweep the UVM test uses, run through the
+    fast harness so any divergence can be located without waiting on the UVM
+    memory driver."""
+    import os, sys
+    here = os.path.dirname(os.path.abspath(__file__))
+    sys.path.insert(0, os.path.join(here, "..", "..", "sim"))
+    import gen_isa_sweep as g
+
+    src = g.with_handler(g.build_isa_program())
+    words, _ = assemble(src)
+
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=80000, stop_on_ecall=False)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "isa-sweep")
+    cov("isa_sweep")
+    dut._log.info(f"ISA sweep: {len(h.trace)} retirements matched the golden model")
