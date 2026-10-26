@@ -1,0 +1,23 @@
+# build and simulation artefacts
+sim_build*/
+sim/sim_build*/
+results.xml
+__pycache__/
+*.pyc
+
+# waveforms
+*.vcd
+*.fst
+*.ghw
+*.xtrace
+*.xtrace.zst
+
+# editor / OS
+.vscode/
+.idea/
+.DS_Store
+
+# local simulator installs
+oss-cad-suite/
+xezim/
+*.vvp
