@@ -245,9 +245,15 @@ Verified by a directed suite: **38 checks, 0 mismatches** — explicit and
 auto-allocated start, completion, out-of-order completion across slots, timeout
 expiry, cancel, free, stray completions, and masked/unmasked interrupt.
 
-**Not wired into the core** — there is no CSR decode path to the block and no
-custom-0 opcode for it yet. Like the numeric unit it is a verified standalone
-block awaiting integration.
+**Reachable from software.** The block sits on a CSR window at
+`0x7D0`-`0x7D8`, arbitrated with the machine CSRs and the numeric CSRs, so a
+program drives it with ordinary `csrrw`/`csrrs`. The engine side is brought out
+on the core's ports (`task_start_*`, `task_done_*`) and the completion interrupt
+is `task_irq_o`.
+
+`test_xcetask` exercises it end-to-end from executed instructions with a
+simulated engine: start, completion, result read-back, pending bit, per-slot
+state and the completion count all check out.
 
 ## 8. Synthesis
 

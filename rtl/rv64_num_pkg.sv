@@ -87,6 +87,9 @@ package rv64_num_pkg;
   localparam logic [11:0] CSR_NFLAGS = 12'h7C1;   // sticky flags
   localparam logic [11:0] CSR_NERR   = 12'h7C2;   // error bound of last operation
 
+  // ------------------------------------------------------------- Xcetask CSRs
+  localparam logic [11:0] CSR_TASK_BASE = 12'h7D0;   // 0x7D0..0x7D8, 9 registers
+
   // ------------------------------------------------------------- custom-0
   localparam logic [6:0] OPCODE_CUSTOM0 = 7'b0001011;
 

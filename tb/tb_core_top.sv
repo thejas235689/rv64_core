@@ -54,6 +54,16 @@ module tb_core_top #(
   logic [63:0] d_rsp_rdata;
   logic        d_rsp_error;
 
+  // ---- task engine side (driven by the test) -------------------------------
+  logic        task_start_valid;
+  logic [1:0]  task_start_slot;
+  logic [63:0] task_start_token;
+  logic [31:0] task_start_timeout;
+  logic        task_done_valid;
+  logic [1:0]  task_done_slot;
+  logic [63:0] task_done_result;
+  logic        task_irq;
+
   // ---- observability --------------------------------------------------------
   logic        retire_valid;
   logic [63:0] retire_pc;
@@ -170,7 +180,15 @@ module tb_core_top #(
     .priv_o         (priv),
     .debug_event_o  (debug_event),
     .mcycle_o       (mcycle),
-    .minstret_o     (minstret)
+    .minstret_o     (minstret),
+    .task_start_valid   (task_start_valid),
+    .task_start_slot    (task_start_slot),
+    .task_start_token   (task_start_token),
+    .task_start_timeout (task_start_timeout),
+    .task_done_valid    (task_done_valid),
+    .task_done_slot     (task_done_slot),
+    .task_done_result   (task_done_result),
+    .task_irq_o         (task_irq)
   );
 
 endmodule

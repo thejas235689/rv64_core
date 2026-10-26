@@ -186,6 +186,22 @@ Two defects were found during bring-up:
 
 The block also elaborates and maps through ABC with the latch assertion passing.
 
+**Integrated and reachable from software.** Xcetask occupies a CSR window at
+`0x7D0`-`0x7D8`, arbitrated alongside the machine and numeric CSRs, so ordinary
+`csrrw`/`csrrs` drive it. Its engine side appears on the core's ports and the
+completion interrupt is a new `task_irq_o` output.
+
+`test_xcetask` runs it end-to-end with a simulated engine and reads the results
+back through executed instructions: slot state DONE, completion count 1, pending
+bit set, result 0x77.
+
+One timing subtlety worth recording, because it is a real property of the block
+rather than a defect: a completion presented in the same cycle as the start is
+correctly rejected, since the slot only becomes ACTIVE at the end of that cycle.
+The first version of the testbench engine drove the completion exactly one cycle
+too early and saw the task time out instead. The block was right; the model of
+"when is a task live" was wrong.
+
 ### Generic synthesis (Yosys 0.70 via sv2v 0.0.13)
 
 First synthesis pass — P6 in `PROJECT_PLAN.md`. This is **generic** synthesis:

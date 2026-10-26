@@ -70,6 +70,9 @@ class Harness:
         d.dbg_step.value = 0
         d.dbg_reg_addr.value = 0
         d.wp_en.value = 0
+        d.task_done_valid.value = 0
+        d.task_done_slot.value = 0
+        d.task_done_result.value = 0
         d.wp_addr.value = 0
         cocotb.start_soon(Clock(d.clk, 10, "ns").start())
         for _ in range(5):
@@ -1312,3 +1315,71 @@ async def test_numeric_abi(dut):
     assert vals[7] == 0x6_0000_0000, f"quire 2.0*3.0: x7 = {vals[7]:#x}, expected 0x600000000"
     cov("numeric_abi_ops")
     dut._log.info("numeric ABI: mul, add, bridges, quire and CSRs all correct")
+
+
+@cocotb.test()
+async def test_xcetask(dut):
+    """Xcetask reached through the CSR window at 0x7D0, with a simulated task
+    engine on the other side. Checks start, completion, result, pending bit and
+    the per-slot state, all read back by executed instructions."""
+    h = Harness(dut)
+    await h.startup()
+
+    src = """
+    addi  x1, x0, 3
+    csrrw x0, 0x7d0, x1        # enable + interrupt enable
+    addi  x2, x0, 0x5a
+    csrrw x0, 0x7d2, x2        # token
+    addi  x3, x0, 0x3e8
+    csrrw x0, 0x7d3, x3        # timeout 1000 cycles
+    addi  x4, x0, 0x01         # op = START, slot = 0
+    csrrw x0, 0x7d1, x4
+poll:
+    csrrs x5, 0x7d4, x0        # status
+    andi  x6, x5, 3            # slot 0 state
+    addi  x7, x0, 2            # DONE
+    bne   x6, x7, poll
+    csrrs x8, 0x7d7, x0        # pending bits
+    csrrs x9, 0x7d5, x0        # result of the selected slot
+    ecall
+"""
+    words, _ = assemble(src)
+    h.clear()
+    await h.load(words)
+    await h.reset()
+
+    starts = [0]
+
+    async def engine():
+        """Complete each started task one cycle after the start pulse.
+
+        The completion must not be driven in the same cycle as the start: the
+        slot becomes ACTIVE at the end of that cycle, so a completion presented
+        then is evaluated against a slot that is still IDLE and is rejected.
+        """
+        queued = None
+        while True:
+            await RisingEdge(dut.clk)
+            await FallingEdge(dut.clk)
+            if queued is not None:
+                dut.task_done_valid.value = 1
+                dut.task_done_slot.value = queued
+                dut.task_done_result.value = 0x77
+                queued = None
+            else:
+                dut.task_done_valid.value = 0
+                if int(dut.task_start_valid.value):
+                    starts[0] += 1
+                    queued = int(dut.task_start_slot.value)
+
+    cocotb.start_soon(engine())
+    await h.run(max_cycles=4000, stop_on_ecall=True)
+
+    vals = await halt_and_read(h, [5, 8, 9])
+    dut._log.info(f"start pulses seen by the engine: {starts[0]}")
+    dut._log.info(f"status={vals[5]:#x} pending={vals[8]:#x} result={vals[9]:#x}")
+    assert (vals[5] & 3) == 2, f"slot 0 state = {vals[5] & 3}, expected DONE(2)"
+    assert vals[8] == 1,       f"pending = {vals[8]:#x}, expected 1"
+    assert vals[9] == 0x77,    f"result = {vals[9]:#x}, expected 0x77"
+    cov("xcetask_csr_path")
+    dut._log.info("Xcetask: start, completion, result, pending and slot state all correct")

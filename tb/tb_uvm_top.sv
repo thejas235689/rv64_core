@@ -58,7 +58,15 @@ module tb_uvm_top;
     .priv_o         (intf.priv),
     .debug_event_o  (intf.debug_event),
     .mcycle_o       (intf.mcycle),
-    .minstret_o     (intf.minstret)
+    .minstret_o     (intf.minstret),
+    .task_start_valid   (),
+    .task_start_slot    (),
+    .task_start_token   (),
+    .task_start_timeout (),
+    .task_done_valid    (1'b0),
+    .task_done_slot     (2'd0),
+    .task_done_result   (64'd0),
+    .task_irq_o         ()
   );
 
   initial begin

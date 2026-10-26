@@ -71,7 +71,17 @@ module riscv_core_top #(
   output logic [1:0]  priv_o,
   output logic        debug_event_o,
   output logic [63:0] mcycle_o,
-  output logic [63:0] minstret_o
+  output logic [63:0] minstret_o,
+
+  // ---- custom task slots (Xcetask) engine side -----------------------------
+  output logic        task_start_valid,
+  output logic [1:0]  task_start_slot,
+  output logic [63:0] task_start_token,
+  output logic [31:0] task_start_timeout,
+  input  logic        task_done_valid,
+  input  logic [1:0]  task_done_slot,
+  input  logic [63:0] task_done_result,
+  output logic        task_irq_o
 );
   import rv64_pkg::*;
   import rv64_num_pkg::*;
@@ -312,6 +322,33 @@ module riscv_core_top #(
     end
   end
 
+  // ===========================================================================
+  // Custom task slots (Xcetask), reached through the CSR window at 0x7D0
+  // ===========================================================================
+  logic        task_csr_valid;
+  logic [63:0] task_csr_rdata;
+  logic        task_csr_sel;
+
+  assign task_csr_sel = (id_ex_ctrl.csr_addr >= CSR_TASK_BASE) &&
+                        (id_ex_ctrl.csr_addr <= (CSR_TASK_BASE + 12'd8));
+
+  rv64_xcetask #(.NSLOT(4), .SLOT_W(2)) u_xcetask (
+    .clk           (clk),
+    .rst_n         (rst_n),
+    .csr_we        (csr_we && task_csr_sel),
+    .csr_addr      (id_ex_ctrl.csr_addr[3:0] - CSR_TASK_BASE[3:0]),
+    .csr_wdata     (csr_wdata),
+    .csr_rdata     (task_csr_rdata),
+    .start_valid   (task_start_valid),
+    .start_slot    (task_start_slot),
+    .start_token   (task_start_token),
+    .start_timeout (task_start_timeout),
+    .done_valid    (task_done_valid),
+    .done_slot     (task_done_slot),
+    .done_result   (task_done_result),
+    .irq           (task_irq_o)
+  );
+
   // exactly one pulse per numeric instruction, however long EX is held
   logic num_exec;
   assign num_exec = id_ex_v && id_ex_ctrl.is_num && ex_advance && !trap_taken;
@@ -358,7 +395,9 @@ module riscv_core_top #(
   logic [63:0] main_csr_rdata;
 
   always_comb begin
-    csr_rdata = num_csr_sel ? num_csr_rdata : main_csr_rdata;
+    if (task_csr_sel)     csr_rdata = task_csr_rdata;
+    else if (num_csr_sel) csr_rdata = num_csr_rdata;
+    else                  csr_rdata = main_csr_rdata;
   end
   logic        csr_valid;
   logic [63:0] mdu_result;
@@ -470,7 +509,7 @@ module riscv_core_top #(
     ex_exc_tval  = 64'd0;
 
     if (id_ex_ctrl.illegal ||
-        (id_ex_ctrl.is_csr && !csr_valid && !num_csr_valid)) begin
+        (id_ex_ctrl.is_csr && !csr_valid && !num_csr_valid && !task_csr_sel)) begin
       ex_exc       = 1'b1;
       ex_exc_cause = CAUSE_ILLEGAL;
       ex_exc_tval  = {32'd0, id_ex_insn};
@@ -549,7 +588,7 @@ module riscv_core_top #(
   assign csr_wdata = id_ex_ctrl.csr_imm ? {59'd0, id_ex_rs1} : op_a;
   // the numeric CSRs live outside the machine CSR file, so the access is
   // arbitrated here: address decode picks exactly one of the two files
-  assign csr_we    = id_ex_v && id_ex_ctrl.is_csr && (csr_valid || num_csr_valid) &&
+  assign csr_we    = id_ex_v && id_ex_ctrl.is_csr && (csr_valid || num_csr_valid || task_csr_sel) &&
                      !trap_to_csr && !ex_hold;
 
   rv64_csr u_csr (
