@@ -150,11 +150,13 @@ Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
 * **5/5 PMP matcher unit tests pass** (TOR, NA4, NAPOT boundaries, permission
   bits, M-mode lock rule, entry priority).
 * **2/2 PLIC-lite tests pass.**
-* **7 UVM tests exist; 5 pass and 2 are failing.** `rv64_isa_test` (a 4445-
-  instruction systematic ISA sweep) and `rv64_illegal_test` (120 unimplemented
-  encodings, each expected to trap) currently disagree with the golden model and
-  are **not root-caused**. See `docs/VERIFICATION_REPORT.md` -- ISA compliance
-  should not be claimed until they pass.
+* **7 UVM tests: 6 pass, 1 fails.** `rv64_illegal_test` (120 unimplemented
+  encodings, each expected to trap) passes and in doing so found two real
+  defects: MRET/EBREAK let the younger instruction advance into MEM and execute
+  on the wrong path, and OP-IMM-32 accepted funct3=7 as `srliw`. Both are fixed.
+  `rv64_isa_test` (the 4445-instruction sweep) still fails from retirement 1000
+  with pc mismatches whose two values print identically; not root-caused. See
+  `docs/VERIFICATION_REPORT.md`.
 * **5/5 of the earlier UVM tests pass** under xezim 0.11.3: a class-based environment with a
   memory agent (driver owns the memory model, backpressure and error injection),
   an observability monitor, a scoreboard comparing the full retirement and trap

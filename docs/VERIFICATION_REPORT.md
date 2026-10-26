@@ -82,39 +82,42 @@ ISA, and closure is a P5 activity (see `PROJECT_PLAN.md`).
 | `test_plic_priority_and_threshold` | PASS | priority arbitration, enable mask, threshold, claim → in-service → complete |
 | `test_plic_config_readback` | PASS | configuration register readback |
 
-### ISA sweep (`rv64_isa_test`, `rv64_illegal_test`) -- FAILING, not root-caused
+### ISA sweep (`rv64_isa_test`, `rv64_illegal_test`)
 
-`sim/gen_isa_sweep.py` builds two systematic programs and their golden vectors:
+`sim/gen_isa_sweep.py` builds two systematic programs and their golden vectors.
 
-* **isa** — 4445 instructions: every ALU/MDU op across a boundary-operand
-  matrix; every shift amount 0..63 (and 0..31 for word shifts) on both immediate
-  and register forms; every bit index 0..63 on the single-bit immediate forms;
-  every load/store width x byte lane; every branch polarity taken and not taken;
-  jal/jalr; every implemented CSR read and read-modify-write.
-* **illegal** — every unimplemented major opcode plus the reserved funct3/funct7
-  combinations inside implemented opcodes, each expected to trap as illegal
-  (120 traps).
+| Test | Program | Status |
+| --- | --- | --- |
+| `rv64_illegal_test` | every unimplemented major opcode plus reserved funct3/funct7 combinations (120 expected traps) | **PASS** -- 846 retirements and 120 traps matched |
+| `rv64_isa_test` | 4445 instructions: every ALU/MDU op x boundary-operand matrix, every shift amount 0..63, every bit index 0..63, every width x byte lane, every branch polarity, every CSR | **FAIL** -- not root-caused |
 
-**Current status: both tests fail against the DUT.** Observed symptoms:
+The illegal sweep found two real defects, both now fixed:
 
-| Test | Symptom |
-| --- | --- |
-| `rv64_isa_test` | from retirement 1000 onward the scoreboard reports pc mismatches where the DUT and expected values **print identically** (`DUT=...0fa0 expected=...0fa0`). That points at the comparison or the vector load rather than at the core, but it is not yet explained. |
-| `rv64_illegal_test` | the first illegal trap matches, but the handler then reads `mepc = 0x234` where the model expects `0x10`. `0x234` is one past the end of the program, which suggests the core is trapping again after the handler runs, overwriting `mepc`. |
+* **MRET/EBREAK did not stop the younger instruction from advancing into MEM.**
+  `flush_front` cleared IF/ID and ID/EX, but the instruction in EX is transferred
+  to MEM in the same cycle, so it executed anyway. Behind an MRET that means a
+  wrong-path instruction runs and can take a trap of its own, overwriting `mepc`.
+  Minimal reproduction: an illegal instruction at 0x08 with a handler at 0x100
+  produced `TRAP 1 pc=0x114` (the instruction after the `mret`) instead of
+  `pc=0x00c`. Icarus and xezim agreed exactly, so this was a core defect and not
+  a tool difference. The cocotb trap test had masked it because the slow memory
+  model usually leaves a bubble behind the `mret`.
+* **OP-IMM-32 accepted funct3=7 as `srliw`.** The decode `default` arm assumed
+  funct3 == 101, so 010/011/100/110/111 fell through and were decoded as
+  `srliw`/`sraiw` -- an illegal encoding executed as a legal instruction. The arm
+  is now explicit and everything else raises illegal-instruction.
 
-Both need root-causing before anything is claimed about ISA compliance. The
-generator and tests are committed so the failures are reproducible:
+`rv64_isa_test` still fails from retirement 1000 onward, reporting pc mismatches
+where the DUT and expected values **print identically** (`DUT=...0fa0
+expected=...0fa0`). The same scoreboard and vector format pass the illegal sweep,
+so the fault is specific to the larger vector file. Equal values failing a
+comparison points at the comparison or the vector load rather than at the core,
+but it is not yet explained, and no ISA-compliance claim is made until it passes.
 
-```
-python3 sim/gen_isa_sweep.py
-# then run rv64_isa_test / rv64_illegal_test through sim/run_uvm.sh
-```
-
-Separately, the UVM memory driver is pathologically slow: roughly 5000 simulated
-cycles per retired instruction, so a 4445-instruction sweep takes millions of
-cycles. That is a harness performance problem, not a core problem, and it is why
-the sweep is impractical to iterate on in this environment. The cocotb
-regression remains the fast path for functional checks.
+Harness note: the UVM memory driver runs at roughly 3200 simulated cycles per
+retired instruction, so the 4445-instruction sweep takes ~14M cycles. That is a
+driver throughput problem, not a core problem, and it is why this test is slow to
+iterate on. The cocotb regression (27/27 passing) remains the fast path.
 
 ### Numeric unit (`rv64_num_unit`)
 

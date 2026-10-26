@@ -291,13 +291,16 @@ module rv64_decoder (
             else if (funct6 == 6'b000010) ctrl.alu_op = ALU_SLLIUW;  // slli.uw
             else                          ctrl.illegal = 1'b1;
           end
-          default: begin                                       // funct3 == 101
+          3'b101: begin                                        // srliw / sraiw
             unique case (funct6)
               6'b000000: ctrl.alu_op = ALU_SRLW;               // srliw
               6'b010000: ctrl.alu_op = ALU_SRAW;               // sraiw
               default:   ctrl.illegal = 1'b1;
             endcase
           end
+          // funct3 = 010/011/100/110/111 are reserved: a `default` arm here
+          // would silently accept them (funct3=7 decoded as srliw)
+          default: ctrl.illegal = 1'b1;
         endcase
       end
 
