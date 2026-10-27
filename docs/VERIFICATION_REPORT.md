@@ -438,7 +438,19 @@ path needs), no coherence, no RRIP or replacement policy beyond direct mapping, 
 prefetch. It is also **not wired into the core** -- the fetch port still goes
 straight to memory, so this is a verified block rather than a working L1.
 
-**The wiring was attempted and reverted.** Inserting the cache between the fetch
+**A new isolated harness narrows where the problem is.** `tb/tb_fetch_cache.sv`
+drives the fetch unit and the cache together, with no core around them: a
+sequential walk, warm re-fetches, a mid-stream redirect, two lines sharing a cache
+index, and back-to-back fetches. **26 checks, 0 mismatches, 7 hits and 10 misses**
+-- the pair works.
+
+So the failure is *not* in the fetch unit, and not in the cache. Instrumenting the
+cache inside the core shows it filling and hitting with the right addresses and the
+right data throughout the failing test. The divergence is in how the rest of the
+pipeline interacts with the extra latency -- `pause`, `redirect` and `consume` are
+all driven from the core's control logic, and that is where to look next.
+
+**The core wiring was attempted twice and reverted both times.** Inserting the cache between the fetch
 unit and the instruction bus (with the PMP gate moved onto the fill port) built
 cleanly and then broke **8 of the 26 core tests**: the core fetched wrong
 instructions -- `test_control` saw `insn 0x05500493` where the ISS expected
@@ -451,7 +463,8 @@ change was reverted rather than committed half-working.
 
 A `resp_error` output was added to the cache during that attempt and is kept: an
 errored fill must reach the fetch unit as an access fault, and the original block
-had no way to say so.
+had no way to say so. `tb_fetch_cache.sv` is also kept -- it is the harness that
+localised the problem, and it will be the regression for the fix.
 
 ### Tagged history and a perceptron predictor
 
