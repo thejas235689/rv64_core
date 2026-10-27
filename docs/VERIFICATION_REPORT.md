@@ -420,6 +420,36 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### AMCCE -- adaptive cache engine (verified standalone)
+
+`rtl/rv64_amcce.sv`. The term had no definition in the tree, so the module header
+defines it: **AMCCE watches a cache's hit/miss stream and picks the cache's
+operating mode for the next window.** It exists for the case a fixed policy
+handles badly -- a sequential scan that misses every line, fills the cache with
+data that is never reused and evicts the working set.
+
+```
+mode 0 NORMAL   cache normally
+mode 1 BYPASS   streaming detected; do not allocate
+mode 2 RETAIN   reuse is high; evict reluctantly
+```
+
+Every `window` accesses it evaluates the miss rate: above `hi_thresh` it selects
+BYPASS, below `lo_thresh` it returns to NORMAL, and in between it **holds** the
+current mode. The two thresholds are the hysteresis -- without them a rate sitting
+on the boundary flips the mode every window and the output is noise.
+
+**18 checks, 0 mismatches under xezim and Icarus**: defaults, a clean window keeping
+NORMAL, a streaming window switching to BYPASS, reuse returning it to NORMAL, a 50%
+rate holding NORMAL across two windows, then holding BYPASS at 50% after a streaming
+window (hysteresis in both directions), the hit/miss/switch counters, and disabling
+freezing the counters.
+
+**Not integrated.** No cache in this tree consumes `mode` yet, so the engine decides
+and nothing obeys it. It also has no address knowledge, so it infers streaming from
+the miss rate alone rather than recognising a stride; RETAIN is reported but no
+consumer acts on it.
+
 ### Boot ROM and image authentication (verified standalone)
 
 `rtl/rv64_bootrom.sv`: a 2 KB read-only ROM the fetch path reads at reset, holding
