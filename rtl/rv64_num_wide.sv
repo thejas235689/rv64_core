@@ -454,6 +454,8 @@ module rv64_num_wide (
   logic signed [63:0] pd_a, pd_b, pres;
   logic signed [127:0] pmul_wide;
   logic signed [127:0] pdiv_num;
+  logic signed [127:0] pmul_shift;
+  logic signed [127:0] pdiv_q;
   logic [63:0] posit_y;
   logic [7:0]  posit_flags;
 
@@ -465,6 +467,8 @@ module rv64_num_wide (
     pres        = 64'sd0;
     pmul_wide   = 128'sd0;
     pdiv_num    = 128'sd0;
+    pmul_shift  = 128'sd0;
+    pdiv_q      = 128'sd0;
 
     case (op)
       NUM_PADD: begin
@@ -484,8 +488,22 @@ module rv64_num_wide (
         end
       end
       NUM_PMUL: begin
-        pmul_wide = pd_a * pd_b;
-        pres      = (pmul_wide >>> POS_FRAC_BITS);
+        pmul_wide  = pd_a * pd_b;
+        pmul_shift = pmul_wide >>> POS_FRAC_BITS;
+        // A 128-bit product shifted down can still exceed 64 bits. Truncating it
+        // wraps a large positive product negative, which then encodes to the
+        // negative rail -- so clamp before the narrowing.
+        if (pmul_shift > 128'sh0000_0000_7FFF_FFFF_FFFF_FFFF) begin
+          pres = 64'sh7FFF_FFFF_FFFF_FFFF;
+          posit_flags[FLAG_SATURATE] = 1'b1;
+          posit_flags[FLAG_OVERFLOW] = 1'b1;
+        end else if (pmul_shift < -128'sh0000_0000_8000_0000_0000_0000) begin
+          pres = 64'sh8000_0000_0000_0000;
+          posit_flags[FLAG_SATURATE] = 1'b1;
+          posit_flags[FLAG_OVERFLOW] = 1'b1;
+        end else begin
+          pres = pmul_shift[63:0];
+        end
       end
       default: begin
         if (pd_b == 64'sd0) begin
@@ -496,7 +514,20 @@ module rv64_num_wide (
           // 64-bit word overflows for any value above 2^30, which is most of
           // the posit range
           pdiv_num = $signed(pd_a) <<< POS_FRAC_BITS;
-          pres     = pdiv_num / $signed(pd_b);
+          pdiv_q   = pdiv_num / $signed(pd_b);
+          // the quotient of two Q30.34 values can exceed the 64-bit range, and
+          // narrowing it wraps a large positive quotient negative
+          if (pdiv_q > 128'sh0000_0000_7FFF_FFFF_FFFF_FFFF) begin
+            pres = 64'sh7FFF_FFFF_FFFF_FFFF;
+            posit_flags[FLAG_SATURATE] = 1'b1;
+            posit_flags[FLAG_OVERFLOW] = 1'b1;
+          end else if (pdiv_q < -128'sh0000_0000_8000_0000_0000_0000) begin
+            pres = 64'sh8000_0000_0000_0000;
+            posit_flags[FLAG_SATURATE] = 1'b1;
+            posit_flags[FLAG_OVERFLOW] = 1'b1;
+          end else begin
+            pres = pdiv_q[63:0];
+          end
         end
       end
     endcase

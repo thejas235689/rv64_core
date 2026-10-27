@@ -231,12 +231,18 @@ funct7 0x13  NUM_FROMINT  numeric nrd <- int rs1
 There is no forwarding on the numeric side, so a conservative interlock holds ID
 while any numeric write is still in flight. Correct, and deliberately simple.
 
-**Research families (`rtl/rv64_num_wide.sv`).** Residue (RNS, moduli 3/5/7/11),
-logarithmic (LNS, signed Q16.16 log2) and IEEE binary32 add/multiply are
-implemented and verified against the vector suite. Posit<16,1> is implemented but
-**not complete**: 4 of 2689 vectors still disagree, all on saturation-edge cases.
-The 8-bit and 32-bit posit variants are not implemented and the `fmt` field still
-selects nothing. See `docs/VERIFICATION_REPORT.md`.
+**Research families (`rtl/rv64_num_wide.sv`).** All four are implemented and
+verified -- 10756 checks, 0 mismatches:
+
+| Family | Ops | Representation |
+| --- | --- | --- |
+| Residue (RNS) | `RADD`, `RMUL` | moduli 3/5/7/11 packed in 12 bits, per-channel, exact |
+| Logarithmic (LNS) | `LNMUL`, `LNDIV` | signed Q16.16 log2, `0x8000_0000` = zero |
+| IEEE binary32 | `FADD`, `FMUL` | RNE, inf/NaN, subnormals flushed to zero |
+| Posit<16,1> | `PADD`, `PSUB`, `PMUL`, `PDIV` | decode to Q30.34, operate, re-encode |
+
+**Not implemented:** the 8-bit and 32-bit posit variants -- `fmt` still selects
+nothing, so each family is fixed at one width. See `docs/VERIFICATION_REPORT.md`.
 
 ## 7. Xcetask (in progress)
 

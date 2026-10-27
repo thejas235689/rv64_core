@@ -236,12 +236,27 @@ def posit_op(op, a, b):
             flags |= (1 << 5) | (1 << 0)
     elif op == PMUL:
         res = (da * db) >> POS_FRAC_BITS
+        # mirror the RTL: the shifted product can exceed the 64-bit range, and
+        # truncating it wraps a large positive product negative
+        if res > (1 << 63) - 1:
+            res = (1 << 63) - 1
+            flags |= (1 << 5) | (1 << 0)
+        elif res < -(1 << 63):
+            res = -(1 << 63)
+            flags |= (1 << 5) | (1 << 0)
     else:
         if db == 0:
             res = 0
             flags |= 1 << 4
         else:
             res = _trunc_div(da << POS_FRAC_BITS, db)
+            # mirror the RTL clamp before the 64-bit narrowing
+            if res > (1 << 63) - 1:
+                res = (1 << 63) - 1
+                flags |= (1 << 5) | (1 << 0)
+            elif res < -(1 << 63):
+                res = -(1 << 63)
+                flags |= (1 << 5) | (1 << 0)
     return posit_encode(res), flags
 
 # cfg field positions

@@ -208,14 +208,14 @@ reasoned about and tested on its own.
 | RNS | `RADD`, `RMUL` | **verified** -- moduli 3/5/7/11, per-channel modular, exact |
 | LNS | `LNMUL`, `LNDIV` | **verified** -- signed Q16.16 log2, `0x8000_0000` = zero, saturating |
 | IEEE binary32 | `FADD`, `FMUL` | **verified** -- RNE, inf/NaN handled, subnormals flushed to zero |
-| posit<16,1> | `PADD`, `PSUB`, `PMUL`, `PDIV` | **4 mismatches of 2689 vectors**, all on saturation-edge cases |
+| posit<16,1> | `PADD`, `PSUB`, `PMUL`, `PDIV` | **verified** -- decode to Q30.34, operate, re-encode with RNE |
 
-Standalone vector suite: **2685 of 2689 vectors match**. The posit family
-decodes, operates in Q30.34 and re-encodes correctly across the normal range
-(1.0+1.0=2.0, 1.0x1.0=1.0, 2.0/1.0=2.0, 1.0-1.0=0 all confirmed standalone),
-but when the result saturates past posit16's range the rail chosen disagrees
-with the model in four cases. That is not fixed, so posit is not claimed as
-complete.
+Standalone vector suite: **10756 checks, 0 mismatches** across all four families.
+
+The two final posit defects were both narrowing overflows: the multiply's
+128-bit product and the divide's 128-bit quotient were truncated to 64 bits
+before encoding, so a large positive result wrapped negative and encoded to the
+*negative* rail. Both now clamp before narrowing, matching the model.
 
 Bugs found and fixed on the way here, all of them mine rather than the tools':
 
@@ -235,10 +235,13 @@ Bugs found and fixed on the way here, all of them mine rather than the tools':
 * Two `always_comb` blocks drove `flags`, so the RNS arm silently took the
   default arm's INVALID flag.
 
-Not implemented: the 8-bit and 32-bit posit variants, and the `fmt` field still
-selects nothing. The UVM environments (SystemVerilog and rustdv) do not yet
-exercise these families -- they are driven from the standalone vector suite and
-the numeric in-CPU tests only.
+**Not implemented:** the 8-bit and 32-bit posit variants -- the `fmt` field still
+selects nothing, so all four families are fixed at their single width (posit16,
+32-bit LNS log, 12-bit packed RNS, binary32). Parameterising posit by width is a
+datapath refactor rather than a flag, because the regime length, fraction width
+and internal fixed-point scale all move with N. The UVM environments
+(SystemVerilog and rustdv) also do not yet exercise these families; they are
+driven by the standalone vector suite only.
 
 ### Xcetask (`rv64_xcetask`)
 
