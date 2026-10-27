@@ -420,6 +420,24 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Direct-mapped instruction cache
+
+`rtl/rv64_icache.sv`: 64 lines of one 64-bit fetch beat each, direct-mapped on
+address bits [8:3]. A hit answers in the cycle it is asked for; a miss issues one
+fill, installs the line, and only then answers, so a miss costs the fill latency
+rather than a retry.
+
+**18 checks, 0 mismatches** in `tb/tb_icache.sv`: cold miss then fill, warm hit on
+the same line, miss on a different line, eviction by a same-index different-tag
+address (and the original line missing again afterwards), and an errored fill
+correctly *not* cached so the next access retries instead of serving bad data.
+Hit and miss counters are checked at each step.
+
+Not implemented, in the header: no invalidate port (which a self-modifying-code
+path needs), no coherence, no RRIP or replacement policy beyond direct mapping, no
+prefetch. It is also **not wired into the core** -- the fetch port still goes
+straight to memory, so this is a verified block rather than a working L1.
+
 ### Tagged history and a perceptron predictor
 
 The predictor set is now: bimodal + gshare tournament, BTB, RAS, a loop-count

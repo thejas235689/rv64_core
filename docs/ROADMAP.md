@@ -67,8 +67,9 @@ fabrics: **all absent** from this repository.
 
 Nine of the fifteen pending items are implemented and verified (atomics, QISA,
 AI accelerator, CLINT, UART, DMI transport, predecode/fusion hints, S/U privilege
-modes, branch-predictor work including tagged history and the perceptron). One is
-partial: Sv39. The
+modes, branch-predictor work including tagged history and the perceptron). Two are
+partial: Sv39 (verified standalone, not integrated) and the caches (an I-cache is
+verified but not wired in). The
 rest are ordered here by dependency and by how much of the existing core they
 disturb. Estimates are for the RTL alone, at this repository's verification
 standard -- a block is not done here until it has a self-checking test.
@@ -81,7 +82,7 @@ standard -- a block is not done here until it has a self-checking test.
 
 
 
-| L1 I-cache, L1 D-cache | large | each is a cache with fill, eviction, RRIP and coherence hooks |
+
 | L2/L3, adaptive cache, AMCCE | large | depends on the L1s |
 | RVV subset (VLEN=64) | large | vector register file, decoder, execution units |
 | XRV512 (32x512 bank) | large | queued behind the 64-bit work; 2 KB register file plus ops |
