@@ -371,6 +371,44 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Platform blocks: CLINT, UART, DMI
+
+Three standalone blocks, each with a CSR control port like the rest of this
+core's peripherals. They are *not* wired into `riscv_core_top` -- a real platform
+memory-maps them, and this core has no platform bus; PLIC-lite sits in the same
+position.
+
+| Block | Status |
+| --- | --- |
+| `rv64_clint` | **verified** -- mtime/mtimecmp timer interrupt with enable gating, MSIP software interrupt; 14 checks with the UART |
+| `rv64_uart` | **verified** -- 8N1 transmit and receive, looped back in the testbench, byte and framing checked |
+| `rv64_dmi` | **elaborates and lints clean, TAP testbench NOT passing** -- 2 of 3 TAP checks are open |
+
+The DMI is the JTAG TAP plus the 41-bit DMI shift register with the standard
+dtmcs/dmi instruction codes, decoding onto the core's existing halt/resume/step
+and GPR-read ports. It is honestly incomplete in two ways, both stated in the
+file header: there is **no abstract-command layer** (no progbuf, no command
+queue, no system-bus master -- register access is direct via REGSEL/DATA0), and
+its **testbench cannot yet drive the TAP reliably**: the state machine reaches
+`CAP_IR` where the test expects `IDLE`, so a DMI write never reaches `Update-DR`
+and `haltreq` never asserts. The checks are counted separately and printed as
+KNOWN-OPEN rather than folded into the pass total or deleted.
+
+Three defects the platform tests caught:
+
+* **UART received every byte shifted right by one.** The receiver's first sample
+  lands in the middle of the start bit and was being stored as data bit 0.
+  Samples 1..8 are data, sample 9 is the stop bit; the received byte now matches
+  the transmitted one.
+* **UART dropped the top data bit.** After the start-bit fix the finish condition
+  was still one sample early, so bit 7 was never stored (0xA5 read back as 0x25).
+* **CLINT timer never fired** when only the low word of `mtimecmp` was written,
+  because it resets to all-ones -- the high word has to be cleared too. That one
+  was a testbench error, and the block was right.
+
+Also found: Icarus rejects an enum in a ternary (`st <= tms ? A : B`), so every
+TAP state transition is written as if/else.
+
 ### A extension: LR/SC and AMOs
 
 `lr.w/d`, `sc.w/d` and the nine AMOs (`swap`, `add`, `xor`, `or`, `and`, `min`,

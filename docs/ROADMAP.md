@@ -65,8 +65,9 @@ fabrics: **all absent** from this repository.
 
 ## Sizing what remains
 
-Three of the fifteen pending items are now implemented (atomics, QISA, AI
-accelerator). The
+Five of the fifteen pending items are now implemented (atomics, QISA, AI
+accelerator, CLINT, UART), and a sixth -- the DMI transport -- is implemented but
+not yet verified. The
 rest are ordered here by dependency and by how much of the existing core they
 disturb. Estimates are for the RTL alone, at this repository's verification
 standard -- a block is not done here until it has a self-checking test.
@@ -74,7 +75,7 @@ standard -- a block is not done here until it has a self-checking test.
 | Item | Size | Why |
 | --- | --- | --- |
 
-| DMI debug transport | medium | JTAG TAP + DMI shift register; self-contained, sits beside the existing debug unit |
+
 | Predecode tags, fusion hints | medium | front-end buffering change, isolated |
 | Loop predictor, tagged history, perceptron | medium | branch-predictor rework; must not regress the existing tournament predictor |
 | S/U privilege modes | medium-large | privilege checks across CSR, trap, PMP and LSU |
@@ -84,7 +85,7 @@ standard -- a block is not done here until it has a self-checking test.
 | RVV subset (VLEN=64) | large | vector register file, decoder, execution units |
 | XRV512 (32x512 bank) | large | queued behind the 64-bit work; 2 KB register file plus ops |
 | Out-of-order backend | very large | rename, free list, issue queue, PRF, ROB -- larger than the entire current core |
-| Platform (ROM, UART, CLINT, OpenSBI, boot auth) | large | a platform, not a core; several independent blocks |
+| Platform (ROM, UART, CLINT, OpenSBI, boot auth) | **partial** | CLINT and UART implemented and verified; DMI transport implemented but its TAP testbench is open; ROM boot, OpenSBI and boot authentication absent |
 | Research blocks (DNA, neuromorphic, photonic, interconnect) | large, under-specified | need a written contract before RTL is meaningful |
 
 ## Suggested order of work from here
