@@ -420,6 +420,48 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### RVV subset (verified standalone)
+
+`rtl/rv64_vregfile.sv` and `rtl/rv64_vunit.sv`: a 32 x 64-bit vector register file
+(three read ports, one write port, plus a control-window port) and an executor for
+
+```
+vsetvli / vsetivli
+vadd  vsub  vand  vor  vxor  vmin  vminu  vmax  vmaxu   (.vv / .vx / .vi)
+vmv.v.v / vmv.v.x
+```
+
+SEW comes from `vtype[4:3]`, so one 64-bit register holds 8, 4, 2 or 1 elements,
+and only elements below `vl` are written -- elements at or above `vl` keep their
+previous value, which is what software relies on for a tail.
+
+**12 checks, 0 mismatches under xezim and Icarus**: `vsetvli` setting `vl` and
+`vtype` at e64 and e8, `vadd.vv` at both widths, eight byte elements in one
+register, `vl` truncation preserving the tail, `vadd.vx` with a replicated scalar,
+`vadd.vi` with an immediate, `vand`/`vxor`, `vmv.v.v`, and the instruction counter.
+
+Three defects, all real:
+
+* **The accumulator started from `vs2` instead of `vd`**, so a store with `vl`
+  below VLMAX overwrote the tail instead of preserving it. A third read port for
+  the destination fixed it.
+* **The scalar in `.vx`/`.vi` was index-extracted like a vector element**, so only
+  element 0 received the scalar and the rest received zero. Scalars are now
+  replicated across every element.
+* **`6'd64` overflowed its 6-bit width** and truncated to 0. The mask comparison
+  only worked because both sides truncated identically -- a latent bug that
+  Icarus's width warning exposed.
+
+**Not wired into the core.** The executor takes a 32-bit instruction word rather
+than being driven by the core's decoder, so it is a self-contained unit that can be
+verified on its own; the core regression is unaffected at 28/28.
+
+**Not implemented, in the header:** no masking (`vm` ignored -- every operation is
+unmasked), no `vlmul` grouping, no widening/narrowing, fixed-point or
+floating-point operations, no `vle`/`vse` vector loads or stores, no slides,
+permutes or reductions, no `vstart` resumption (it is read but execution always
+starts at 0), and no chaining.
+
 ### XRV512
 
 `rtl/rv64_xrv512_file.sv` and `rtl/rv64_xrv512.sv`: a 32 x 512-bit register file
