@@ -181,6 +181,8 @@ module riscv_core_top #(
   logic        fetch_pmp_fault;
 
   logic        f_pred_taken;
+  logic        f_tag_control, f_tag_writes_rd, f_tag_fusion_valid;
+  logic [1:0]  f_tag_fusion_kind;
   logic [63:0] f_pred_target;
 
   logic        halted_q, halt_pending_q, step_mode_q;
@@ -209,7 +211,11 @@ module riscv_core_top #(
     .insn_pc     (f_insn_pc),
     .insn        (f_insn),
     .fault_valid (f_fault_valid),
-    .fault_pc    (f_fault_pc)
+    .fault_pc    (f_fault_pc),
+    .tag_is_control   (f_tag_control),
+    .tag_writes_rd    (f_tag_writes_rd),
+    .tag_fusion_valid (f_tag_fusion_valid),
+    .tag_fusion_kind  (f_tag_fusion_kind)
   );
 
   assign if_req_valid = f_req_valid && fetch_pmp_ok;

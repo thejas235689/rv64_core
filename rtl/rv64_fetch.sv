@@ -32,7 +32,13 @@ module rv64_fetch (
   output logic [63:0] insn_pc,
   output logic [31:0] insn,
   output logic        fault_valid,
-  output logic [63:0] fault_pc
+  output logic [63:0] fault_pc,
+
+  // ---- predecode tags for the instruction being presented ------------------
+  output logic        tag_is_control,
+  output logic        tag_writes_rd,
+  output logic        tag_fusion_valid,
+  output logic [1:0]  tag_fusion_kind
 );
   logic        beat_v;
   logic [63:0] beat_addr;
@@ -47,6 +53,32 @@ module rv64_fetch (
   logic [63:0] aligned;
   logic        need;
 
+  // The previously CONSUMED instruction, so the fusion detector sees the pair
+  // as the pipeline sees it rather than as the fetch stream happens to align.
+  logic [31:0] prev_insn_q;
+  logic        prev_valid_q;
+
+  logic [31:0] cur_insn;
+  assign cur_insn = pc_i[2] ? beat_data[63:32] : beat_data[31:0];
+
+  rv64_predecode u_pre (
+    .insn           (cur_insn),
+    .prev_insn      (prev_insn_q),
+    .prev_valid     (prev_valid_q),
+    .is_control     (tag_is_control),
+    .is_branch      (),
+    .is_jal         (),
+    .is_jalr        (),
+    .writes_rd      (tag_writes_rd),
+    .is_load        (),
+    .is_store       (),
+    .rd             (),
+    .rs1            (),
+    .rs2            (),
+    .fusion_valid   (tag_fusion_valid),
+    .fusion_kind    (tag_fusion_kind)
+  );
+
   assign aligned = {pc_i[63:3], 3'b000};
   assign need    = !beat_v || (beat_addr != aligned);
 
@@ -56,7 +88,7 @@ module rv64_fetch (
 
   assign insn_valid = beat_v && (beat_addr == aligned) && !fault_q;
   assign insn_pc    = pc_i;
-  assign insn       = pc_i[2] ? beat_data[63:32] : beat_data[31:0];
+  assign insn       = cur_insn;
 
   assign fault_valid = fault_q;
   assign fault_pc    = fault_addr_q;
@@ -70,11 +102,18 @@ module rv64_fetch (
       out_addr     <= 64'd0;
       fault_q      <= 1'b0;
       fault_addr_q <= 64'd0;
+      prev_insn_q  <= 32'd0;
+      prev_valid_q <= 1'b0;
     end else if (redirect) begin
       beat_v       <= 1'b0;
       out_pending  <= 1'b0;
       fault_q      <= 1'b0;
     end else begin
+      // remember what was consumed, for the next pair's fusion hint
+      if (consume && insn_valid) begin
+        prev_insn_q  <= cur_insn;
+        prev_valid_q <= 1'b1;
+      end
       // issue tracking
       if (req_valid && req_ready) begin
         out_pending <= 1'b1;

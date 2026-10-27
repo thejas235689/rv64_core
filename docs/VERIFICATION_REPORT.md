@@ -420,6 +420,32 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Front-end predecode and fusion hints
+
+`rtl/rv64_predecode.sv` classifies an instruction from its encoding alone --
+control transfer, register write, load/store, and whether it pairs with the
+previous instruction -- so the front end has those facts before the full decoder
+does. It is wired into `rv64_fetch`, which carries the tags alongside the
+instruction and remembers the previously *consumed* instruction so the fusion
+detector sees the pair as the pipeline sees it.
+
+The tags are deliberately a subset of the decoder's output, and that is the risk:
+a second decoder can drift. `tb/tb_predecode.sv` therefore **cross-checks every
+tag against the full decoder** over all 128 opcode bytes, the ISA sweep encodings
+and the atomic/CSR forms: **316 checks, 0 mismatches**. A divergence is a test
+failure, not a silent difference in behaviour.
+
+The cross-check earned its keep immediately: CSR instructions write `rd` but
+`ecall`/`ebreak`/`mret`/`wfi` share opcode `0x73` and do not. The first version
+tagged the whole opcode as writing `rd` and the check failed on `csrrw x4,
+mstatus, x1`. `SYSTEM` is now split on `funct3 == 0`.
+
+Fusion hints detect three pair shapes -- `lui` + op-imm/load/store on the same
+register, `auipc` + addi/jalr, and any instruction after `jal`/`jalr` -- and are
+**hints only**. There is no fused execution unit; the pipeline still issues both
+instructions. The roadmap item asked for fusion *hints*, and the file header says
+plainly that no fused datapath exists.
+
 ### Platform blocks: CLINT, UART, DMI
 
 Three standalone blocks, each with a CSR control port like the rest of this
