@@ -36,40 +36,38 @@ module rv64_xrv512_file (
 );
   localparam int NREG = 32;
 
-  logic [511:0] regs [0:NREG-1];
+  // Stored as 64-bit lane elements rather than 512-bit words: reading a 512-bit
+  // array element returned lane 0 replicated under xezim, so every lane of the
+  // full-width read held the first lane's value. Concatenating eight 64-bit
+  // elements with constant lane indices reads correctly.
+  // flat 1-D array of 64-bit words: a 2-D read (regs[reg][lane]) truncated to
+  // 32 bits under xezim, while a variable ARRAY index works correctly
+  logic [63:0] regs [0:NREG*8-1];
 
-  assign rdata_a = regs[raddr_a];
-  assign rdata_b = regs[raddr_b];
+  wire [7:0] abase = {raddr_a, 3'b000};
+  wire [7:0] bbase = {raddr_b, 3'b000};
+  assign rdata_a = {regs[abase+7], regs[abase+6], regs[abase+5], regs[abase+4],
+                    regs[abase+3], regs[abase+2], regs[abase+1], regs[abase]};
+  assign rdata_b = {regs[bbase+7], regs[bbase+6], regs[bbase+5], regs[bbase+4],
+                    regs[bbase+3], regs[bbase+2], regs[bbase+1], regs[bbase]};
   // constant lane indices, not `64*llane +: 64`: a computed part-select base
   // evaluated as lane 0 under xezim
   always_comb begin
     unique case (llane)
-      3'd0: ldata = regs[laddr][63:0];
-      3'd1: ldata = regs[laddr][127:64];
-      3'd2: ldata = regs[laddr][191:128];
-      3'd3: ldata = regs[laddr][255:192];
-      3'd4: ldata = regs[laddr][319:256];
-      3'd5: ldata = regs[laddr][383:320];
-      3'd6: ldata = regs[laddr][447:384];
-      default: ldata = regs[laddr][511:448];
+      default: ldata = regs[{laddr, llane}];
     endcase
   end
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      for (int r = 0; r < NREG; r++) regs[r] <= 512'd0;
+      for (int r = 0; r < NREG*8; r++) regs[r] <= 64'd0;
     end else begin
-      if (we) regs[waddr] <= wdata;
+      if (we) begin
+        for (int l = 0; l < 8; l++) regs[{waddr, 3'(l)}] <= wdata >> (64*l);
+      end
       if (lwe) begin
         unique case (llane)
-          3'd0: regs[laddr][63:0]    <= lwdata;
-          3'd1: regs[laddr][127:64]  <= lwdata;
-          3'd2: regs[laddr][191:128] <= lwdata;
-          3'd3: regs[laddr][255:192] <= lwdata;
-          3'd4: regs[laddr][319:256] <= lwdata;
-          3'd5: regs[laddr][383:320] <= lwdata;
-          3'd6: regs[laddr][447:384] <= lwdata;
-          default: regs[laddr][511:448] <= lwdata;
+          default: regs[{laddr, llane}] <= lwdata;
         endcase
       end
     end

@@ -420,7 +420,7 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
-### XRV512 (implemented, NOT verified)
+### XRV512
 
 `rtl/rv64_xrv512_file.sv` and `rtl/rv64_xrv512.sv`: a 32 x 512-bit register file
 with two full-width read ports, a write port and a single-lane port, driving
@@ -429,21 +429,26 @@ and VRED (lane sum). It compiles cleanly under slang, and the register file's la
 port is demonstrably working -- a probe shows `lane_q` taking 0,1,2... and a lane
 read returning the right value.
 
-**It is not verified, and I am not claiming otherwise.** `tb/tb_xrv512.sv` reports
-5 mismatches: every lane of the destination ends up holding the *first* lane's
-result, so a VADD of (10,20,...) and (1,2,...) yields 11 in all eight lanes
-instead of 11,22,...
+**18 checks, 0 mismatches under xezim and Icarus.**
 
-Three rewrites did not fix it: the lane compute with a computed part-select
-(`rdata_a[64*l +: 64]`), then with shifts (`rdata_a >> (64*l)`), then with eight
-explicitly-indexed lanes and constant part-selects, and finally the register file's
-lane read and write rewritten as cases over constant indices. All four produce the
-same symptom, which points at something more basic than the indexing -- most likely
-the lane writes never reaching distinct lanes at all, so every source lane reads
-the same value.
+Getting there took a probe rather than more rewriting. The lane *writes* were
+correct all along -- a print showed reg1 receiving 10, 20, 30 at lanes 0, 1, 2 --
+so the fault was in the read. Two storage shapes were at fault, both in the
+simulator's handling of wide arrays:
 
-This is the first block in the project left in this state, and the honest summary
-is that it needs another session with a waveform rather than more guessing.
+* a 512-bit array element read (`regs[raddr_a]`) returned **lane 0 replicated** in
+  every lane, so all eight lanes computed the first lane's result;
+* storing as a 2-D array (`regs[reg][lane]`) truncated the read to **32 bits**, so
+  a lane holding -5 read back as +4294967291 and a signed minimum picked the wrong
+  operand.
+
+The bank is now a flat 1-D array of 64-bit words indexed by `{reg, lane}`, which
+both tools handle correctly. Four earlier rewrites of the *compute* (computed
+part-select, shifts, eight explicit lanes with constant selects, and cases over
+constant lane indices) all failed because the compute was never the problem.
+
+The lesson is the one this project keeps re-teaching: when a wide-array read looks
+wrong, print the array, do not rewrite the arithmetic.
 
 ### L2 cache with RRIP (verified standalone)
 

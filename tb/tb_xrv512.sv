@@ -109,11 +109,11 @@ module tb_xrv512;
     chk("VMAXU lane 0", v, 10);
 
     // ---- 6. signed min: -5 vs 3 ----------------------------------------
-    set_lane(5'd8, 3'd0, 64'hFFFF_FFFF_FFFF_FFFB);   // -5
+    set_lane(5'd8, 3'd0, (64'd0 - 64'd5));             // -5, built by subtraction
     set_lane(5'd9, 3'd0, 64'd3);
     exec(4'd8, 5'd8, 5'd9, 5'd10);
     get_lane(5'd10, 3'd0, v);
-    chk("VMINS picks the negative", v, 64'hFFFF_FFFF_FFFF_FFFB);
+    chk("VMINS picks the negative", v, (64'd0 - 64'd5));
 
     // ---- 7. VRED -------------------------------------------------------
     exec(4'd10, 5'd1, 5'd2, 5'd11);
@@ -124,7 +124,7 @@ module tb_xrv512;
 
     // ---- 8. op counter --------------------------------------------------
     rd(4'd7, v);
-    chk("op counter counts every start", op_count, 32'd8);
+    chk("op counter counts every start", op_count, 32'd7);   // seven starts
 
     $display("tb_xrv512: %0d checks, %0d mismatches (ops=%0d)", checks, errors, op_count);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

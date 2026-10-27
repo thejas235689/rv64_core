@@ -76,6 +76,10 @@ module rv64_xrv512 (
   // first lane's result.
   function automatic logic [63:0] elem(input logic [3:0] op,
                                        input logic [63:0] a, input logic [63:0] b);
+    logic signed [63:0] sa, sb;
+    begin
+    sa = a;
+    sb = b;
     unique case (op)
       OP_ADD:  return a + b;
       OP_SUB:  return a - b;
@@ -85,10 +89,11 @@ module rv64_xrv512 (
       OP_XOR:  return a ^ b;
       OP_MINU: return (a < b) ? a : b;
       OP_MAXU: return (a > b) ? a : b;
-      OP_MINS: return ($signed(a) < $signed(b)) ? a : b;
-      OP_MAXS: return ($signed(a) > $signed(b)) ? a : b;
+      OP_MINS: return (sa < sb) ? a : b;
+      OP_MAXS: return (sa > sb) ? a : b;
       default: return a;
     endcase
+    end
   endfunction
 
   logic [511:0] result;
@@ -124,7 +129,9 @@ module rv64_xrv512 (
     endcase
   end
 
-  assign busy  = busy_q;
+
+  assign busy     = busy_q;
+  assign op_count = op_count_q;
   assign wdata = result;
 
   always_ff @(posedge clk or negedge rst_n) begin
