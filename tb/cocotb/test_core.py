@@ -1562,3 +1562,58 @@ async def test_atomic(dut):
     compare(h, iss_trace, "atomic")
     cov("atomic")
     dut._log.info(f"atomic: {len(h.trace)} retirements matched the ISS")
+
+
+@cocotb.test()
+async def test_sv39_identity(dut):
+    """Run real Sv39 translation inside the core.
+
+    A single level-2 leaf PTE maps the low 1 GB identity (VA == PA), so the
+    architectural results are unchanged and the ISS comparison stays valid while
+    the walker, the TLB and the LSU translation phase are all exercised by
+    executed instructions. MPRV is set so M-mode loads and stores translate;
+    fetches are never translated in M-mode, so the program itself runs bare.
+    """
+    L = []
+    # root page table at PA 0x1000, holding one identity megapage PTE
+    L.extend(li64(5, 0x1000))
+    L.extend(li64(6, 0xCF))              # V|R|W|X|A|D, PPN 0 -> identity
+    L.append("sd x6, 0(x5)")
+    L.extend(li64(7, 0x8000000000000001))  # satp: MODE=8 (Sv39), PPN=1
+    # csrrw x0, satp(0x180), x7 -- encoded directly: the assembler has no name
+    # for satp
+    L.append(f".word 0x{(0x180 << 20) | (7 << 15) | (1 << 12) | 0x73:08x}")
+    L.extend(li64(8, 0x20000))             # mstatus.MPRV (bit 17)
+    # csrrs x0, mstatus(0x300), x8
+    L.append(f".word 0x{(0x300 << 20) | (8 << 15) | (2 << 12) | 0x73:08x}")
+    # now every load and store below goes through the walker
+    L.extend(li64(9, 0x2000))
+    L.extend(li64(10, 0x1234))
+    L.append("sd x10, 0(x9)")
+    L.append("ld x11, 0(x9)")
+    L.extend(li64(10, 0x5678))
+    L.append("sd x10, 8(x9)")
+    L.append("ld x12, 8(x9)")
+    L.append("add x13, x11, x12")          # 0x1234 + 0x5678
+    # a second page, so the TLB has more than one entry to manage
+    L.extend(li64(9, 0x3000))
+    L.append("sd x11, 0(x9)")
+    L.append("ld x14, 0(x9)")
+    L.append("ecall")
+
+    src = "\n".join(L)
+    words, _ = assemble(src)
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "sv39-identity")
+    cov("sv39")
+    dut._log.info(f"sv39 identity: {len(h.trace)} retirements matched the ISS")

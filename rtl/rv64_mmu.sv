@@ -67,6 +67,10 @@ module rv64_mmu (
   logic [26:0]  tlb_vpn  [0:TLB_N-1];
   logic [43:0]  tlb_ppn  [0:TLB_N-1];
   logic [3:0]   tlb_perm [0:TLB_N-1];   // {u, x, w, r}
+  // The page SIZE has to be cached with the entry: a 1 GB megapage and a 4 KB
+  // page differ in how the offset is composed, so a hit that assumed 4 KB
+  // collapsed a megapage address to zero.
+  logic [1:0]   tlb_lvl  [0:TLB_N-1];
 
   wire [26:0] vpn0 = vaddr[38:12];
   wire [3:0]  tlb_idx = vpn0[3:0];
@@ -242,6 +246,7 @@ module rv64_mmu (
         tlb_vpn[i]  <= 27'd0;
         tlb_ppn[i]  <= 44'd0;
         tlb_perm[i] <= 4'd0;
+        tlb_lvl[i]  <= 2'd0;
       end
     end else begin
       case (wst)
@@ -260,7 +265,7 @@ module rv64_mmu (
               // address instead of the translated one.
               bare_q       <= 1'b0;
               leaf_ppn     <= tlb_ppn[tlb_idx];
-              leaf_level   <= 2'd0;
+              leaf_level   <= tlb_lvl[tlb_idx];
               leaf_is_leaf <= 1'b1;
               if (hit_perm_ok) wst <= W_DONE;
               else             wst <= W_FAULT;
@@ -297,6 +302,7 @@ module rv64_mmu (
                   tlb_ppn[tlb_idx]  <= pte_rsp_data[53:10];
                   tlb_perm[tlb_idx] <= {pte_rsp_data[4], pte_rsp_data[3],
                                         pte_rsp_data[2], pte_rsp_data[1]};
+                  tlb_lvl[tlb_idx]  <= level;
                   wst <= W_DONE;
                 end else begin
                   wst <= W_FAULT;

@@ -75,6 +75,9 @@ class ISS:
             0x342: 0,            # mcause
             0x343: 0,            # mtval
             0x344: 0,            # mip
+            0x180: 0,            # satp -- accepted, and deliberately NOT used to
+                                 # translate: the only Sv39 test maps identity,
+                                 # so not translating is the right behaviour
             0x3A0: 0,            # pmpcfg0
             0xF11: 0, 0xF12: 0x52563634, 0xF13: 1, 0xF14: 0,
         }

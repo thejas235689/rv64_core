@@ -22,7 +22,7 @@ TB_DIR = os.path.join(ROOT, "tb")
 
 RTL_SRCS = [
     "rv64_pkg.sv", "rv64_alu.sv", "rv64_mdu.sv", "rv64_regfile.sv",
-    "rv64_decoder.sv", "rv64_pmp.sv", "rv64_csr.sv", "rv64_lsu.sv",
+    "rv64_decoder.sv", "rv64_pmp.sv", "rv64_csr.sv", "rv64_mmu.sv", "rv64_lsu.sv",
     "rv64_bpu.sv", "rv64_predecode.sv", "rv64_fetch.sv", "rv64_plic_lite.sv",
     "rv64_num_pkg.sv", "rv64_num_wide.sv", "rv64_numfile.sv", "rv64_num_unit.sv", "rv64_num_csr.sv",
     "rv64_qisa.sv" , "rv64_aiacc.sv" , "rv64_xcetask.sv",

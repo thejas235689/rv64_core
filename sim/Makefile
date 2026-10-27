@@ -15,6 +15,7 @@ RTL_SRCS := \
   $(RTL_DIR)/rv64_decoder.sv \
   $(RTL_DIR)/rv64_pmp.sv \
   $(RTL_DIR)/rv64_csr.sv \
+  $(RTL_DIR)/rv64_mmu.sv \
   $(RTL_DIR)/rv64_lsu.sv \
   $(RTL_DIR)/rv64_bpu.sv \
   $(RTL_DIR)/rv64_predecode.sv \

@@ -22,6 +22,10 @@ module rv64_lsu (
   // atomics (A extension). req_atomic = AT_NONE for an ordinary load or store.
   input  logic [1:0]  req_atomic,
   input  logic [4:0]  req_amo_op,
+  // ---- translation ---------------------------------------------------------
+  input  logic [63:0] satp,
+  input  logic [1:0]  priv,
+  input  logic        mprv, sum, mxr,
   input  logic        pmp_ok,
 
   // ---- data interface -------------------------------------------------------
@@ -43,7 +47,7 @@ module rv64_lsu (
 );
   import rv64_pkg::*;
 
-  typedef enum logic [2:0] {S_IDLE, S_REQ, S_RESP, S_WREQ, S_DONE} state_e;
+  typedef enum logic [2:0] {S_IDLE, S_XLATE, S_REQ, S_RESP, S_WREQ, S_DONE} state_e;
 
   state_e      state;
   // S_WREQ: the write half of an AMO's read-modify-write
@@ -103,6 +107,30 @@ module rv64_lsu (
 
   wire amo_is_w = (size_q == MSZ_W);
 
+  // ---- Sv39 translation ----------------------------------------------------
+  // The walker's PTE reads share this unit's memory port: while it is walking it
+  // owns the bus, otherwise the LSU does. A translation that faults becomes the
+  // access fault for the original request.
+  logic        mmu_req, mmu_resp, mmu_fault, mmu_busy;
+  logic [63:0] mmu_paddr, mmu_cause;
+  logic        mmu_pte_valid;
+  logic [63:0] mmu_pte_addr;
+  logic        xlate_q;
+  logic [63:0] paddr_q;
+
+  wire [1:0] acc_kind = we_q ? 2'd2 : 2'd1;      // store or load
+
+  rv64_mmu u_mmu (
+    .clk(clk), .rst_n(rst_n),
+    .satp(satp), .priv(priv), .mprv(mprv), .sum(sum), .mxr(mxr),
+    .req_valid(mmu_req), .vaddr(addr_q), .acc_type(acc_kind),
+    .resp_valid(mmu_resp), .paddr(mmu_paddr), .fault(mmu_fault),
+    .fault_cause(mmu_cause), .fault_tval(), .busy(mmu_busy),
+    .pte_req_valid(mmu_pte_valid), .pte_req_addr(mmu_pte_addr),
+    .pte_req_ready(mem_req_ready), .pte_rsp_valid(mem_rsp_valid),
+    .pte_rsp_data(mem_rsp_rdata), .pte_rsp_error(mem_rsp_error)
+  );
+
   // ---- request formation ----------------------------------------------------
   logic [63:0] lane_shifted;
   logic [7:0]  strb;
@@ -145,12 +173,13 @@ module rv64_lsu (
   // ---- handshake ------------------------------------------------------------
   // S_WREQ is the write half of an AMO's read-modify-write: without it here the
   // read happens and the write never reaches the bus.
-  assign mem_req_valid = (state == S_REQ) || (state == S_WREQ);
-  assign mem_req_addr  = addr_q;
-  assign mem_req_we    = we_q;
+  assign mem_req_valid = mmu_busy ? mmu_pte_valid
+                                  : ((state == S_REQ) || (state == S_WREQ));
+  assign mem_req_addr  = mmu_busy ? mmu_pte_addr : paddr_q;
+  assign mem_req_we    = mmu_busy ? 1'b0 : we_q;
   // During an AMO's write phase the data is the computed result, not rs2.
   assign mem_req_wdata = (atomic_q == AT_AMO) ? amo_new : lane_shifted;
-  assign mem_req_wstrb = we_q ? strb : 8'h00;
+  assign mem_req_wstrb = (mmu_busy || !we_q) ? 8'h00 : strb;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -165,6 +194,9 @@ module rv64_lsu (
       data_lat<= 64'd0;
       resv_valid <= 1'b0;
       resv_addr  <= 64'd0;
+      mmu_req    <= 1'b0;
+      xlate_q    <= 1'b0;
+      paddr_q    <= 64'd0;
       atomic_q   <= AT_NONE;
       amo_op_q   <= 5'd0;
       sc_ok_q    <= 1'b1;
@@ -185,26 +217,45 @@ module rv64_lsu (
             sc_ok_q   <= 1'b1;
             // An SC only touches memory when the reservation still matches;
             // a failed SC returns 1 and performs no bus access at all.
-            if (req_atomic == AT_SC) begin
-              if (pmp_ok && resv_valid && (resv_addr == req_addr)) begin
-                we_q     <= 1'b1;
-                sc_ok_q  <= 1'b1;
-                state    <= S_REQ;
-              end else begin
-                we_q     <= 1'b0;
-                sc_ok_q  <= 1'b0;
-                fault_q  <= !pmp_ok;
-                state    <= S_DONE;
-              end
-              resv_valid <= 1'b0;               // an SC always consumes it
-            end else if (req_atomic != AT_NONE) begin
-              we_q  <= 1'b0;                    // LR and AMO read first
-              if (pmp_ok) state <= S_REQ;
-              else        state <= S_DONE;
+            mmu_req <= 1'b1;
+            xlate_q <= 1'b1;
+            paddr_q <= req_addr;      // bare default until the MMU answers
+            // the reservation and the bus both use the physical address, so the
+            // access is deferred until translation completes
+            state   <= S_XLATE;
+          end
+        end
+
+        // ---- translation -------------------------------------------------
+        S_XLATE: begin
+          mmu_req <= 1'b0;
+          if (mmu_resp) begin
+            if (mmu_fault) begin
+              fault_q <= 1'b1;
+              state   <= S_DONE;
             end else begin
-              we_q <= req_we;
-              if (pmp_ok) state <= S_REQ;
-              else        state <= S_DONE;
+              paddr_q <= mmu_paddr;
+              if (req_atomic == AT_SC) begin
+                if (pmp_ok && resv_valid && (resv_addr == mmu_paddr)) begin
+                  we_q     <= 1'b1;
+                  sc_ok_q  <= 1'b1;
+                  state    <= S_REQ;
+                end else begin
+                  we_q     <= 1'b0;
+                  sc_ok_q  <= 1'b0;
+                  fault_q  <= !pmp_ok;
+                  state    <= S_DONE;
+                end
+                resv_valid <= 1'b0;             // an SC always consumes it
+              end else if (req_atomic != AT_NONE) begin
+                we_q  <= 1'b0;                  // LR and AMO read first
+                if (pmp_ok) state <= S_REQ;
+                else        state <= S_DONE;
+              end else begin
+                we_q <= req_we;
+                if (pmp_ok) state <= S_REQ;
+                else        state <= S_DONE;
+              end
             end
           end
         end

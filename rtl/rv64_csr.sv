@@ -31,6 +31,7 @@ module rv64_csr (
   output logic [1:0]  priv_o,
   output logic        trap_to_s_o,     // this trap is delegated to S-mode
   output logic [63:0] stvec_o,
+  output logic [63:0] satp_o,
   output logic [63:0] mtvec_o,
   output logic [63:0] mepc_o,
 
@@ -72,6 +73,7 @@ module rv64_csr (
   logic        mstatus_sum_q, mstatus_mxr_q;
   logic [63:0] stvec_q, sepc_q, scause_q, stval_q, sscratch_q;
   logic [63:0] medeleg_q, mideleg_q;
+  logic [63:0] satp_q;                 // MODE[63:60], ASID[59:44], PPN[43:0]
   logic [2:0]  sie_q;                  // SSIE, STIE, SEIE
 
   // A CSR's privilege level is encoded in address bits [9:8]: 11 = M, 01 = S,
@@ -120,7 +122,7 @@ module rv64_csr (
       CSR_SCAUSE:     csr_rdata = scause_q;
       CSR_STVAL:      csr_rdata = stval_q;
       CSR_SIP:        csr_rdata = {52'd0, mip_q[2], 3'd0, mip_q[1], 3'd0, mip_q[0], 3'd0};
-      CSR_SATP:       csr_rdata = 64'd0;          // no translation yet
+      CSR_SATP:       csr_rdata = satp_q;
       CSR_MEDELEG:    csr_rdata = medeleg_q;
       CSR_MIDELEG:    csr_rdata = mideleg_q;
       default: begin
@@ -167,6 +169,7 @@ module rv64_csr (
   assign trap_to_s_o    = trap_valid && trap_delegated && (priv_q != 2'b11);
   assign priv_o         = priv_q;
   assign stvec_o        = stvec_q;
+  assign satp_o         = satp_q;
 
   // ---- interrupt aggregation ------------------------------------------------
   logic [2:0] irq_enabled;
@@ -194,6 +197,7 @@ module rv64_csr (
       medeleg_q      <= 64'd0;
       mideleg_q      <= 64'd0;
       sie_q          <= 3'd0;
+      satp_q         <= 64'd0;
       mtvec_q        <= 64'd0;
       mepc_q         <= 64'd0;
       mcause_q       <= 64'd0;
@@ -270,6 +274,13 @@ module rv64_csr (
           CSR_SEPC:       sepc_q       <= {csr_wval[63:2], 2'b00};
           CSR_SCAUSE:     scause_q     <= csr_wval;
           CSR_STVAL:      stval_q      <= csr_wval;
+          // only MODE=0 (bare) and MODE=8 (Sv39) are accepted; anything else
+          // keeps the old value rather than putting the core in a mode it does
+          // not implement
+          CSR_SATP: begin
+            if ((csr_wval[63:60] == 4'd0) || (csr_wval[63:60] == 4'd8))
+              satp_q <= csr_wval;
+          end
           CSR_MTVEC:      mtvec_q      <= {csr_wval[63:2], 2'b00};   // direct mode only
           CSR_MCOUNTEREN: mcounteren_q <= csr_wval;
           CSR_MSCRATCH:   mscratch_q   <= csr_wval;

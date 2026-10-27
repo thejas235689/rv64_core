@@ -157,7 +157,8 @@ module riscv_core_top #(
   logic        redirect_ex, ebreak_commit, mret_commit, sret_commit, ex_advance;
   logic [1:0]  cur_priv;
   logic        trap_to_s;
-  logic [63:0] csr_stvec;
+  logic [63:0] csr_stvec, csr_satp;
+  logic        mstatus_mprv;
   logic [63:0] redirect_pc_ex;
   logic [63:0] trap_cause_sel, trap_pc_sel, trap_tval_sel;
   logic [63:0] irq_cause;
@@ -190,6 +191,10 @@ module riscv_core_top #(
   logic [63:0] f_pred_target;
 
   logic        halted_q, halt_pending_q, step_mode_q;
+  // A retirement already sitting in WB when the step starts must not be counted:
+  // the halt would fire before the stepped instruction retires at all. The step
+  // is armed one cycle after the resume.
+  logic        step_wait_q;
   logic        wfi_active_q;
   logic [63:0] wfi_pc_q;
 
@@ -609,6 +614,11 @@ module riscv_core_top #(
     .req_we        (ex_mem_is_store),
     .req_atomic    (ex_mem_atomic_kind),
     .req_amo_op    (ex_mem_amo_op),
+    .satp          (csr_satp),
+    .priv          (cur_priv),
+    .mprv          (mstatus_mprv),
+    .sum           (1'b0),
+    .mxr           (1'b0),
     .pmp_ok        (d_pmp_ok),
     .mem_req_valid (d_req_valid),
     .mem_req_addr  (d_req_addr),
@@ -659,6 +669,7 @@ module riscv_core_top #(
     .priv_o         (cur_priv),
     .trap_to_s_o    (trap_to_s),
     .stvec_o        (csr_stvec),
+    .satp_o         (csr_satp),
     .mtvec_o        (csr_mtvec),
     .mepc_o         (csr_mepc),
     .irq_soft       (irq_soft),
@@ -1010,6 +1021,7 @@ module riscv_core_top #(
       halted_q       <= 1'b0;
       halt_pending_q <= 1'b0;
       step_mode_q    <= 1'b0;
+      step_wait_q    <= 1'b0;
       wfi_active_q   <= 1'b0;
       wfi_pc_q       <= 64'd0;
     end else begin
@@ -1026,10 +1038,13 @@ module riscv_core_top #(
       if (dbg_resume_pulse) begin
         halted_q    <= 1'b0;
         step_mode_q <= dbg_step;
+        step_wait_q <= dbg_step;      // arm after one cycle
+      end else if (step_wait_q) begin
+        step_wait_q <= 1'b0;
       end
 
       // ---- single step: halt again after one retirement --------------------
-      if (step_mode_q && mem_wb_v) begin
+      if (step_mode_q && !step_wait_q && mem_wb_v) begin
         halted_q    <= 1'b1;
         step_mode_q <= 1'b0;
       end

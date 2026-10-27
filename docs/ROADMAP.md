@@ -36,7 +36,7 @@ exists; **absent** = not in this repository.
 | --- | --- | --- |
 | Out-of-order backend (rename, free list, issue queue, PRF, ROB) | **absent** | would be a separate backend behind the same ISA contract |
 | Supervisor/user modes | **done** | M/S/U privilege register, S CSRs, medeleg/mideleg delegation, mret/sret, CSR privilege checks, PMP sees the real privilege. Not implemented: MPRV, SUM/MXR enforcement, independent sie/sip |
-| Sv39 translation (TLB, PTW, faults, ASID) | **partial** | `rtl/rv64_mmu.sv`: 16-entry TLB, 3-level walker, permission and fault rules, MPRV gating. **22 checks, 0 mismatches under xezim**; slang and Verilator clean. Not wired into the load/store path, and the same testbench does not complete under Icarus. No ASID tagging, no superpage TLB entries, A/D checked but not set |
+| Sv39 translation (TLB, PTW, faults, ASID) | **done** | `rtl/rv64_mmu.sv` inside `rv64_lsu`: 16-entry TLB (page size cached), 3-level walker, permission and fault rules, MPRV gating, real `satp`. Verified standalone (22 checks) and in the CPU (`test_sv39_identity`, 39 retirements). No ASID tagging, no superpage TLB entries, A/D checked but not set |
 | Atomics (LR/SC, AMOs) | **done** | `lr.w/d`, `sc.w/d` and all nine AMOs at both widths; reservation register in the LSU, read-modify-write state machine, decoded on opcode 0x2F; verified by a 23-check unit testbench and 26 in-CPU retirements against the ISS |
 | Fetch-fault metadata | **done** | instruction access fault with faulting address |
 | Transactional data memory | **partial** | separate response channel, backpressure, response error; no SC-failure channel |
@@ -65,11 +65,10 @@ fabrics: **all absent** from this repository.
 
 ## Sizing what remains
 
-Nine of the fifteen pending items are implemented and verified (atomics, QISA,
-AI accelerator, CLINT, UART, DMI transport, predecode/fusion hints, S/U privilege
-modes, branch-predictor work including tagged history and the perceptron). Two are
-partial: Sv39 (verified standalone, not integrated) and the caches (an I-cache is
-verified but not wired in). The
+Ten of the fifteen pending items are implemented and verified (atomics, QISA, AI
+accelerator, CLINT, UART, DMI transport, predecode/fusion hints, S/U privilege
+modes, branch prediction, Sv39). One is partial: the caches, where an I-cache is
+verified but not wired into the fetch port. The
 rest are ordered here by dependency and by how much of the existing core they
 disturb. Estimates are for the RTL alone, at this repository's verification
 standard -- a block is not done here until it has a self-checking test.

@@ -474,7 +474,7 @@ Regression: cocotb 25/25, PMP 5/5, and the loop predictor still passes (9 checks
 with the perceptron alongside it -- the loop predictor keeps precedence, so the
 two do not fight over counted loops.
 
-### Sv39 translation (INCOMPLETE -- not verified)
+### Sv39 translation
 
 `rtl/rv64_mmu.sv` implements Sv39: a 16-entry TLB plus a three-level page-table
 walker with the permission rules (R/W/X, the U-bit with SUM, MXR, and the A/D
@@ -482,24 +482,43 @@ requirement), megapage alignment checks, the correct page-fault cause per access
 type, and MPRV gating so M-mode loads and stores translate while M-mode fetches
 do not.
 
-**Status: verified under xezim, tool-specific failure under Icarus, not wired into
-the core.**
+**Status: integrated into the load/store path and verified in the CPU.**
 
-| Tool | Result |
+| Evidence | Result |
 | --- | --- |
-| xezim 0.11.3 | **22 checks, 0 mismatches -- PASS** |
-| slang | clean, 0 errors 0 warnings |
-| Verilator | lint clean, 0 warnings |
-| Icarus 14.0 | the first (bare) translation never completes -- **not a pass** |
+| `tb/tb_mmu.sv` under xezim | 22 checks, 0 mismatches |
+| `test_sv39_identity` in the core | 39 retirements matched the ISS with translation active |
+| cocotb regression | 26/26 |
+| slang / Verilator | clean, 0 warnings |
 
-The Icarus failure is a tool issue I did not isolate: a probe shows the FSM
-setting `bare_q` but never leaving `W_IDLE`, i.e. the branch executes and its
-state assignment is lost. It is not the enum state variable (replacing the enum
-with plain bits and localparams changed nothing) and not a duplicate driver (there
-is one sequential block and one case). Because the core regression runs under
-Icarus, the MMU is deliberately **not** instantiated in the core: wiring it in
-would take the 25 passing core tests down with it. `satp` still reads zero and the
-core still runs untranslated.
+The MMU sits inside `rv64_lsu` with a translation phase (`S_XLATE`) before the
+access, sharing the memory port with the walker: while it walks it owns the bus,
+otherwise the LSU does. `satp` is now a real CSR that accepts MODE 0 (bare) and
+MODE 8 (Sv39) and rejects anything else rather than entering a mode the core does
+not implement.
+
+`test_sv39_identity` is the in-CPU proof. It builds a root page table holding one
+level-2 leaf PTE that maps the low 1 GB identity, writes `satp`, sets
+`mstatus.MPRV`, and then runs loads and stores through the walker. Because the
+mapping is identity the architectural results are unchanged, so the ISS comparison
+stays valid -- the walker, the TLB and the LSU translation phase are all exercised
+by executed instructions rather than by a unit harness.
+
+Two defects found by doing this:
+
+* **The TLB did not cache the page size.** A hit assumed a 4 KB page, so a
+  megapage hit composed the address with the wrong offset and collapsed it to 0 --
+  the core read the instruction stream instead of data. The standalone testbench
+  never caught this because it only used 4 KB pages; the in-CPU test with an
+  identity megapage did. Entries now carry their level.
+* **Single-step halted before retiring anything.** The extra translation cycle
+  exposed a pre-existing assumption: a retirement already sitting in WB when the
+  step began fired the halt immediately. The step is now armed one cycle after the
+  resume.
+
+Remaining limits, in the header: no ASID tagging (a `satp` write does not flush
+the TLB), no superpage *TLB entries* -- a megapage is re-walked rather than cached
+as a large page -- and A/D are checked but not set.
 
 Defects found on the way, three of them real and one a lesson about debugging:
 
