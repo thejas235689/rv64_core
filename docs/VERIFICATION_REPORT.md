@@ -420,6 +420,32 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Write-through data cache (verified standalone, not integrated)
+
+`rtl/rv64_dcache.sv`: 64 lines of one 64-bit beat, direct-mapped on `[8:3]`,
+write-through with write-allocate on a hit only. A store that hits updates the
+cached line through its byte strobes **and** issues the same store to memory, so
+memory is never stale; a store that misses goes straight to memory and does not
+allocate. Write-through is the slow choice and it is deliberate: it keeps the
+cache coherent with memory that page-table walks also read, with no invalidation
+protocol. A write-back cache would need dirty lines and a flush path before Sv39
+could trust it.
+
+**12 checks, 0 mismatches** in `tb/tb_dcache.sv`: read miss then fill, read hit,
+a write hit reaching *both* the line and memory, a byte-strobe store merging into
+the line rather than overwriting it (only byte 2 changes, and the merged value
+reaches memory), a write miss reaching memory **without** allocating, and
+eviction by a same-index different-tag address.
+
+**Not integrated.** Wiring it between the LSU and the data bus built cleanly and
+left **2 of 27 core tests hanging**: `test_debug` never halted and
+`test_predictor_stress` never reached its indirect target. Raising the tests'
+fixed cycle budgets did not help, so it is a deadlock rather than a timing shift --
+most likely the single-cycle response window: the MMU's page-table walker consumes
+`pte_rsp_valid` only while in `W_RESP`, and a response arriving one cycle earlier
+is lost. That is the same class of bug as the instruction cache's `req_ready`, and
+it was reverted rather than shipped. The core is back to 27/27.
+
 ### Direct-mapped instruction cache
 
 `rtl/rv64_icache.sv`: 64 lines of one 64-bit fetch beat each, direct-mapped on
