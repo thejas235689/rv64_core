@@ -420,6 +420,46 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### L2 cache with RRIP (verified standalone)
+
+`rtl/rv64_l2cache.sv`: 16 sets x 4 ways x 32 bytes, so a line is four 64-bit beats
+and a miss fetches four beats. Replacement is RRIP: each way carries a 2-bit RRPV,
+a newly inserted line starts at 3 (distant, the preferred victim) and a hit sets
+the way to 0. The victim is the first way at 3; if none, the set is aged. RRIP is
+used rather than LRU because it needs no exact recency, which is cheap and resists
+a scan evicting a working set.
+
+**14 checks, 0 mismatches under xezim AND Icarus**: a miss filling all four beats,
+the other three beats then hitting, four lines filling the ways of one set, a fifth
+line in that set evicting rather than hitting, and a store passing through to
+memory at the right beat.
+
+Five defects, three of them real:
+
+* **The tag was `addr[63:13]`** when 16 sets are indexed by `addr[8:5]`, so bits
+  12:9 were dropped and distinct lines compared equal. Two different lines aliased
+  and one served the other's data.
+* **The fill address concatenation was 66 bits** -- an extra `2'b00` pushed the
+  beat field to the wrong position, so the walker fetched the wrong beats.
+* **The store used the stale `fill_beat` in its address** instead of the request's
+  own beat, so a store landed on a different beat of the line than the one asked
+  for. Memory never saw the write at the address the test checked.
+* **A beat was re-requested while its response was outstanding**, so every beat
+  landed one slot late in the line. Fixed with a single-outstanding-beat handshake.
+* **A fresh set had every way at RRPV=3, so pure RRIP always picked way 0** and
+  evicted a line while three ways sat empty. Invalid ways now win outright.
+
+**Portability fix worth noting:** `data_q` was a 3-D unpacked array
+(`[set][way][beat]`). Under Icarus the reads were correct; under **xezim every read
+returned X**. Flattening it to one dimension with a computed index made both tools
+agree -- so this was a tool difference in 3-D array handling, not a logic bug, and
+it would have been invisible if only one simulator had been used.
+
+**Not integrated**: the L1s still go straight to memory. There is no inclusion
+management, no write-back, no coherence and no prefetch. `rrip_ages` stayed 0 in the
+test because every insert starts distant, so a victim is always found without
+aging -- the aging path is present but not exercised.
+
 ### Write-through data cache (verified standalone, not integrated)
 
 `rtl/rv64_dcache.sv`: 64 lines of one 64-bit beat, direct-mapped on `[8:3]`,
