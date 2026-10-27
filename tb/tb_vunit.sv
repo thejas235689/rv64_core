@@ -234,8 +234,31 @@ module tb_vunit;
     wait_walk();
     chk("vse8.v stored eight elements", mem[(64'h200 >> 3)], 64'h0807_0605_0403_0201);
 
-    // ---- 15. instruction counter ----------------------------------------
-    chk("insn counter", insn_count, 32'd18);
+    // ---- 15. vwadd.vv at e8: four 16-bit results -----------------------
+    issue(enc_vset(11'h000));            // e8, vl = 8
+    // v4 holds bytes 1..8; only four results fit in a 64-bit register
+    issue(enc_vv(6'b110000, 5'd4, 5'd4, 5'd22));   // vwadd.vv v22, v4, v4
+    get_vreg(5'd22, d);
+    chk("vwadd.vv e8", d, 64'h0008_0006_0004_0002);
+
+    // ---- 16. vwmul.vv at e8 --------------------------------------------
+    issue(enc_vv(6'b111000, 5'd4, 5'd4, 5'd23));   // vwmul.vv
+    get_vreg(5'd23, d);
+    chk("vwmul.vv e8", d, 64'h0010_0009_0004_0001);
+
+    // ---- 17. signed vs unsigned is the discriminator -------------------
+    // byte 0 of v24 is 0xFF: -1 signed, 255 unsigned. +1 gives 0 or 256.
+    set_vreg(5'd24, 64'h0101_0101_0101_01FF);
+    set_vreg(5'd25, 64'h0101_0101_0101_0101);
+    issue(enc_vv(6'b110000, 5'd24, 5'd25, 5'd26));  // vwadd.vv  (signed)
+    get_vreg(5'd26, d);
+    chk("vwadd.vv sign-extends", d, 64'h0002_0002_0002_0000);
+    issue(enc_vv(6'b110001, 5'd24, 5'd25, 5'd27));  // vwaddu.vv (unsigned)
+    get_vreg(5'd27, d);
+    chk("vwaddu.vv zero-extends", d, 64'h0002_0002_0002_0100);
+
+    // ---- 18. instruction counter ----------------------------------------
+    chk("insn counter", insn_count, 32'd23);
 
     $display("tb_vunit: %0d checks, %0d mismatches (insns=%0d)", checks, errors, insn_count);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

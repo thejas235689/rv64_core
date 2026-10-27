@@ -177,6 +177,61 @@ module rv64_vunit (
     endcase
   endfunction
 
+  // ---- widening ------------------------------------------------------------
+  // A widening op reads SEW-wide elements and writes 2*SEW-wide results, so one
+  // 64-bit register holds half as many results as the sources hold elements.
+  wire widen = (funct6 == 6'b110000) || (funct6 == 6'b110001) ||
+                (funct6 == 6'b111000) || (funct6 == 6'b111001);
+  wire [6:0] nelem_w = (sew_sel == 2'd0) ? 7'd4 : (sew_sel == 2'd1) ? 7'd2 : 7'd1;
+
+  // sign- or zero-extend one source element to 64 bits
+  function automatic logic [63:0] ext_elem(input logic [63:0] v, input logic [2:0] i,
+                                           input logic [1:0] sew, input logic sgn);
+    logic [63:0] x;
+    begin
+      x = get_elem(v, i, sew);
+      if (sgn) begin
+        unique case (sew)
+          2'd0: x = {{56{x[7]}},  x[7:0]};
+          2'd1: x = {{48{x[15]}}, x[15:0]};
+          2'd2: x = {{32{x[31]}}, x[31:0]};
+          default: x = x;
+        endcase
+      end else begin
+        unique case (sew)
+          2'd0: x = {56'd0, x[7:0]};
+          2'd1: x = {48'd0, x[15:0]};
+          2'd2: x = {32'd0, x[31:0]};
+          default: x = x;
+        endcase
+      end
+      ext_elem = x;
+    end
+  endfunction
+
+  // place a 2*SEW result at result-element index i
+  function automatic logic [63:0] set_elem_w(input logic [63:0] v, input logic [2:0] i,
+                                             input logic [1:0] sew, input logic [63:0] x);
+    logic [63:0] r;
+    begin
+      r = v;
+      unique case (sew)
+        2'd0: unique case (i[1:0])                 // results are 16 bits
+                2'd0: r[15:0]  = x[15:0];
+                2'd1: r[31:16] = x[15:0];
+                2'd2: r[47:32] = x[15:0];
+                default: r[63:48] = x[15:0];
+              endcase
+        2'd1: begin                                  // results are 32 bits
+                if (i[0] == 1'b0) r[31:0]  = x[31:0];
+                else              r[63:32] = x[31:0];
+              end
+        default: r = x;                              // results are 64 bits
+      endcase
+      set_elem_w = r;
+    end
+  endfunction
+
   function automatic logic [7:0] wstrb_for(input logic [1:0] sew);
     unique case (sew)
       2'd0:    wstrb_for = 8'h01;
@@ -307,6 +362,24 @@ module rv64_vunit (
             2'd2: acc[31:0]  = r_e[31:0];
             default: acc     = r_e;
           endcase
+        end
+      end else if (widen) begin
+        // ---- widening: SEW-wide sources, 2*SEW-wide results -----------------
+        logic [63:0] wa, wb, wr;
+        vd_we = 1'b1;
+        acc   = 64'd0;               // a widening op writes a fresh register
+        for (int i = 0; i < 8; i++) begin
+          if ((i < vl_q) && (i < nelem_w) && (vm || mask_bit(i[2:0], sew_sel))) begin
+            // vwadd/vwmul are signed, the *u variants unsigned on both operands
+            wa = ext_elem(rdata2, i[2:0], sew_sel, !funct6[0]);
+            wb = ext_elem(rdata1, i[2:0], sew_sel, !funct6[0]);
+            unique case (funct6)
+              6'b110000, 6'b110001: wr = wa + wb;   // vwadd / vwaddu
+              6'b111000, 6'b111001: wr = wa * wb;   // vwmul / vwmulu
+              default:              wr = wa + wb;
+            endcase
+            acc = set_elem_w(acc, i[2:0], sew_sel, wr);
+          end
         end
       end else begin
         vd_we = 1'b1;

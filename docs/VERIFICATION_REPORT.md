@@ -586,7 +586,17 @@ Three bugs found:
   intended register -- visible only because the test checked all eight bytes.
 * The store also needed its data and strobes shifted to the element's offset.
 
-**Not implemented, in the header:** no `vlmul` grouping, no widening/narrowing,
+**Widening is implemented.** `vwadd.vv`, `vwaddu.vv`, `vwmul.vv` and `vwmulu.vv`
+read SEW-wide elements and write 2*SEW-wide results, so one 64-bit register holds
+half as many results as the sources hold elements (four 16-bit results at e8). The
+signed variants sign-extend both operands and the `*u` variants zero-extend them.
+
+**22 checks, 0 mismatches under xezim and Icarus**, now including a masked add, the
+reductions, `vle`/`vse`, and widening -- with a signed-vs-unsigned discriminator
+that the two variants must disagree on: `0xFF + 1` gives `0x0000` through
+`vwadd.vv` and `0x0100` through `vwaddu.vv`.
+
+**Not implemented, in the header:** no `vlmul` grouping, no narrowing, no
 fixed-point or floating-point operations, no slides or permutes, no `vstart`
 resumption (it is read but execution always starts at 0), and no chaining. The
 element memory port is **not connected to the data bus in the core** -- it is tied
