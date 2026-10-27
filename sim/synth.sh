@@ -40,7 +40,7 @@ mkdir -p build
 RTL_ORDER="rtl/rv64_pkg.sv rtl/rv64_alu.sv rtl/rv64_mdu.sv rtl/rv64_regfile.sv \
 rtl/rv64_decoder.sv rtl/rv64_pmp.sv rtl/rv64_csr.sv rtl/rv64_lsu.sv \
 rtl/rv64_bpu.sv rtl/rv64_fetch.sv rtl/rv64_plic_lite.sv \
-rtl/rv64_num_pkg.sv rtl/rv64_numfile.sv rtl/rv64_num_unit.sv rtl/rv64_num_csr.sv \
+rtl/rv64_num_pkg.sv rtl/rv64_num_wide.sv rtl/rv64_numfile.sv rtl/rv64_num_unit.sv rtl/rv64_num_csr.sv \
 rtl/riscv_core_top.sv"
 
 echo "== sv2v: SystemVerilog -> Verilog-2005 =="

@@ -1,43 +1,8 @@
-Licensed under either of Apache License, Version 2.0 or MIT license at your option.
+# rv64_core — RV64IM machine-mode core with a self-checking verification environment
 
-# rv64_core
-
-[![CI](https://github.com/thejas235689/rv64_core/actions/workflows/ci.yml/badge.svg)](https://github.com/thejas235689/rv64_core/actions/workflows/ci.yml)
-[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#9-license)
-
-**rv64_core** is a synthesizable 64-bit RISC-V core and the verification
-environment that proves it correct. Five-stage in-order, RV64IM with Zicsr and
-the ratified bit-manipulation extensions, machine mode only, plus two custom
-blocks: a 32x64-bit numeric register bank with fixed-Q arithmetic, an exact
-128-bit quire and sticky-flag CSRs, and bounded custom task slots with a
-completion/timeout lifecycle and an optional completion interrupt.
-
-Two regressions ship with it. A cocotb harness on Icarus drives every retirement
-against a Python ISA model — the model is the oracle, so tests assert nothing
-about expected values. A UVM environment on xezim proves the same design under a
-phase-based, transaction-level testbench with a scoreboard, constrained-random
-stimulus and request backpressure.
-
-It is a working core with honest gaps: nineteen design defects have been found and
-fixed by this verification, and what is absent is listed as absent.
-
-| | |
-|---|---|
-| Status | [`STATUS.md`](STATUS.md) — what is verified, and what is not |
-| Tour | [`TOUR.md`](TOUR.md) — ten minutes, what exists and where |
-| Feature contract | [`docs/ARCHITECTURE_FEATURE_CONTRACT.md`](docs/ARCHITECTURE_FEATURE_CONTRACT.md) |
-| Verification report | [`docs/VERIFICATION_REPORT.md`](docs/VERIFICATION_REPORT.md) |
-| Roadmap | [`docs/ROADMAP.md`](docs/ROADMAP.md) — per-feature status |
-| Plan | [`docs/PROJECT_PLAN.md`](docs/PROJECT_PLAN.md) |
-| Contributing | [`CONTRIBUTING.md`](CONTRIBUTING.md) |
-| Rust testbench | [`rust/README.md`](rust/README.md) — a rustdv environment; **unverified, never compiled** |
-
-```sh
-pip install cocotb && export PATH=/path/to/oss-cad-suite/bin:$PATH
-python3 sim/run.py                 # 22/22 PASS
-python3 sim/run.py --suite pmp     #  5/5  PASS
-python3 sim/run.py --suite plic    #  2/2  PASS
-```
+A synthesizable 64-bit RISC-V core and the cocotb verification environment that
+proves it correct, delivered as a project tree you can build, simulate and push
+to a private repository as-is.
 
 ---
 
@@ -190,32 +155,25 @@ Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
   model for 24,861 retirements with zero mismatches. The UVM wrapper for that
   program is still unverified — the vectors load correctly and the comparison was
   ruled out: reverting to `!==` restored the illegal sweep, confirming `!==` is
-  correct and `!=` is the operator that misbehaves here. What limits the full
-  run is **xezim's wall-clock throughput in UVM mode**, not the design: measured
-  at 3-6 simulated cycles per retired instruction (the driver accepts one request
-  per cycle per port), the simulator executes roughly 13 cycles per wall-clock
-  second, so a 4444-retirement run needs ~1000 s and cannot finish inside one
-  simulation call. A reduced-size variant of the same sweep
-  (`rv64_isa_small_test`, 780 retirements) **passes** through the UVM wrapper, so
-  the wrapper itself is proven.
-* **8 UVM tests: 7 pass, 1 limited by simulator wall-clock.** `rv64_illegal_test`
-  (119 reserved encodings, each expected to trap) passes, and in doing so found
-  two real defects: MRET/EBREAK let the younger instruction advance into MEM and
-  execute on the wrong path, and OP-IMM-32 accepted funct3=7 as `srliw`. Both are
-  fixed. `rv64_isa_small_test` (780 retirements) passes through the UVM wrapper.
-  The full `rv64_isa_test` (4444 retirements) is **not** a correctness failure:
-  the memory driver runs at 3-6 cycles per retired instruction, exactly as
-  designed, but xezim executes only ~13 simulated cycles per wall-clock second in
-  UVM mode, so the run needs ~1000 s and cannot finish inside one simulation call.
-  The same sweep passes against the core through the cocotb harness (24,861
-  retirements, zero mismatches).
-* **32 cocotb tests pass** across three suites: 25 core (including ten numeric-ABI tests and
-  Xcetask reached from executed instructions), 5 PMP unit, 2 PLIC unit. The
-  standalone numeric vector suite adds 4548 checks with zero mismatches. The
-  UVM environment adds a class-based agent (driver owns the memory model,
-  backpressure and error injection), an observability monitor, a scoreboard
-  comparing the full retirement and trap streams against golden vectors from the
-  same Python ISS, and functional coverage.
+  correct and `!=` is the operator that misbehaves here. What blocks the ISA
+  wrapper is throughput -- the driver delivers ~3250 simulated cycles per retired
+  instruction, so a 4444-retirement run needs ~14M cycles and cannot finish in
+  one call. A reduced-size variant of the same sweep (`rv64_isa_small_test`,
+  780 retirements) **passes** through the UVM wrapper, so the wrapper itself is
+  proven; only the full 4444-retirement run is out of reach at this driver
+  speed. Fixing the driver is the next item.
+* **8 UVM tests: 7 pass, 1 is throughput-blocked.** `rv64_illegal_test` (120 unimplemented
+  encodings, each expected to trap) passes and in doing so found two real
+  defects: MRET/EBREAK let the younger instruction advance into MEM and execute
+  on the wrong path, and OP-IMM-32 accepted funct3=7 as `srliw`. Both are fixed.
+  `rv64_isa_test` (the 4445-instruction sweep) still fails from retirement 1000
+  with pc mismatches whose two values print identically; not root-caused. See
+  `docs/VERIFICATION_REPORT.md`.
+* **5/5 of the earlier UVM tests pass** under xezim 0.11.3: a class-based environment with a
+  memory agent (driver owns the memory model, backpressure and error injection),
+  an observability monitor, a scoreboard comparing the full retirement and trap
+  streams against golden vectors from the same Python ISS, and functional
+  coverage. That is 32 tests across four suites.
 * 56,698 randomly generated instructions matched the golden model across five
   seeds, in addition to the directed suites.
 * The regression found and fixed 14 real RTL bugs (see
@@ -273,9 +231,12 @@ funct7 0x13  NUM_FROMINT  numeric nrd <- int rs1
 There is no forwarding on the numeric side, so a conservative interlock holds ID
 while any numeric write is still in flight. Correct, and deliberately simple.
 
-**Reserved but not implemented:** posit/quire-code, logarithmic (LNS), residue
-(RNS) and IEEE FP16/32/64 families. Their opcodes are fixed in `rv64_num_pkg.sv`
-and currently raise the invalid flag. See `docs/ROADMAP.md`.
+**Research families (`rtl/rv64_num_wide.sv`).** Residue (RNS, moduli 3/5/7/11),
+logarithmic (LNS, signed Q16.16 log2) and IEEE binary32 add/multiply are
+implemented and verified against the vector suite. Posit<16,1> is implemented but
+**not complete**: 4 of 2689 vectors still disagree, all on saturation-edge cases.
+The 8-bit and 32-bit posit variants are not implemented and the `fmt` field still
+selects nothing. See `docs/VERIFICATION_REPORT.md`.
 
 ## 7. Xcetask (in progress)
 

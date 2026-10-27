@@ -20,6 +20,7 @@ RTL_SRCS := \
   $(RTL_DIR)/rv64_fetch.sv \
   $(RTL_DIR)/rv64_plic_lite.sv \
   $(RTL_DIR)/rv64_num_pkg.sv \
+  $(RTL_DIR)/rv64_num_wide.sv \
   $(RTL_DIR)/rv64_numfile.sv \
   $(RTL_DIR)/rv64_num_unit.sv \
   $(RTL_DIR)/rv64_num_csr.sv \

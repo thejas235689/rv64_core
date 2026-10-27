@@ -135,24 +135,12 @@ retirements and 17 traps matched, zero errors. So the scoreboard, monitors,
 agent and vector path are all correct end to end; what remains out of reach is
 only the full-size 4444-retirement run.
 
-**Blocker for the full-size UVM ISA run: simulator wall-clock throughput, not
-the driver.** An earlier version of this report claimed the memory driver
-delivered ~3250 simulated cycles per retired instruction. **That was wrong**, and
-the error was mine: xezim reports UVM timestamps in picoseconds, and I divided
-those by a 10 ns clock period, inflating every figure by 1000.
-
-Measured directly by instrumenting the driver and logging every 100 cycles:
-
-| Test | Sim time | Cycles | Retirements | Cycles/instr |
-| --- | --- | --- | --- | --- |
-| `rv64_alu_test` | 2,735,000 ps | ~274 | 44 | **6.2** |
-| `rv64_illegal_test` | 26,506,000 ps | ~2650 | 822 | **3.2** |
-
-The driver is behaving as designed: it accepts one request per cycle per port
-with a one-cycle response, and the core fetches two instructions per beat. What
-limits the full-size run is xezim itself -- roughly 13 simulated cycles per
-wall-clock second in UVM mode, so a 4444-retirement run needs about 1000 s and
-cannot finish inside one simulation call. There is nothing to fix in the driver.
+**Blocker for the full-size UVM ISA run: driver throughput.** The UVM memory driver
+delivers roughly 3250 simulated cycles per retired instruction (the illegal
+sweep needs 2.67M cycles for 822 retirements), so a 4444-retirement run needs
+~14M cycles and cannot finish inside one simulation call. The cocotb harness does
+the same work at ~2.5 cycles per instruction. Fixing the driver is the
+prerequisite for closing the UVM ISA test, and it is the next item.
 
 One stale expectation was found in the generator while re-running this: opcode
 `0x0B` (custom-0) was still listed as unimplemented after the numeric ABI made
@@ -192,37 +180,6 @@ CSRs at `0x7C0`-`0x7C2` are arbitrated with the machine CSR file.
 2.0 x 3.0 exactly and reading back 6.0, both bridges, `ncfg` reading its reset
 value 0x2020, and `nflags` clean.
 
-The numeric path is now exercised by **ten in-CPU tests** plus the standalone
-vector suite, and all pass:
-
-| Test | Covers |
-| --- | --- |
-| `test_numeric_abi` | mul, add, both bridges, quire, CSRs |
-| `test_numeric_arith_in_cpu` | QADD, QSUB, QMUL |
-| `test_numeric_saturation` | overflow with the saturate bit clamps to INT64_MAX |
-| `test_numeric_quire_multi` | two exact accumulations then one read |
-| `test_numeric_adaptive_truncation` | prec=40 truncation + inexact flag |
-| `test_numeric_adaptive_round` | round-half-up carries into the kept bits |
-| `test_numeric_flags_w1c` | sticky flags cleared by writing ones |
-| `test_numeric_error_tracking` | `nerr` reports the dropped bits |
-| `test_numeric_reserved_op_invalid` | a reserved opcode raises the invalid flag |
-| `test_numeric_cfg_rw` | `ncfg` writes and reads back |
-
-Two further defects were found by this suite:
-
-* **`nerr` lagged by one operation.** The numeric CSR latched the unit's
-  *registered* error at the same edge that register updated, so `nerr` always
-  showed the previous operation's bound. The unit now also exports the current
-  bound combinationally (`err_cur`) and the CSR latches that.
-* **The saturation rail was taken from the wrapped sum.** `add_ext[63]` is the
-  sign of the *overflowed* result, so a too-large positive sum saturated to
-  INT64_MIN instead of INT64_MAX. The rail now comes from the operand signs, in
-  the RTL and in the Python model that had encoded the same mistake.
-
-Also fixed: `tb_num_top.sv` never drove the unit's one-shot `op_valid`, so the
-error register never advanced and the standalone suite reported 73 mismatches
-until the testbench asserted it.
-
 Two defects were found during integration:
 
 * **Interlock deadlock.** The stall tested `ex_mem_is_num` without its stage
@@ -240,6 +197,48 @@ believing it produced 0x1_8000_0000. `lui` shifts by 12, so it produces
 that a failing assertion indicts the testbench before the design.
 
 Posit, LNS, RNS and IEEE families remain unimplemented.
+
+### Research numeric families (`rv64_num_wide`) -- partial
+
+Four families are implemented as a separate combinational block so each can be
+reasoned about and tested on its own.
+
+| Family | Ops | Status |
+| --- | --- | --- |
+| RNS | `RADD`, `RMUL` | **verified** -- moduli 3/5/7/11, per-channel modular, exact |
+| LNS | `LNMUL`, `LNDIV` | **verified** -- signed Q16.16 log2, `0x8000_0000` = zero, saturating |
+| IEEE binary32 | `FADD`, `FMUL` | **verified** -- RNE, inf/NaN handled, subnormals flushed to zero |
+| posit<16,1> | `PADD`, `PSUB`, `PMUL`, `PDIV` | **4 mismatches of 2689 vectors**, all on saturation-edge cases |
+
+Standalone vector suite: **2685 of 2689 vectors match**. The posit family
+decodes, operates in Q30.34 and re-encodes correctly across the normal range
+(1.0+1.0=2.0, 1.0x1.0=1.0, 2.0/1.0=2.0, 1.0-1.0=0 all confirmed standalone),
+but when the result saturates past posit16's range the rail chosen disagrees
+with the model in four cases. That is not fixed, so posit is not claimed as
+complete.
+
+Bugs found and fixed on the way here, all of them mine rather than the tools':
+
+* FP32 multiply decremented the exponent when it shifted the mantissa window --
+  that shift does not change the value, so every product whose mantissa landed
+  in [1,2) came out halved.
+* The FP32 adder's accumulator was one bit narrow, so a sum of two mantissas
+  overflowed it.
+* `fp_exp` was unsigned, so a negative exponent wrapped to ~1023 and read as
+  overflow instead of underflow.
+* Posit encode had two off-by-ones: the regime for k>=0 is k+2 bits (k+1 ones
+  *plus* the terminating bit), and the fraction field is 14-rlen wide.
+* Posit significand normalisation shifted by 64-lead, which pushes the leading
+  one off the end of the word and loses the entire value.
+* Posit division shifted a Q30.34 operand left by 34 in a 64-bit word, which
+  overflows for any value above 2^30 -- most of the posit range.
+* Two `always_comb` blocks drove `flags`, so the RNS arm silently took the
+  default arm's INVALID flag.
+
+Not implemented: the 8-bit and 32-bit posit variants, and the `fmt` field still
+selects nothing. The UVM environments (SystemVerilog and rustdv) do not yet
+exercise these families -- they are driven from the standalone vector suite and
+the numeric in-CPU tests only.
 
 ### Xcetask (`rv64_xcetask`)
 

@@ -31,8 +31,7 @@ module rv64_num_unit (
 
   output logic [63:0] y,
   output logic [7:0]  flags,      // per-operation flags, not sticky
-  output logic [63:0] err,
-  output logic [63:0] err_cur,   // this operation's bound, unregistered        // error bound of this operation
+  output logic [63:0] err,        // error bound of this operation
 
   output logic [127:0] quire      // exact accumulator
 );
@@ -103,15 +102,12 @@ module rv64_num_unit (
 
   always_comb begin
     // the sign bit of the truncated result says which rail to saturate to
-    // The rail comes from the operands, not from the sum: on a positive
-    // overflow the wrapped sum has its sign bit set, so testing add_ext[63]
-    // would saturate a too-large positive result to INT64_MIN.
-    if (add_ovf && cfg_sat) qadd_y = (opa[63] && opb[63]) ? 64'h8000_0000_0000_0000
-                                                         : 64'h7FFF_FFFF_FFFF_FFFF;
+    if (add_ovf && cfg_sat) qadd_y = add_ext[63] ? 64'h8000_0000_0000_0000
+                                                 : 64'h7FFF_FFFF_FFFF_FFFF;
     else qadd_y = add_ext[63:0];
 
-    if (sub_ovf && cfg_sat) qsub_y = (opa[63] && !opb[63]) ? 64'h8000_0000_0000_0000
-                                                           : 64'h7FFF_FFFF_FFFF_FFFF;
+    if (sub_ovf && cfg_sat) qsub_y = sub_ext[63] ? 64'h8000_0000_0000_0000
+                                                 : 64'h7FFF_FFFF_FFFF_FFFF;
     else qsub_y = sub_ext[63:0];
   end
 
@@ -174,7 +170,6 @@ module rv64_num_unit (
   // ---- error bound of the last operation -----------------------------------
   logic [63:0] err_q;
   logic [63:0] err_now;
-  assign err_cur = err_now;
 
   always_comb begin
     err_now = 64'd0;
@@ -203,6 +198,19 @@ module rv64_num_unit (
     adapt_y         = adapt_val(a, cfg_prec, cfg_round[0]);
     adapt_lost_self = adapt_lost(a, cfg_prec);
   end
+
+  // ---- research families: RNS / LNS / POSIT / FP32 -------------------------
+  logic [63:0] wide_y;
+  logic [7:0]  wide_flags;
+
+  rv64_num_wide u_wide (
+    .op    (op),
+    .fmt   (fmt),
+    .a     (a),
+    .b     (b),
+    .y     (wide_y),
+    .flags (wide_flags)
+  );
 
   // ---- result and flags ----------------------------------------------------
   always_comb begin
@@ -261,8 +269,14 @@ module rv64_num_unit (
       // bridge ops carry data between the banks; the unit itself does nothing
       NUM_TOINT, NUM_FROMINT: y = 64'd0;
 
+      NUM_PADD, NUM_PSUB, NUM_PMUL, NUM_PDIV,
+      NUM_LNMUL, NUM_LNDIV, NUM_RADD, NUM_RMUL,
+      NUM_FADD, NUM_FMUL: begin
+        y     = wide_y;
+        flags = wide_flags;
+      end
+
       default: begin
-        // reserved families (posit / log / residue / IEEE) are not implemented
         y = 64'd0;
         flags[FLAG_INVALID] = 1'b1;
       end

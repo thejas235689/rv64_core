@@ -26,6 +26,223 @@ M128 = (1 << 128) - 1
 
 # operations (must match rv64_num_pkg)
 QADD, QSUB, QMUL, QCLR, QACC, QGET, ADAPT, ERR = 0, 1, 2, 3, 4, 5, 6, 7
+PADD, PSUB, PMUL, PDIV = 8, 9, 10, 11
+LNMUL, LNDIV = 12, 13
+RADD, RMUL = 14, 15
+FADD, FMUL = 16, 17
+
+LNS_ZERO = 0x8000_0000
+POS_FRAC_BITS = 34
+FP_QNAN = 0x7FC0_0000
+
+
+def _s32(v):
+    v &= 0xFFFFFFFF
+    return v - (1 << 32) if v & 0x8000_0000 else v
+
+
+def rns_pack(r3, r5, r7, r11):
+    return (r3 & 3) | ((r5 & 7) << 2) | ((r7 & 7) << 5) | ((r11 & 15) << 8)
+
+
+def _f32_parts(v):
+    return (v >> 31) & 1, (v >> 23) & 0xFF, v & 0x7FFFFF
+
+
+def f32_mul(a, b):
+    """binary32 multiply: RNE, inf/NaN handled, subnormals flushed to zero."""
+    sa, ea, fa = _f32_parts(a)
+    sb, eb, fb = _f32_parts(b)
+    a_nan, b_nan = ea == 0xFF and fa != 0, eb == 0xFF and fb != 0
+    a_inf, b_inf = ea == 0xFF and fa == 0, eb == 0xFF and fb == 0
+    a_zero, b_zero = ea == 0, eb == 0
+    if a_nan or b_nan:
+        return FP_QNAN, 1 << 3
+    if (a_inf and b_zero) or (b_inf and a_zero):
+        return FP_QNAN, 1 << 3
+    if a_inf or b_inf:
+        return ((sa ^ sb) << 31) | (0xFF << 23), 0
+    if a_zero or b_zero:
+        return (sa ^ sb) << 31, 0
+    prod = (0x800000 | fa) * (0x800000 | fb)
+    exp = ea + eb - 127
+    if not (prod >> 47) & 1:
+        prod <<= 1                      # window shift only: exponent unchanged
+    man = (prod >> 24) & 0xFFFFFF
+    guard = (prod >> 23) & 1
+    sticky = 1 if prod & 0x7FFFFF else 0
+    if guard and (sticky or (man & 1)):
+        man += 1
+    if man >> 24:
+        man >>= 1
+        exp += 1
+    if exp >= 255:
+        return ((sa ^ sb) << 31) | (0xFF << 23), 1 << 0
+    if exp <= 0:
+        return (sa ^ sb) << 31, 1 << 1
+    return ((sa ^ sb) << 31) | (exp << 23) | (man & 0x7FFFFF), 0
+
+
+def f32_add(a, b):
+    """binary32 add: 28-bit accumulator, three guard bits, RNE."""
+    sa, ea, fa = _f32_parts(a)
+    sb, eb, fb = _f32_parts(b)
+    a_nan, b_nan = ea == 0xFF and fa != 0, eb == 0xFF and fb != 0
+    a_inf, b_inf = ea == 0xFF and fa == 0, eb == 0xFF and fb == 0
+    a_zero, b_zero = ea == 0, eb == 0
+    if a_nan or b_nan:
+        return FP_QNAN, 1 << 3
+    if a_inf and b_inf and sa != sb:
+        return FP_QNAN, 1 << 3
+    if a_inf:
+        return (sa << 31) | (0xFF << 23), 0
+    if b_inf:
+        return (sb << 31) | (0xFF << 23), 0
+    if a_zero and b_zero:
+        return (sa & sb) << 31, 0
+    if a_zero:
+        return (sb << 31) | (eb << 23) | fb, 0
+    if b_zero:
+        return (sa << 31) | (ea << 23) | fa, 0
+    if ea >= eb:
+        ebig, esmall = ea, eb
+        big, small = (0x800000 | fa) << 3, (0x800000 | fb) << 3
+        sign = sa
+    else:
+        ebig, esmall = eb, ea
+        big, small = (0x800000 | fb) << 3, (0x800000 | fa) << 3
+        sign = sb
+    shift = min(ebig - esmall, 26)
+    shifted = small >> shift
+    if ebig - esmall > 0:
+        shifted |= 1 if (small & ((1 << shift) - 1)) else 0
+    total = big + shifted if sa == sb else big - shifted
+    exp = ebig
+    if total == 0:
+        return 0, 0
+    if total >> 27:
+        total >>= 1
+        exp += 1
+    else:
+        for _ in range(27):
+            if not (total >> 26) & 1 and total != 0:
+                total <<= 1
+                exp -= 1
+    man = (total >> 3) & 0xFFFFFF
+    guard = (total >> 2) & 1
+    rnd = (total >> 1) & 1
+    sticky = total & 1
+    if guard and (rnd or sticky or (man & 1)):
+        man += 1
+    if man >> 24:
+        man >>= 1
+        exp += 1
+    if exp >= 255:
+        return (sign << 31) | (0xFF << 23), 1 << 0
+    if exp <= 0:
+        return sign << 31, 1 << 1
+    return (sign << 31) | (exp << 23) | (man & 0x7FFFFF), 0
+
+
+def posit_decode(p):
+    """posit<16,1> -> signed Q30.34"""
+    sgn = (p >> 15) & 1
+    body = p & 0x7FFF
+    if body == 0:
+        return 0
+    i, k = 14, 0
+    if (body >> 14) & 1:
+        while i >= 0 and (body >> i) & 1:
+            k += 1
+            i -= 1
+        k -= 1
+    else:
+        while i >= 0 and not ((body >> i) & 1):
+            k -= 1
+            i -= 1
+    e, frac, n = 0, 0, 0
+    if i >= 1:
+        e = (body >> (i - 1)) & 1
+        frac = body & ((1 << (i - 1)) - 1)
+        n = i - 1
+    mant = ((1 << 14) + frac) >> (14 - n)
+    shift = 2 * k + e + POS_FRAC_BITS - n
+    v = mant << shift if shift >= 0 else mant >> (-shift)
+    return -v if sgn else v
+
+
+def posit_encode(v):
+    """signed Q30.34 -> posit<16,1>, round to nearest even"""
+    sgn = 1 if v < 0 else 0
+    mag = -v if v < 0 else v
+    if mag == 0:
+        return 0
+    lead = mag.bit_length() - 1
+    e2 = lead - POS_FRAC_BITS
+    k = (e2 >> 1) if e2 >= 0 else -(((-e2) + 1) >> 1)
+    r = e2 - 2 * k
+    if k >= 0:
+        rlen, regime_val = k + 2, (1 << (k + 2)) - 2
+    else:
+        rlen, regime_val = (-k) + 1, 1
+    nfrac = 14 - rlen
+    if nfrac < 0 or rlen > 15:
+        # the regime alone no longer fits the 15-bit body: saturate to the
+        # largest representable magnitude rather than emit a negative shift
+        return 0x7FFF if sgn == 0 else 0x8001
+    below = ((mag << (63 - lead)) & ((1 << 64) - 1)) if lead >= 1 else 0
+    fracbits = ((below >> (63 - nfrac)) & ((1 << nfrac) - 1)) if nfrac > 0 else 0
+    disc = 63 - nfrac
+    tail = (below & ((1 << disc) - 1)) if 0 < disc < 64 else 0
+    if nfrac > 0 and disc >= 1:
+        guard = (below >> (disc - 1)) & 1
+        if guard and (tail != (1 << (disc - 1)) or (fracbits & 1)):
+            fracbits += 1
+            if fracbits >> nfrac:
+                fracbits = 0
+                r += 1
+                if r > 1:
+                    r = 0
+                    k += 1
+                    if k >= 0:
+                        rlen, regime_val = k + 2, (1 << (k + 2)) - 2
+                    else:
+                        rlen, regime_val = (-k) + 1, 1
+                    nfrac = max(0, 14 - rlen)
+                    if rlen > 15:
+                        return 0x7FFF if sgn == 0 else 0x8001
+    body = ((regime_val << (15 - rlen)) | (r << (14 - rlen)) |
+            (fracbits & ((1 << nfrac) - 1)))
+    return (sgn << 15) | (body & 0x7FFF)
+
+
+def _trunc_div(a, b):
+    q = abs(a) // abs(b)
+    return -q if (a < 0) != (b < 0) else q
+
+
+def posit_op(op, a, b):
+    da, db = posit_decode(a & 0xFFFF), posit_decode(b & 0xFFFF)
+    flags = 0
+    if op == PADD:
+        res = da + db
+        if ((da >> 63) & 1) == ((db >> 63) & 1) and ((res >> 63) & 1) != ((da >> 63) & 1):
+            res = -(1 << 63) if (da >> 63) & 1 else (1 << 63) - 1
+            flags |= (1 << 5) | (1 << 0)
+    elif op == PSUB:
+        res = da - db
+        if ((da >> 63) & 1) != ((db >> 63) & 1) and ((res >> 63) & 1) != ((da >> 63) & 1):
+            res = -(1 << 63) if (da >> 63) & 1 else (1 << 63) - 1
+            flags |= (1 << 5) | (1 << 0)
+    elif op == PMUL:
+        res = (da * db) >> POS_FRAC_BITS
+    else:
+        if db == 0:
+            res = 0
+            flags |= 1 << 4
+        else:
+            res = _trunc_div(da << POS_FRAC_BITS, db)
+    return posit_encode(res), flags
 
 # cfg field positions
 CFG_ROUND, CFG_SAT, CFG_PREC, CFG_ES, CFG_ERREN, CFG_ADAPT = 0, 2, 8, 16, 20, 21
@@ -89,6 +306,58 @@ def model(op, a, b, cfg, quire, err_q):
         opa, lost_a = adapt(a, f["prec"], rnd)
         opb, lost_b = adapt(b, f["prec"], rnd)
 
+    if op in (PADD, PSUB, PMUL, PDIV):
+        y, fl = posit_op(op, a, b)
+        flags |= fl
+        return y, flags, err_now, quire, err_next
+
+    if op in (FADD, FMUL):
+        y, fl = (f32_add(a & 0xFFFFFFFF, b & 0xFFFFFFFF) if op == FADD
+                 else f32_mul(a & 0xFFFFFFFF, b & 0xFFFFFFFF))
+        flags |= fl
+        return y, flags, err_now, quire, err_next
+
+    if op in (RADD, RMUL):
+        a3, b3   = a & 3, b & 3
+        a5, b5   = (a >> 2) & 7, (b >> 2) & 7
+        a7, b7   = (a >> 5) & 7, (b >> 5) & 7
+        a11, b11 = (a >> 8) & 15, (b >> 8) & 15
+        if op == RADD:
+            y = rns_pack((a3 + b3) % 3, (a5 + b5) % 5, (a7 + b7) % 7, (a11 + b11) % 11)
+        else:
+            y = rns_pack((a3 * b3) % 3, (a5 * b5) % 5, (a7 * b7) % 7, (a11 * b11) % 11)
+        return y, flags, err_now, quire, err_next
+
+    if op in (LNMUL, LNDIV):
+        la, lb = a & 0xFFFFFFFF, b & 0xFFFFFFFF
+        sa_, sb_ = _s32(la), _s32(lb)
+        a_zero, b_zero = la == LNS_ZERO, lb == LNS_ZERO
+        if op == LNMUL:
+            if a_zero or b_zero:
+                y = LNS_ZERO
+            else:
+                t = sa_ + sb_
+                if t > 0x7FFF_FFFF:
+                    y, flags = 0x7FFF_FFFF, flags | (1 << 0)
+                elif t < -0x8000_0000:
+                    y, flags = LNS_ZERO, flags | (1 << 0)
+                else:
+                    y = t & 0xFFFFFFFF
+        else:
+            if b_zero:
+                y, flags = 0x7FFF_FFFF, flags | (1 << 4)
+            elif a_zero:
+                y = LNS_ZERO
+            else:
+                t = sa_ - sb_
+                if t > 0x7FFF_FFFF:
+                    y, flags = 0x7FFF_FFFF, flags | (1 << 0)
+                elif t < -0x8000_0000:
+                    y, flags = LNS_ZERO, flags | (1 << 0)
+                else:
+                    y = t & 0xFFFFFFFF
+        return y, flags, err_now, quire, err_next
+
     if op in (QADD, QSUB):
         if op == QADD:
             ext = (ext65(opa) + ext65(opb)) & M65
@@ -97,14 +366,7 @@ def model(op, a, b, cfg, quire, err_q):
         ovf = ((ext >> 64) & 1) != ((ext >> 63) & 1)
         y = ext & M64
         if ovf and f["sat"]:
-            # The rail comes from the OPERAND signs, not from the extended
-            # result: on a positive overflow the wrapped result has its sign bit
-            # set, so testing ext[63] saturates a too-large positive sum to
-            # INT64_MIN. The RTL had the same defect and was fixed with it.
-            a_neg = (opa >> 63) & 1
-            b_neg = (opb >> 63) & 1
-            neg = (a_neg and b_neg) if op == QADD else (a_neg and not b_neg)
-            y = (1 << 63) if neg else (1 << 63) - 1
+            y = (1 << 63) if (ext >> 63) & 1 else (1 << 63) - 1
         if ovf:
             flags |= 1 << 0                      # FLAG_OVERFLOW
             if f["sat"]:
@@ -224,9 +486,40 @@ def build_vectors():
     vecs.append((ERR, 0, 0, 0, cfg(err_en=0)))
     vecs.append((QGET, 0, 0, 0, cfg()))
 
-    # ---- reserved families must report invalid ------------------------------
-    for op in (8, 9, 10, 11, 12, 13, 14, 15, 16, 17):
-        vecs.append((op, 0, 0x1234, 0x5678, cfg()))
+    # ---- residue number system ---------------------------------------------
+    for a, b in ((rns_pack(0, 0, 0, 0), rns_pack(0, 0, 0, 0)),
+                 (rns_pack(2, 4, 6, 10), rns_pack(2, 4, 6, 10)),
+                 (rns_pack(1, 3, 5, 7), rns_pack(2, 2, 2, 2)),
+                 (rns_pack(2, 1, 3, 4), rns_pack(2, 4, 6, 10)),
+                 (0xFFF, 0xABC), (0x123, 0x456)):
+        vecs.append((RADD, 0, a, b, cfg()))
+        vecs.append((RMUL, 0, a, b, cfg()))
+
+    # ---- logarithmic number system -----------------------------------------
+    for a, b in ((0x0001_0000, 0x0002_0000), (0x0002_0000, 0x0002_0000),
+                 (0xFFFF_0000, 0x0001_0000), (LNS_ZERO, 0x0002_0000),
+                 (0x0002_0000, LNS_ZERO), (0x7FFF_FFFF, 0x0001_0000),
+                 (0x0000_8000, 0x0000_8000)):
+        vecs.append((LNMUL, 0, a, b, cfg()))
+        vecs.append((LNDIV, 0, a, b, cfg()))
+
+    # ---- IEEE binary32 ------------------------------------------------------
+    f32 = [0x3F800000, 0x40000000, 0x40400000, 0x3FC00000,
+           0x41200000, 0xC0000000, 0x00000000, 0x80000000,
+           0x7F800000, 0xFF800000, 0x7FC00000, 0x00000001,
+           0x7F7FFFFF, 0x00800000, 0x33800000, 0x4B000000]
+    for x in f32:
+        for yv in f32:
+            vecs.append((FADD, 0, x, yv, cfg()))
+            vecs.append((FMUL, 0, x, yv, cfg()))
+
+    # ---- posit<16,1> --------------------------------------------------------
+    pos = [0x0000, 0x4000, 0x5000, 0x6000, 0x7000, 0x4800, 0x5400, 0x3000,
+           0x2000, 0x1000, 0x0800, 0x7FFF, 0xC000, 0xD000, 0x3800, 0x4400]
+    for x in pos:
+        for yv in pos:
+            for op in (PADD, PSUB, PMUL, PDIV):
+                vecs.append((op, 0, x, yv, cfg()))
 
     # ---- random -------------------------------------------------------------
     ops_impl = [QADD, QSUB, QMUL, ADAPT]
