@@ -235,6 +235,23 @@ Bugs found and fixed on the way here, all of them mine rather than the tools':
 * Two `always_comb` blocks drove `flags`, so the RNS arm silently took the
   default arm's INVALID flag.
 
+**In-CPU coverage.** `rv64_iss.py` now models the custom-0 numeric ABI -- its own
+32x64 register bank, the quire, the error register and the `ncfg`/`nflags`/`nerr`
+CSRs -- importing the *same* model the vector generator uses, so there is one
+implementation of the numeric semantics rather than three. `test_numeric_sweep`
+builds a program that runs every family and bridges each result back into an
+integer register (without that the retirement trace would show no writes at all
+for numeric instructions and comparing traces would prove nothing): **299
+retirements match the ISS**, so the numeric path is now verified in the CPU and
+not only standalone.
+
+**Tool coverage.** Verified under xezim (standalone vectors: 10756 checks, 0
+mismatches) and Icarus (cocotb: 24/24 tests). **Verilator cannot run in this
+environment**: cocotb's Verilator flow shells out to `make` to build the C++
+model, and `make` is not installed and cannot be (no root). `sim/run.py --sim
+verilator` is wired up with `--timing -Wno-fatal`, so it will work wherever make
+exists; it is untested here.
+
 **Not implemented:** the 8-bit and 32-bit posit variants -- the `fmt` field still
 selects nothing, so all four families are fixed at their single width (posit16,
 32-bit LNS log, 12-bit packed RNS, binary32). Parameterising posit by width is a

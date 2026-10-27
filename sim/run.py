@@ -62,7 +62,14 @@ def main():
         toplevel, module = "tb_core_top", "test_core"
 
     build_dir = os.path.join(SIM_DIR, f"sim_build_{args.sim}_{args.suite}")
-    build_args = ["-g2012"] if args.sim == "icarus" else []
+    if args.sim == "icarus":
+        build_args = ["-g2012"]
+    elif args.sim == "verilator":
+        # --timing is required for the testbench's clock and delays; -Wno-fatal
+        # keeps lint warnings from aborting the build
+        build_args = ["--timing", "-Wno-fatal"]
+    else:
+        build_args = []
 
     runner = get_runner(args.sim)
     runner.build(

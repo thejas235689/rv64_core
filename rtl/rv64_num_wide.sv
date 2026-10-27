@@ -175,7 +175,7 @@ module rv64_num_wide (
   logic        fp_guard, fp_sticky;
 
   logic [27:0] add_big, add_small, add_small_s, add_sum;
-  logic [9:0]  add_ebig, add_esmall;
+  logic [9:0]  add_ebig, add_esmall, add_diff;
   logic [4:0]  add_shift;
   logic        add_sign, add_round;
 
@@ -193,6 +193,7 @@ module rv64_num_wide (
     add_sum   = 28'd0;
     add_ebig  = 10'd0;
     add_esmall= 10'd0;
+    add_diff  = 10'd0;
     add_shift = 5'd0;
     add_sign  = 1'b0;
     add_round = 1'b0;
@@ -262,10 +263,12 @@ module rv64_num_wide (
           add_small= {1'b0, 1'b1, fa, 3'b000};
           add_sign = sb;
         end
-        add_shift = (add_ebig - add_esmall > 10'd26) ? 5'd26
-                                                     : (add_ebig - add_esmall)[4:0];
+        // a part-select of an expression is not portable, so the difference is
+        // computed once into a variable
+        add_diff  = add_ebig - add_esmall;
+        add_shift = (add_diff > 10'd26) ? 5'd26 : add_diff[4:0];
         add_small_s = add_small >> add_shift;
-        if ((add_ebig - add_esmall) > 10'd0)
+        if (add_diff > 10'd0)
           add_small_s[0] = add_small_s[0] |
                            (|(add_small & ((28'd1 << add_shift) - 28'd1)));
 

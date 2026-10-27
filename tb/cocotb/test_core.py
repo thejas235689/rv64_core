@@ -1259,6 +1259,34 @@ hfetch:
 # ===========================================================================
 # Custom numeric ABI reached from executed instructions
 # ===========================================================================
+def li64(reg, v):
+    """Load an arbitrary 64-bit constant with lui/addi/or (x28 is scratch).
+
+    The low 12 bits go through a signed immediate, so the upper part is rounded
+    first; splitting naively makes `addi ..., 0x800` mean -2048.
+    """
+    hi = (v >> 32) & 0xFFFFFFFF
+    lo = v & 0xFFFFFFFF
+    out = []
+    if hi:
+        h_hi = (hi + 0x800) >> 12
+        h_lo = hi - (h_hi << 12)
+        out.append(f"lui x{reg}, 0x{h_hi & 0xFFFFF:05x}")
+        if h_lo:
+            out.append(f"addi x{reg}, x{reg}, {h_lo}")
+        out.append(f"slli x{reg}, x{reg}, 32")
+    else:
+        out.append(f"addi x{reg}, x0, 0")
+    if lo:
+        l_hi = (lo + 0x800) >> 12
+        l_lo = lo - (l_hi << 12)
+        out.append(f"lui x28, 0x{l_hi & 0xFFFFF:05x}")
+        if l_lo:
+            out.append(f"addi x28, x28, {l_lo}")
+        out.append(f"or x{reg}, x{reg}, x28")
+    return out
+
+
 def num_insn(op, fmt=0, rd=0, rs1=0, rs2=0):
     """Encode a custom-0 numeric-ABI instruction."""
     return (op << 25) | (rs2 << 20) | (rs1 << 15) | (fmt << 12) | (rd << 7) | 0x0B
@@ -1412,3 +1440,82 @@ async def test_isa_sweep_fast(dut):
     compare(h, iss_trace, "isa-sweep")
     cov("isa_sweep")
     dut._log.info(f"ISA sweep: {len(h.trace)} retirements matched the golden model")
+
+
+@cocotb.test()
+async def test_numeric_sweep(dut):
+    """Systematic numeric-ABI sweep with full trace comparison.
+
+    Every numeric op is followed by NUM_TOINT so its result lands in an integer
+    register -- otherwise the retirement trace would show no writes at all for
+    numeric instructions, and comparing traces would prove nothing.
+    """
+    def enc(op, rd=0, rs1=0, rs2=0, fmt=0):
+        return (op << 25) | (rs2 << 20) | (rs1 << 15) | (fmt << 12) | (rd << 7) | 0x0B
+
+    L = []
+    # operand pool for each family, loaded into the integer file then bridged
+    q_vals = [0x2_0000_0000, 0x3_0000_0000, 0xFFFF_FFFF_0000_0000, 0x1_8000_0000]
+    wide = {
+        0: [(0x4000, 0x4000), (0x4000, 0x5000), (0x7000, 0x2000), (0xC000, 0x4000)],   # posit16
+        1: [(0x0001_0000, 0x0002_0000), (0x0002_0000, 0xFFFF_0000), (0x8000_0000, 0x0001_0000)],  # LNS
+        2: [(0x123, 0x456), (0xFFF, 0xABC), (0x001, 0x002)],                           # RNS
+        3: [(0x3F800000, 0x40000000), (0x40400000, 0x3FC00000), (0x7F800000, 0x40000000)],  # FP32
+    }
+    fam_ops = {0: (8, 9, 10, 11), 1: (12, 13), 2: (14, 15), 3: (16, 17)}
+
+    gpr = 5
+    nreg = 1
+    rd_gpr = 10
+    # fixed-Q ops over the operand pool
+    for i, av in enumerate(q_vals):
+        L.extend(li64(gpr, av))
+        L.append(f".word 0x{enc(19, rd=i, rs1=gpr):08x}")       # FROMINT
+    for op in (0, 1, 2):
+        for i in range(len(q_vals)):
+            for j in range(len(q_vals)):
+                L.append(f".word 0x{enc(op, rd=8, rs1=i, rs2=j):08x}")
+                L.append(f".word 0x{enc(18, rd=rd_gpr, rs1=8):08x}")   # TOINT
+                rd_gpr += 1
+                if rd_gpr > 28:
+                    rd_gpr = 10
+    # research families
+    for fam, pairs in wide.items():
+        for (av, bv) in pairs:
+            L.extend(li64(gpr, av))
+            L.append(f".word 0x{enc(19, rd=1, rs1=gpr):08x}")
+            L.extend(li64(gpr, bv))
+            L.append(f".word 0x{enc(19, rd=2, rs1=gpr):08x}")
+            for op in fam_ops[fam]:
+                L.append(f".word 0x{enc(op, rd=8, rs1=1, rs2=2):08x}")
+                L.append(f".word 0x{enc(18, rd=rd_gpr, rs1=8):08x}")
+                rd_gpr += 1
+                if rd_gpr > 28:
+                    rd_gpr = 10
+    # quire and adaptive-precision paths
+    L.append(f".word 0x{enc(3, rd=0, rs1=0):08x}")              # QCLR
+    L.append(f".word 0x{enc(4, rd=0, rs1=0, rs2=1):08x}")       # QACC
+    L.append(f".word 0x{enc(5, rd=8, rs1=0):08x}")              # QGET
+    L.append(f".word 0x{enc(18, rd=9, rs1=8):08x}")
+    L.append(f".word 0x{enc(6, rd=8, rs1=1):08x}")              # ADAPT
+    L.append(f".word 0x{enc(18, rd=11, rs1=8):08x}")
+    L.append("csrrs x12, nflags, x0")
+    L.append("ecall")
+
+    src = "\n".join(L)
+    words, _ = assemble(src)
+
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "numeric-sweep")
+    cov("numeric_sweep")
+    dut._log.info(f"numeric sweep: {len(h.trace)} retirements matched the ISS")

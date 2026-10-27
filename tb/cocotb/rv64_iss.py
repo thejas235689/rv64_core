@@ -1,3 +1,6 @@
+import os
+import sys
+
 """
 rv64_iss.py -- pure-Python golden model (instruction set simulator) for the
 subset of RV64 implemented by riscv_core_top.
@@ -47,6 +50,15 @@ CAUSE_STORE_ACCESS = 7
 CAUSE_ECALL_M = 11
 
 
+# The numeric-ABI model lives with the vector generator so there is exactly one
+# implementation of it: the unit vectors, the ISS and (through the ISS) both
+# scoreboards all agree by construction.
+_SIM_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "sim")
+if _SIM_DIR not in sys.path:
+    sys.path.insert(0, _SIM_DIR)
+import gen_num_vectors as nummodel          # noqa: E402
+
+
 class ISS:
     def __init__(self, mem_size=1 << 17):
         self.mem = bytearray(mem_size)
@@ -68,6 +80,14 @@ class ISS:
         }
         for i in range(8):
             self.csr[0x3B0 + i] = 0
+        # custom numeric ABI: its own register bank, quire, error register and
+        # CSRs (ncfg 0x7C0, nflags 0x7C1, nerr 0x7C2)
+        self.nregs = [0] * 32
+        self.nquire = 0
+        self.nerr_q = 0
+        self.csr[0x7C0] = 0x2020
+        self.csr[0x7C1] = 0
+        self.csr[0x7C2] = 0
         self.pmp = [(0, 0)] * 8     # (cfg byte, addr)
         self.instret = 0
         self.cycle = 0
@@ -167,6 +187,29 @@ class ISS:
         imm_j = sext(((insn >> 31) << 20) | (((insn >> 12) & 0xFF) << 12) |
                      (((insn >> 20) & 1) << 11) | (((insn >> 21) & 0x3FF) << 1), 21)
         npc = (self.pc + 4) & M64
+
+        if op == 0x0B:                                    # custom-0: numeric ABI
+            self.pc = npc
+            nop = f7 & 0x1F
+            if f7 & 0x60:
+                raise Trap(CAUSE_ILLEGAL, insn)
+            na = self.nregs[rs1]
+            nb = self.nregs[rs2]
+            # bridges are handled in the core, not the unit, so the model
+            # module does not name them: funct7 0x12 = to-int, 0x13 = from-int
+            if nop == 0x13:
+                self.nregs[rd] = a
+                return None, 0
+            if nop == 0x12:
+                return rd, na
+            ny, nflags, nerr_now, nqnext, nerr_next = nummodel.model(
+                nop, na, nb, self.csr[0x7C0], self.nquire, self.nerr_q)
+            self.nquire = nqnext
+            self.nerr_q = nerr_next
+            self.csr[0x7C1] = (self.csr[0x7C1] | nflags) & 0xFF
+            self.csr[0x7C2] = nerr_now
+            self.nregs[rd] = ny
+            return None, 0
 
         if op == 0x37:                                    # LUI
             self.pc = npc
@@ -493,6 +536,9 @@ class ISS:
                 self.csr[addr] = new & ~3
             elif addr == 0x341:
                 self.csr[addr] = new & ~3
+            elif addr == 0x7C1:
+                # sticky flags: write-one-to-clear
+                self.csr[addr] = u64(self.csr[addr] & ~new)
             elif addr == 0x344:
                 pass
             else:
