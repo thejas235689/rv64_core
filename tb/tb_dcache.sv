@@ -46,13 +46,13 @@ module tb_dcache;
       pend_v <= 1'b0;
       if (bus_req_valid && bus_req_ready) begin
         if (bus_req_we) begin
+          // stores are fire-and-forget: no response, matching the core's bus
           for (int b = 0; b < 8; b++)
             if (bus_req_wstrb[b]) mem[bus_req_addr[15:3]][8*b +: 8] <= bus_req_wdata[8*b +: 8];
-          pend_d <= mem[bus_req_addr[15:3]];
         end else begin
           pend_d <= mem[bus_req_addr[15:3]];
+          pend_v <= 1'b1;
         end
-        pend_v <= 1'b1;
       end
     end
   end

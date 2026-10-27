@@ -437,14 +437,30 @@ the line rather than overwriting it (only byte 2 changes, and the merged value
 reaches memory), a write miss reaching memory **without** allocating, and
 eviction by a same-index different-tag address.
 
-**Not integrated.** Wiring it between the LSU and the data bus built cleanly and
-left **2 of 27 core tests hanging**: `test_debug` never halted and
-`test_predictor_stress` never reached its indirect target. Raising the tests'
-fixed cycle budgets did not help, so it is a deadlock rather than a timing shift --
-most likely the single-cycle response window: the MMU's page-table walker consumes
-`pte_rsp_valid` only while in `W_RESP`, and a response arriving one cycle earlier
-is lost. That is the same class of bug as the instruction cache's `req_ready`, and
-it was reverted rather than shipped. The core is back to 27/27.
+**Integrated and verified in the core.** Wiring it between the LSU and the data bus
+first left 2 of 27 tests hanging, and the cause was not the walker response window
+I suspected: **this bus answers loads only**. The harness asserts `d_rsp_valid`
+for `!d_req_we`, and the LSU never waits for a write response -- stores are
+fire-and-forget. My cache sat in `D_WRESP` waiting for a response that never
+comes. The write path now completes when the bus accepts the store, matching what
+the LSU already assumed, and the `D_WRESP` state is gone.
+
+```
+cocotb        28/28  (incl. test_dcache_hits: 2 hits, 2 misses)
+PMP 5/5  PLIC 2/2
+tb_dcache under xezim      12 checks, 0 mismatches
+tb_icache under xezim      18 checks, 0 mismatches
+tb_mmu under xezim         22 checks, 0 mismatches
+tb_fetch_cache under xezim 26 checks, 0 mismatches
+Verilator: D-cache, I-cache and MMU lint clean individually; the assembled core
+reports 0 errors and 33 width warnings, all in the pre-existing num_wide RNS code
+-- none in either cache.
+```
+
+I also hardened the walker while chasing this: it now latches a PTE response that
+arrives while the walk is still issuing its request, rather than sampling
+`pte_rsp_valid` on a single cycle. That was not the bug, but it was a real
+one-cycle window waiting to bite.
 
 ### Direct-mapped instruction cache
 
@@ -547,7 +563,7 @@ do not.
 | --- | --- |
 | `tb/tb_mmu.sv` under xezim | 22 checks, 0 mismatches |
 | `test_sv39_identity` in the core | 39 retirements matched the ISS with translation active |
-| cocotb regression | 27/27 |
+| cocotb regression | 28/28 |
 | slang / Verilator | clean, 0 warnings |
 
 The MMU sits inside `rv64_lsu` with a translation phase (`S_XLATE`) before the

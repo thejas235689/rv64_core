@@ -1654,3 +1654,41 @@ async def test_icache_hits(dut):
     misses = int(core.ic_misses.value)
     dut._log.info(f"icache: {hits} hits, {misses} misses")
     assert hits > 0, f"instruction cache never hit ({hits} hits, {misses} misses)"
+
+
+@cocotb.test()
+async def test_dcache_hits(dut):
+    """The data cache must actually hit, not merely be present.
+
+    Repeated loads from the same line must be served from the cache, and the
+    store before them must be write-through so the loaded value is right. A cache
+    that never hit would pass every functional test while doing nothing.
+    """
+    L = []
+    L.extend(li64(5, 0x2000))
+    L.extend(li64(6, 0x1234))
+    L.append("sd x6, 0(x5)")             # store: write-through, no allocate
+    L.append("ld x7, 0(x5)")             # first load: miss, fills
+    L.append("ld x8, 0(x5)")             # hit
+    L.append("ld x9, 0(x5)")             # hit
+    L.append("add x10, x8, x9")          # 0x2468 if the loads were right
+    L.append("ecall")
+
+    words, _ = assemble("\n".join(L))
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "dcache-hits")
+
+    hits = int(dut.u_core.dc_hits.value)
+    misses = int(dut.u_core.dc_misses.value)
+    dut._log.info(f"dcache: {hits} hits, {misses} misses")
+    assert hits > 0, f"data cache never hit ({hits} hits, {misses} misses)"

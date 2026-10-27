@@ -66,7 +66,10 @@ module rv64_dcache (
   wire [54:0] tag       = req_addr[63:9];
   wire        hit       = valid_q[idx] && (tag_q[idx] == tag);
 
-  typedef enum logic [2:0] {D_IDLE, D_FILL, D_WREQ, D_WRESP, D_DONE} dstate_e;
+  // No D_WRESP: this bus answers loads only. A store is accepted and forgotten,
+  // which is what the LSU already assumes -- waiting for a write response
+  // deadlocked the core the first time this cache was wired in.
+  typedef enum logic [2:0] {D_IDLE, D_FILL, D_WREQ, D_DONE} dstate_e;
   dstate_e     dst;
   logic [63:0] addr_q, wdata_q;
   logic [7:0]  wstrb_q;
@@ -157,14 +160,8 @@ module rv64_dcache (
         end
 
         D_WREQ: begin
-          if (bus_req_ready) dst <= D_WRESP;
-        end
-
-        D_WRESP: begin
-          if (bus_rsp_valid) begin
-            err_q <= bus_rsp_error;
-            dst   <= D_DONE;
-          end
+          // the store is done once the bus accepts it
+          if (bus_req_ready) dst <= D_DONE;
         end
 
         D_DONE: dst <= D_IDLE;

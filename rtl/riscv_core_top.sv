@@ -180,6 +180,36 @@ module riscv_core_top #(
   logic        f_req_valid;
   logic [63:0] f_req_addr;
   logic        f_consume, f_pause, f_redirect;
+  // ---- write-through data cache between the LSU and the bus ----------------
+  logic        dc_req_valid, dc_req_we, dc_req_ready, dc_rsp_valid, dc_rsp_error;
+  logic [63:0] dc_req_addr, dc_req_wdata, dc_rsp_rdata;
+  logic [7:0]  dc_req_wstrb;
+  logic [31:0] dc_hits, dc_misses;
+
+  rv64_dcache u_dcache (
+    .clk            (clk),
+    .rst_n          (rst_n),
+    .req_valid      (dc_req_valid),
+    .req_addr       (dc_req_addr),
+    .req_we         (dc_req_we),
+    .req_wstrb      (dc_req_wstrb),
+    .req_wdata      (dc_req_wdata),
+    .req_ready      (dc_req_ready),
+    .rsp_valid      (dc_rsp_valid),
+    .rsp_rdata      (dc_rsp_rdata),
+    .rsp_error      (dc_rsp_error),
+    .bus_req_valid  (d_req_valid),
+    .bus_req_addr   (d_req_addr),
+    .bus_req_we     (d_req_we),
+    .bus_req_wstrb  (d_req_wstrb),
+    .bus_req_wdata  (d_req_wdata),
+    .bus_req_ready  (d_req_ready),
+    .bus_rsp_valid  (d_rsp_valid),
+    .bus_rsp_rdata  (d_rsp_rdata),
+    .bus_rsp_error  (d_rsp_error),
+    .hit_count      (dc_hits),
+    .miss_count     (dc_misses)
+  );
   // ---- instruction cache between the fetch unit and the bus ----------------
   logic        ic_req_ready, ic_resp_valid, ic_resp_miss, ic_resp_error;
   logic [63:0] ic_resp_data;
@@ -646,15 +676,15 @@ module riscv_core_top #(
     .sum           (1'b0),
     .mxr           (1'b0),
     .pmp_ok        (d_pmp_ok),
-    .mem_req_valid (d_req_valid),
-    .mem_req_addr  (d_req_addr),
-    .mem_req_we    (d_req_we),
-    .mem_req_wdata (d_req_wdata),
-    .mem_req_wstrb (d_req_wstrb),
-    .mem_req_ready (d_req_ready),
-    .mem_rsp_valid (d_rsp_valid),
-    .mem_rsp_rdata (d_rsp_rdata),
-    .mem_rsp_error (d_rsp_error),
+    .mem_req_valid (dc_req_valid),
+    .mem_req_addr  (dc_req_addr),
+    .mem_req_we    (dc_req_we),
+    .mem_req_wdata (dc_req_wdata),
+    .mem_req_wstrb (dc_req_wstrb),
+    .mem_req_ready (dc_req_ready),
+    .mem_rsp_valid (dc_rsp_valid),
+    .mem_rsp_rdata (dc_rsp_rdata),
+    .mem_rsp_error (dc_rsp_error),
     .busy          (lsu_busy),
     .done          (lsu_done),
     .fault         (lsu_fault),

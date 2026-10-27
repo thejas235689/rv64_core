@@ -111,6 +111,11 @@ module rv64_mmu (
   logic [43:0] leaf_ppn;
   logic [1:0]  leaf_level;
   logic        leaf_is_leaf;
+  // A response that arrives while the walk is still issuing its request would be
+  // lost: W_RESP used to sample pte_rsp_valid on a single cycle. Any response
+  // seen while a walk is in flight is latched here instead.
+  logic        pte_got_q;
+  logic [63:0] pte_lat_q;
   logic        bare_q;         // this access bypasses translation entirely
 
   // PTE field decode
@@ -123,6 +128,10 @@ module rv64_mmu (
   wire        p_a = pte[6];
   wire        p_d = pte[7];
   wire [43:0] p_ppn = pte[53:10];
+
+  // the response the walker should act on: live if present, else the latched one
+  wire [63:0] rsp_eff   = pte_rsp_valid ? pte_rsp_data : pte_lat_q;
+  wire        rsp_eff_v = pte_rsp_valid || pte_got_q;
 
   // ---- permission check for the access being translated --------------------
   // Computed from the PTE fields directly. Reading `leaf_is_leaf` here was
@@ -240,6 +249,8 @@ module rv64_mmu (
       leaf_ppn   <= 44'd0;
       leaf_level <= 2'd0;
       leaf_is_leaf <= 1'b0;
+      pte_got_q    <= 1'b0;
+      pte_lat_q    <= 64'd0;
       bare_q       <= 1'b0;
       for (int i = 0; i < TLB_N; i++) begin
         tlb_v[i]    <= 1'b0;
@@ -270,7 +281,8 @@ module rv64_mmu (
               if (hit_perm_ok) wst <= W_DONE;
               else             wst <= W_FAULT;
             end else begin
-              bare_q  <= 1'b0;
+              bare_q   <= 1'b0;
+              pte_got_q <= 1'b0;
               level   <= 2'd2;
               a_ppn   <= satp[43:0];
               vpn_sel <= vaddr[38:30];
@@ -280,28 +292,33 @@ module rv64_mmu (
         end
 
         W_REQ: begin
+          if (pte_rsp_valid) begin
+            pte_lat_q <= pte_rsp_data;
+            pte_got_q <= 1'b1;
+          end
           if (pte_req_ready) wst <= W_RESP;
         end
 
         W_RESP: begin
-          if (pte_rsp_valid) begin
-            pte_q <= pte_rsp_data;
-            if (pte_rsp_error || !pte_rsp_data[0] ||
-                (!pte_rsp_data[1] && pte_rsp_data[2])) begin
+          if (rsp_eff_v) begin
+            pte_got_q <= 1'b0;
+            pte_q <= rsp_eff;
+            if (pte_rsp_error || !rsp_eff[0] ||
+                (!rsp_eff[1] && rsp_eff[2])) begin
               wst <= W_FAULT;          // invalid PTE, or W without R
-            end else if (pte_rsp_data[1] || pte_rsp_data[3]) begin
+            end else if (rsp_eff[1] || rsp_eff[3]) begin
               // leaf
-              leaf_ppn     <= pte_rsp_data[53:10];
+              leaf_ppn     <= rsp_eff[53:10];
               leaf_level   <= level;
               leaf_is_leaf <= 1'b1;
               if (!leaf_aligned) wst <= W_FAULT;
               else begin
-                if (perm_of(pte_rsp_data, acc_q)) begin
+                if (perm_of(rsp_eff, acc_q)) begin
                   tlb_v[tlb_idx]    <= 1'b1;
                   tlb_vpn[tlb_idx]  <= vpn0;
-                  tlb_ppn[tlb_idx]  <= pte_rsp_data[53:10];
-                  tlb_perm[tlb_idx] <= {pte_rsp_data[4], pte_rsp_data[3],
-                                        pte_rsp_data[2], pte_rsp_data[1]};
+                  tlb_ppn[tlb_idx]  <= rsp_eff[53:10];
+                  tlb_perm[tlb_idx] <= {rsp_eff[4], rsp_eff[3],
+                                        rsp_eff[2], rsp_eff[1]};
                   tlb_lvl[tlb_idx]  <= level;
                   wst <= W_DONE;
                 end else begin
@@ -312,7 +329,7 @@ module rv64_mmu (
               wst <= W_FAULT;            // ran out of levels without a leaf
             end else begin
               // pointer to the next level
-              a_ppn <= pte_rsp_data[53:10];
+              a_ppn <= rsp_eff[53:10];
               level <= level - 2'd1;
               unique case (level)
                 2'd2:    vpn_sel <= v_q[29:21];
