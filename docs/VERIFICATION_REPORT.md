@@ -420,6 +420,39 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Sv39 translation (INCOMPLETE -- not verified)
+
+`rtl/rv64_mmu.sv` implements Sv39: a 16-entry TLB plus a three-level page-table
+walker with the permission rules (R/W/X, the U-bit with SUM, MXR, and the A/D
+requirement), megapage alignment checks, the correct page-fault cause per access
+type, and MPRV gating so M-mode loads and stores translate while M-mode fetches
+do not.
+
+**Status: implemented, lints clean, NOT verified.** Verilator reports **0
+warnings**, and a cycle-by-cycle probe confirms the walk itself is correct -- root
+PTE at 0x1000, L1 at 0x2000, L0 at 0x3008, landing on the leaf with the expected
+PPN. But `tb/tb_mmu.sv` reports **22 checks, 6 mismatches**, and I did not finish
+isolating the remainder. It is not wired into the load/store path either, so the
+core still runs untranslated and `satp` still reads zero.
+
+Defects found on the way, three of them real and one a lesson about debugging:
+
+* **The PTE address was 67 bits wide.** `{55'd0, vpn_sel, 3'd0}` should have been
+  52 zero bits; the concatenation overflowed and the walker read the wrong memory
+  word. Verilator's WIDTHEXPAND warning pointed straight at it, along with four
+  more 58-bit `base`/`off` builds that were silently truncating.
+* **Bare mode returned a stale composed address.** With translation off, the
+  output mux still used `base|off` left over from the previous translation
+  instead of passing the virtual address through.
+* **The permission check read a register assigned in the same cycle.**
+  `perm_ok` gated on `leaf_is_leaf`, which is written in the very cycle the check
+  runs, so it always saw the previous value (0) and every leaf faulted. The check
+  now works from the arriving PTE fields through a `perm_of()` function.
+* **I misread the state encoding.** A probe showing `wst=4` looked like `W_DONE`
+  and sent me looking at the output mux; `W_FAULT` is 4 and `W_DONE` is 3, so the
+  walker was faulting and the mux was innocent. Reading the enum declaration
+  first would have saved two rounds.
+
 ### S/U privilege modes
 
 The core was M-mode only, with `priv_o` hardwired to `2'b11` and PMP told it was

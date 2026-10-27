@@ -170,6 +170,12 @@ package rv64_pkg;
   localparam logic [63:0] CAUSE_STORE_MISALIGN = 64'd6;
   localparam logic [63:0] CAUSE_STORE_ACCESS   = 64'd7;
   localparam logic [63:0] CAUSE_ECALL_M        = 64'd11;
+  // ---- Sv39 page faults ----------------------------------------------------
+  localparam logic [63:0] CAUSE_INST_PAGE      = 64'd12;
+  localparam logic [63:0] CAUSE_LOAD_PAGE      = 64'd13;
+  localparam logic [63:0] CAUSE_STORE_PAGE     = 64'd15;
+  localparam logic [63:0] CAUSE_ECALL_U        = 64'd8;
+  localparam logic [63:0] CAUSE_ECALL_S        = 64'd9;
   localparam logic [63:0] CAUSE_M_SOFT_INT     = 64'h8000_0000_0000_0003;
   localparam logic [63:0] CAUSE_M_TIMER_INT    = 64'h8000_0000_0000_0007;
   localparam logic [63:0] CAUSE_M_EXT_INT      = 64'h8000_0000_0000_000B;
