@@ -65,10 +65,10 @@ fabrics: **all absent** from this repository.
 
 ## Sizing what remains
 
-Eight of the fifteen pending items are implemented and verified (atomics, QISA,
+Nine of the fifteen pending items are implemented and verified (atomics, QISA,
 AI accelerator, CLINT, UART, DMI transport, predecode/fusion hints, S/U privilege
-modes). One is partial: the loop predictor is done, tagged history and the
-perceptron are not. The
+modes, branch-predictor work including tagged history and the perceptron). One is
+partial: Sv39. The
 rest are ordered here by dependency and by how much of the existing core they
 disturb. Estimates are for the RTL alone, at this repository's verification
 standard -- a block is not done here until it has a self-checking test.

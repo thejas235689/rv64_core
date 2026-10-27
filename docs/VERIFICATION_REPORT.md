@@ -420,6 +420,42 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Tagged history and a perceptron predictor
+
+The predictor set is now: bimodal + gshare tournament, BTB, RAS, a loop-count
+predictor, tagged history, and a perceptron. That completes the roadmap item that
+was previously partial.
+
+**Tagged history.** Each gshare entry carries a 6-bit tag from the branch PC. On a
+tag miss the entry says nothing about this branch and the bimodal counter is used
+instead, so two branches aliasing into the same index no longer train each other's
+counter. A mismatched tag restarts the counter rather than letting the aliasing
+branch inherit it.
+
+**Perceptron.** 32 tables of eight signed 6-bit weights, indexed by the low PC bits
+and dotted with the global history. It overrides the tournament only when
+confident ($$|sum| > 8$$), so it cannot disturb the predictors on ordinary
+branches.
+
+`tb/tb_bpu_perc.sv`: **3 checks, 0 mismatches**. The test trains on an alternating
+T,N,T,N pattern -- the case a 2-bit counter cannot represent, because every update
+flips it -- and then measures both predictors on the same lookups:
+
+```
+perceptron  20/20 correct
+bimodal     10/20 on the same lookups   (exactly chance)
+```
+
+That comparison is the point of the test. My first version trained on a
+"majority of the last three outcomes" stream and the bimodal also scored 20/20,
+because that stream settles into a long run of taken and a saturated counter gets
+it right. A test that shows both predictors succeeding proves nothing about why
+the perceptron is there.
+
+Regression: cocotb 25/25, PMP 5/5, and the loop predictor still passes (9 checks)
+with the perceptron alongside it -- the loop predictor keeps precedence, so the
+two do not fight over counted loops.
+
 ### Sv39 translation (INCOMPLETE -- not verified)
 
 `rtl/rv64_mmu.sv` implements Sv39: a 16-entry TLB plus a three-level page-table
