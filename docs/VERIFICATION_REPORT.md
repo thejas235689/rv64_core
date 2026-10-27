@@ -591,6 +591,34 @@ constant lane indices) all failed because the compute was never the problem.
 The lesson is the one this project keeps re-teaching: when a wide-array read looks
 wrong, print the array, do not rewrite the arithmetic.
 
+### L2 arbiter (verified standalone)
+
+`rtl/rv64_l2arb.sv`: arbitrates the I-cache and D-cache fill streams into one L2
+port. Round-robin on grant, and the grant is **held until the response returns** --
+both L1s present a request and wait, so switching away mid-transaction would drop a
+request and hang the cache that sent it. Round-robin rather than fixed priority
+because a fixed priority starves the loser: an instruction stream that misses
+constantly would lock out every data fill.
+
+**8 checks, 0 mismatches under xezim and Icarus**: a lone request on either port is
+served with the response routed to that port only, and under simultaneous contention
+the grants are split evenly (`a_wins == b_wins`), so neither side starves.
+
+**The L2 data-path integration was attempted and reverted.** Wiring the D-cache's
+miss stream through the arbiter into the L2, with the L2 driving the external data
+port, built cleanly and then failed **5 of 31 tests** -- loads returned 0
+(`x3 DUT 0 != ISS 0x123`), so data was not reaching the core. Two handshake fixes
+did not resolve it:
+
+* the D-cache assumed its request was accepted immediately while the arbiter could
+  still be busy -- fixed by exposing acceptance, no change;
+* the arbiter held `req_valid` for the whole transaction, so the L2 re-accepted the
+  same request and started extra fills -- fixed with the L2's own ready handshake,
+  no change.
+
+Reverted rather than shipped: a core that returns wrong data is worse than one
+without an L2. The arbiter and the L2 both remain verified standalone.
+
 ### L2 cache with RRIP (verified standalone)
 
 `rtl/rv64_l2cache.sv`: 16 sets x 4 ways x 32 bytes, so a line is four 64-bit beats

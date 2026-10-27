@@ -16,6 +16,8 @@ RTL_SRCS := \
   $(RTL_DIR)/rv64_pmp.sv \
   $(RTL_DIR)/rv64_csr.sv \
   $(RTL_DIR)/rv64_mmu.sv \
+  $(RTL_DIR)/rv64_l2arb.sv \
+  $(RTL_DIR)/rv64_l2cache.sv \
   $(RTL_DIR)/rv64_amcce.sv \
   $(RTL_DIR)/rv64_dcache.sv \
   $(RTL_DIR)/rv64_lsu.sv \
