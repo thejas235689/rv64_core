@@ -1733,3 +1733,98 @@ async def test_amcce_bypass(dut):
     assert misses > 64, f"expected a streaming run, only {misses} misses"
     assert mode == 1, f"AMCCE should have selected BYPASS (1), got mode {mode}"
     assert switches >= 1, "AMCCE should have recorded at least one switch"
+
+
+def csrw(addr, rs):
+    """csrrw x0, addr, rs -- encoded directly, the assembler has no names for these."""
+    return f".word 0x{((addr << 20) | (rs << 15) | (1 << 12) | 0x73):08x}"
+
+
+def csrr(rd, addr):
+    """csrrs rd, addr, x0"""
+    return f".word 0x{((addr << 20) | (2 << 12) | (rd << 7) | 0x73):08x}"
+
+
+@cocotb.test()
+async def test_xrv512_in_core(dut):
+    """XRV512 must be reachable from executed instructions.
+
+    The program writes the accelerator's control window with real CSR instructions
+    and executes an add. The ISS does not model XRV512, so instead of reading the
+    result back into a GPR (which would break the trace comparison) the test
+    asserts the accelerator's own register file after the run.
+    """
+    L = []
+    # lane 0 of reg 1 = 40, reg 2 = 2
+    L.extend(li64(5, 1));  L.append(csrw(0x7F4, 5))     # DST = 1
+    L.extend(li64(5, 0));  L.append(csrw(0x7F5, 5))     # LANE = 0
+    L.extend(li64(5, 40)); L.append(csrw(0x7F6, 5))     # DATA = 40
+    L.extend(li64(5, 2));  L.append(csrw(0x7F4, 5))     # DST = 2
+    L.extend(li64(5, 2));  L.append(csrw(0x7F6, 5))     # DATA = 2
+    # op = VADD, src1 = 1, src2 = 2, dst = 3, start
+    L.extend(li64(5, 0));  L.append(csrw(0x7F1, 5))
+    L.extend(li64(5, 1));  L.append(csrw(0x7F2, 5))
+    L.extend(li64(5, 2));  L.append(csrw(0x7F3, 5))
+    L.extend(li64(5, 3));  L.append(csrw(0x7F4, 5))
+    L.extend(li64(5, 1));  L.append(csrw(0x7F0, 5))     # start
+    L.append("ecall")
+
+    words, _ = assemble("\n".join(L))
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "xrv512-in-core")
+
+    # reg 3 lane 0 lives at flat index 3*8 + 0
+    got = int(dut.u_core.u_xrv512.u_file.regs[24].value)
+    dut._log.info(f"xrv512: reg3 lane0 = {got}")
+    assert got == 42, f"XRV512 should have computed 40 + 2 = 42, got {got}"
+
+
+@cocotb.test()
+async def test_rvv_in_core(dut):
+    """RVV must be reachable from executed instructions.
+
+    Same approach as XRV512: drive the control window with CSR instructions and
+    assert the vector register file, because the ISS does not model the unit.
+    """
+    L = []
+    # vl = 8, vtype vsew = 64-bit (vtype[4:3] = 3 -> 0x18)
+    L.extend(li64(5, 8));    L.append(csrw(0x781, 5))
+    L.extend(li64(5, 0x18)); L.append(csrw(0x782, 5))
+    # v1 = 100
+    L.extend(li64(5, 1));    L.append(csrw(0x786, 5))    # caddr = 1
+    L.extend(li64(5, 100));  L.append(csrw(0x787, 5))    # cwdata = 100
+    # v2 = 23
+    L.extend(li64(5, 2));    L.append(csrw(0x786, 5))
+    L.extend(li64(5, 23));   L.append(csrw(0x787, 5))
+    # vadd.vv v3, v2, v1 : funct6=000000, vs2=2, vs1=1, vd=3
+    L.extend(li64(5, 0x022081d7)); L.append(csrw(0x784, 5))   # INSN
+    L.extend(li64(5, 1));    L.append(csrw(0x780, 5))    # start
+    L.append("ecall")
+
+    words, _ = assemble("\n".join(L))
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "rvv-in-core")
+
+    got = int(dut.u_core.u_rvv.u_vrf.regs[3].value)
+    dut._log.info(f"rvv: v3 = {got}")
+    assert got == 123, f"RVV should have computed 100 + 23 = 123, got {got}"

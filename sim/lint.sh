@@ -14,7 +14,7 @@ RTL="rtl/rv64_pkg.sv rtl/rv64_num_pkg.sv rtl/rv64_alu.sv rtl/rv64_mdu.sv \
 rtl/rv64_regfile.sv rtl/rv64_decoder.sv rtl/rv64_pmp.sv rtl/rv64_csr.sv \
 rtl/rv64_mmu.sv rtl/rv64_amcce.sv rtl/rv64_dcache.sv rtl/rv64_lsu.sv rtl/rv64_bpu.sv rtl/rv64_predecode.sv rtl/rv64_icache.sv rtl/rv64_fetch.sv rtl/rv64_plic_lite.sv \
 rtl/rv64_num_wide.sv rtl/rv64_numfile.sv rtl/rv64_num_unit.sv \
-rtl/rv64_num_csr.sv rtl/rv64_qisa.sv rtl/rv64_aiacc.sv rtl/rv64_xcetask.sv rtl/riscv_core_top.sv"
+rtl/rv64_num_csr.sv rtl/rv64_xrv512_file.sv rtl/rv64_xrv512.sv rtl/rv64_vregfile.sv rtl/rv64_vunit.sv rtl/rv64_qisa.sv rtl/rv64_aiacc.sv rtl/rv64_xcetask.sv rtl/riscv_core_top.sv"
 
 fail=0
 
@@ -33,7 +33,7 @@ echo "== slang: atomic testbench ==
 slang --top tb_atomic rtl/rv64_pkg.sv rtl/rv64_mmu.sv rtl/rv64_amcce.sv rtl/rv64_dcache.sv rtl/rv64_lsu.sv tb/tb_atomic.sv || fail=1
 
 echo "== slang: QISA + accelerator testbench =="
-slang --top tb_qisa_aiacc rtl/rv64_qisa.sv rtl/rv64_aiacc.sv tb/tb_qisa_aiacc.sv || fail=1
+slang --top tb_qisa_aiacc rtl/rv64_xrv512_file.sv rtl/rv64_xrv512.sv rtl/rv64_vregfile.sv rtl/rv64_vunit.sv rtl/rv64_qisa.sv rtl/rv64_aiacc.sv tb/tb_qisa_aiacc.sv || fail=1
 
 echo "== slang: cocotb core testbench =="
 slang --top tb_core_top $RTL tb/tb_core_top.sv || fail=1

@@ -465,7 +465,15 @@ lint PASS
 It still has no address knowledge, so it infers streaming from the miss rate alone
 rather than recognising a stride, and RETAIN is reported but no consumer acts on it.
 
-### Boot ROM and image authentication (verified standalone)
+### Boot ROM and image authentication (verified standalone, integration reverted)
+
+**The ROM was wired into the instruction path and reverted.** Routing fetches below
+2 KB to the ROM built cleanly and then failed **22 of 31 tests**, because 0x0-0x7FF is
+exactly where every test program is loaded. The ROM's memory map and the harness's
+conflict: a real system puts the ROM at the reset vector and the payload at
+0x8000_0000, which this harness does not do. Re-mapping 31 tests to make one block
+fit was the wrong trade, so the ROM stays a verified standalone block and the
+mismatch is recorded here rather than papered over.
 
 `rtl/rv64_bootrom.sv`: a 2 KB read-only ROM the fetch path reads at reset, holding
 a four-instruction stub (set the stack from pc, load the payload entry 0x8000_0000
@@ -490,7 +498,7 @@ both the image and the expected digest. A real root of trust needs a signature c
 **OpenSBI itself is not here.** OpenSBI is firmware, not RTL -- this is the ROM and
 the authentication gate that would release a core to run it, not the firmware image.
 
-### RVV subset (verified standalone)
+### RVV subset
 
 `rtl/rv64_vregfile.sv` and `rtl/rv64_vunit.sv`: a 32 x 64-bit vector register file
 (three read ports, one write port, plus a control-window port) and an executor for
@@ -522,9 +530,11 @@ Three defects, all real:
   only worked because both sides truncated identically -- a latent bug that
   Icarus's width warning exposed.
 
-**Not wired into the core.** The executor takes a 32-bit instruction word rather
-than being driven by the core's decoder, so it is a self-contained unit that can be
-verified on its own; the core regression is unaffected at 28/28.
+**Wired into the core** as a CSR window at 0x780-0x78F, alongside QISA and AIACC.
+`test_rvv_in_core` drives it with real CSR instructions from a program and asserts
+the vector file: `v3 = 123` from `vadd.vv v3, v2, v1` with v1=100, v2=23. The ISS does
+not model the unit, so the test asserts the DUT's registers rather than reading the
+result back into a GPR, which would break the trace comparison.
 
 **Not implemented, in the header:** no masking (`vm` ignored -- every operation is
 unmasked), no `vlmul` grouping, no widening/narrowing, fixed-point or
@@ -532,7 +542,12 @@ floating-point operations, no `vle`/`vse` vector loads or stores, no slides,
 permutes or reductions, no `vstart` resumption (it is read but execution always
 starts at 0), and no chaining.
 
-### XRV512
+### XRV512 (integrated)
+
+Wired into the core as a CSR window at 0x7F0-0x7F7. `test_xrv512_in_core` drives it
+with CSR instructions from a program and asserts the bank: `reg3 lane0 = 42` from a
+VADD of 40 and 2.
+
 
 `rtl/rv64_xrv512_file.sv` and `rtl/rv64_xrv512.sv`: a 32 x 512-bit register file
 with two full-width read ports, a write port and a single-lane port, driving
@@ -745,7 +760,7 @@ do not.
 | --- | --- |
 | `tb/tb_mmu.sv` under xezim | 22 checks, 0 mismatches |
 | `test_sv39_identity` in the core | 39 retirements matched the ISS with translation active |
-| cocotb regression | 28/28 |
+| cocotb regression | 31/31 |
 | slang / Verilator | clean, 0 warnings |
 
 The MMU sits inside `rv64_lsu` with a translation phase (`S_XLATE`) before the

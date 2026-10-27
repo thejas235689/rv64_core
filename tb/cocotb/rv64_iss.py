@@ -75,7 +75,15 @@ class ISS:
             0x342: 0,            # mcause
             0x343: 0,            # mtval
             0x344: 0,            # mip
-            0x180: 0,            # satp -- accepted, and deliberately NOT used to
+            0x180: 0,
+            # custom accelerator windows: accepted and ignored. The ISS does not
+            # model XRV512 or RVV, so a test that reads results back into a GPR
+            # could not be compared -- these tests assert the DUT's internal
+            # registers instead.
+            0x7F0: 0, 0x7F1: 0, 0x7F2: 0, 0x7F3: 0,
+            0x7F4: 0, 0x7F5: 0, 0x7F6: 0, 0x7F7: 0,
+            0x780: 0, 0x781: 0, 0x782: 0, 0x783: 0, 0x784: 0,
+            0x785: 0, 0x786: 0, 0x787: 0, 0x788: 0, 0x789: 0,            # satp -- accepted, and deliberately NOT used to
                                  # translate: the only Sv39 test maps identity,
                                  # so not translating is the right behaviour
             0x3A0: 0,            # pmpcfg0
