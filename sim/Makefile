@@ -21,6 +21,8 @@ RTL_SRCS := \
   $(RTL_DIR)/rv64_lsu.sv \
   $(RTL_DIR)/rv64_bpu.sv \
   $(RTL_DIR)/rv64_predecode.sv \
+  $(RTL_DIR)/rv64_bootrom.sv \
+  $(RTL_DIR)/rv64_bootauth.sv \
   $(RTL_DIR)/rv64_icache.sv \
   $(RTL_DIR)/rv64_fetch.sv \
   $(RTL_DIR)/rv64_plic_lite.sv \

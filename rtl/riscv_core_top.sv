@@ -16,7 +16,13 @@
 
 module riscv_core_top #(
   parameter logic [63:0] RESET_PC            = 64'h0000_0000_0000_0000,
-  parameter bit          EBREAK_ENTERS_DEBUG = 1'b1
+  parameter bit          EBREAK_ENTERS_DEBUG = 1'b1,
+  // BOOT_ROM=1 puts the boot ROM at the reset vector, authenticates the image at
+  // power-up and holds fetch until it passes. OFF by default: the ROM owns
+  // 0x0-0x7FF, which is where the existing harness loads its programs.
+  parameter bit          BOOT_ROM          = 1'b0,
+  parameter logic [63:0] BOOT_DIGEST       = 64'hf88c4a6e10254d59,
+  parameter logic [31:0] BOOT_WORDS        = 32'd2
 ) (
   input  logic        clk,
   input  logic        rst_n,
@@ -241,6 +247,15 @@ module riscv_core_top #(
   logic [63:0] ic_fill_addr;
   logic [31:0] ic_hits, ic_misses;
 
+  // ---- boot ROM signals, declared before the I-cache uses them -------------
+  logic        rom_sel, rom_sel_q, rom_req_valid, rom_req_ready;
+  logic        rom_rsp_valid, rom_rsp_error, boot_ok, boot_fail, auth_busy;
+  logic [63:0] rom_rsp_rdata, rom_reset_vector, auth_digest;
+  logic        auth_start, auth_in_valid, boot_released;
+  logic [63:0] auth_in_data;
+  logic [31:0] auth_words, boot_idx;
+  logic [63:0] boot_addr_q;
+
   rv64_icache u_icache (
     .clk            (clk),
     .rst_n          (rst_n),
@@ -254,9 +269,9 @@ module riscv_core_top #(
     .fill_valid     (ic_fill_valid),
     .fill_addr      (ic_fill_addr),
     .fill_ready     (if_req_ready),
-    .fill_rsp_valid (if_rsp_valid),
-    .fill_rsp_data  (if_rsp_data),
-    .fill_rsp_error (if_rsp_error),
+    .fill_rsp_valid (rom_sel_q ? rom_rsp_valid : if_rsp_valid),
+    .fill_rsp_data  (rom_sel_q ? rom_rsp_rdata : if_rsp_data),
+    .fill_rsp_error (rom_sel_q ? rom_rsp_error : if_rsp_error),
     .hit_count      (ic_hits),
     .miss_count     (ic_misses)
   );
@@ -281,7 +296,8 @@ module riscv_core_top #(
   logic        fetch_stopped;
 
   assign fetch_stopped = halted_q || halt_pending_q || wfi_active_q ||
-                         f_fault_valid || fetch_pmp_fault;
+                         f_fault_valid || fetch_pmp_fault ||
+                         (BOOT_ROM && !boot_released);
 
   rv64_fetch u_fetch (
     .clk         (clk),
@@ -307,7 +323,7 @@ module riscv_core_top #(
     .tag_fusion_kind  (f_tag_fusion_kind)
   );
 
-  assign if_req_valid = ic_fill_valid && fetch_pmp_ok;
+  assign if_req_valid = ic_fill_valid && fetch_pmp_ok && !rom_sel;
   assign if_req_addr  = ic_fill_addr;
 
   // ===========================================================================
@@ -1182,6 +1198,91 @@ module riscv_core_top #(
   assign dbg_halted    = halted_q;
   assign mcycle_o      = csr_mcycle;
   assign minstret_o    = csr_minstret;
+
+
+  // =========================================================================
+  // Boot ROM, image authentication and the release gate.
+  //
+  // With BOOT_ROM=0 every signal here is inert: boot_released is forced high and
+  // no fetch is diverted. With BOOT_ROM=1 the core is held out of fetch until the
+  // ROM image's digest matches BOOT_DIGEST, after which fetches below 2 KB come
+  // from the ROM and everything above goes to the bus.
+  // =========================================================================
+  rv64_bootrom u_bootrom (
+    .clk(clk), .rst_n(rst_n),
+    .req_valid(rom_req_valid),
+    .req_addr((BOOT_ROM && !boot_released) ? boot_addr_q : ic_fill_addr),
+    .req_ready(rom_req_ready),
+    .rsp_valid(rom_rsp_valid), .rsp_rdata(rom_rsp_rdata), .rsp_error(rom_rsp_error),
+    .reset_vector(rom_reset_vector)
+  );
+
+  rv64_bootauth u_bootauth (
+    .clk(clk), .rst_n(rst_n),
+    .start(auth_start), .expected(BOOT_DIGEST), .nwords(BOOT_WORDS),
+    .in_valid(auth_in_valid), .in_data(auth_in_data), .in_ready(),
+    .busy(auth_busy), .boot_ok(boot_ok), .boot_fail(boot_fail),
+    .digest(auth_digest), .words_hashed(auth_words)
+  );
+
+  typedef enum logic [1:0] {BS_IDLE, BS_READ, BS_FEED, BS_WAIT} bstate_e;
+  bstate_e bst;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      bst           <= BS_IDLE;
+      boot_idx      <= 32'd0;
+      boot_addr_q   <= 64'd0;
+      auth_start    <= 1'b0;
+      auth_in_valid <= 1'b0;
+      auth_in_data  <= 64'd0;
+      boot_released <= 1'b0;
+      rom_sel_q     <= 1'b0;
+    end else begin
+      auth_start    <= 1'b0;
+      rom_sel_q     <= rom_sel && ic_fill_valid && fetch_pmp_ok;
+      if (!BOOT_ROM) begin
+        bst           <= BS_IDLE;
+        auth_in_valid <= 1'b0;
+        boot_released <= 1'b1;          // nothing to authorise
+      end else begin
+        case (bst)
+          BS_IDLE: begin
+            auth_start <= 1'b1;         // begin a fresh digest
+            boot_idx   <= 32'd0;
+            bst        <= BS_READ;
+          end
+          BS_READ: begin
+            if (rom_rsp_valid) begin
+              auth_in_data  <= rom_rsp_rdata;
+              auth_in_valid <= 1'b1;
+              bst           <= BS_FEED;
+            end
+          end
+          BS_FEED: begin
+            auth_in_valid <= 1'b0;
+            boot_idx      <= boot_idx + 32'd1;
+            boot_addr_q   <= boot_addr_q + 64'd8;
+            if (boot_idx + 32'd1 >= BOOT_WORDS) bst <= BS_WAIT;
+            else                                bst <= BS_READ;
+          end
+          BS_WAIT: begin
+            // release only on an exact digest match; a bad image never releases
+            if (!auth_busy && boot_ok) boot_released <= 1'b1;
+          end
+          default: bst <= BS_IDLE;
+        endcase
+      end
+    end
+  end
+
+  // The ROM serves the boot stream first, then fetches below 2 KB once released.
+  // They cannot overlap: fetch is stopped until boot_released.
+  assign rom_sel       = BOOT_ROM && boot_released &&
+                         (ic_fill_addr < 64'h0000_0000_0000_0800);
+  assign rom_req_valid = BOOT_ROM ? ((bst == BS_READ && !boot_released)
+                                     || (ic_fill_valid && fetch_pmp_ok && rom_sel))
+                                  : 1'b0;
 
 endmodule
 `default_nettype wire

@@ -465,15 +465,29 @@ lint PASS
 It still has no address knowledge, so it infers streaming from the miss rate alone
 rather than recognising a stride, and RETAIN is reported but no consumer acts on it.
 
-### Boot ROM and image authentication (verified standalone, integration reverted)
+### Boot ROM and image authentication (integrated)
 
-**The ROM was wired into the instruction path and reverted.** Routing fetches below
-2 KB to the ROM built cleanly and then failed **22 of 31 tests**, because 0x0-0x7FF is
-exactly where every test program is loaded. The ROM's memory map and the harness's
-conflict: a real system puts the ROM at the reset vector and the payload at
-0x8000_0000, which this harness does not do. Re-mapping 31 tests to make one block
-fit was the wrong trade, so the ROM stays a verified standalone block and the
-mismatch is recorded here rather than papered over.
+**Integrated behind a parameter.** The first attempt failed 22 of 31 tests because
+routing fetches below 2 KB to the ROM means the ROM owns 0x0-0x7FF, exactly where
+every test program loads. Rather than re-map 31 tests, the boot subsystem is gated
+by `parameter bit BOOT_ROM`, default 0:
+
+* `BOOT_ROM=0` -- the ROM and authenticator are instantiated but inert;
+  `boot_released` is forced high and no fetch is diverted. All 31 tests pass.
+* `BOOT_ROM=1` -- the core is held out of fetch until the ROM image's FNV digest
+  matches `BOOT_DIGEST`, after which fetches below 2 KB come from the ROM and
+  everything above goes to the bus.
+
+`tb/tb_bootseq.sv` builds the core with `BOOT_ROM=1` and **6 checks, 0 mismatches**:
+fetch held before release, released only after authentication, the authenticator saw
+the whole image, the post-boot fetch returns the ROM stub word
+(`0x0000011300000117`) rather than the bus's sentinel, and `rom_sel_q` confirms the
+ROM answered.
+
+One bug worth recording: the boot FSM streamed two words but the ROM's address was
+still wired to the fetch address, so it read word 0 twice, the digest never matched
+and the core never released. A gate that never opens looks identical to a gate that
+correctly refuses -- the test distinguishes them only because it checks *why*.
 
 `rtl/rv64_bootrom.sv`: a 2 KB read-only ROM the fetch path reads at reset, holding
 a four-instruction stub (set the stack from pc, load the payload entry 0x8000_0000
