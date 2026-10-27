@@ -24,6 +24,9 @@ slang --top riscv_core_top $RTL || fail=1
 echo "== slang: numeric vector testbench =="
 slang --top tb_num_top $RTL tb/tb_num_top.sv || fail=1
 
+echo "== slang: atomic testbench =="
+slang --top tb_atomic rtl/rv64_pkg.sv rtl/rv64_lsu.sv tb/tb_atomic.sv || fail=1
+
 echo "== slang: QISA + accelerator testbench =="
 slang --top tb_qisa_aiacc rtl/rv64_qisa.sv rtl/rv64_aiacc.sv tb/tb_qisa_aiacc.sv || fail=1
 

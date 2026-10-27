@@ -1519,3 +1519,46 @@ async def test_numeric_sweep(dut):
     compare(h, iss_trace, "numeric-sweep")
     cov("numeric_sweep")
     dut._log.info(f"numeric sweep: {len(h.trace)} retirements matched the ISS")
+
+
+def amo_insn(f5, rd, rs1, rs2=0, f3=3):
+    """Encode an A-extension instruction: funct5 | rs2 | rs1 | f3 | rd | 0x2F."""
+    return (f5 << 27) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | 0x2F
+
+
+@cocotb.test()
+async def test_atomic(dut):
+    """LR/SC and the AMOs, executed by the core and compared against the ISS."""
+    L = []
+    L.extend(li64(5, 0x100))                     # base address
+    L.extend(li64(6, 100))
+    L.append("sd x6, 0(x5)")
+    L.append(f".word 0x{amo_insn(0x02, 7, 5):08x}")        # lr.d  x7, (x5)  -> 100
+    L.extend(li64(8, 5))
+    L.append(f".word 0x{amo_insn(0x00, 9, 5, 8):08x}")     # amoadd.d x9, x8, (x5) -> 100, mem 105
+    L.append(f".word 0x{amo_insn(0x02, 10, 5):08x}")       # lr.d  x10, (x5) -> 105
+    L.append(f".word 0x{amo_insn(0x03, 11, 5, 8):08x}")    # sc.d  x11, x8, (x5) -> 0, mem 5
+    L.append(f".word 0x{amo_insn(0x03, 12, 5, 8):08x}")    # sc.d  x12 -> 1, no reservation
+    L.append("ld x13, 0(x5)")                    # 5
+    L.extend(li64(8, 0x0F))
+    L.append(f".word 0x{amo_insn(0x0C, 14, 5, 8):08x}")    # amoor.d -> 5|15 = 15
+    L.append(f".word 0x{amo_insn(0x01, 15, 5, 8):08x}")    # amoswap.d -> 15, mem 15
+    L.append("ld x16, 0(x5)")                    # 15
+    L.append("ecall")
+
+    src = "\n".join(L)
+    words, _ = assemble(src)
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "atomic")
+    cov("atomic")
+    dut._log.info(f"atomic: {len(h.trace)} retirements matched the ISS")

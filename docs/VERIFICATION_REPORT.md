@@ -371,6 +371,37 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### A extension: LR/SC and AMOs
+
+`lr.w/d`, `sc.w/d` and the nine AMOs (`swap`, `add`, `xor`, `or`, `and`, `min`,
+`max`, `minu`, `maxu`) at both widths, decoded on opcode `0x2F`.
+
+The LSU grew a reservation register and a read-modify-write state machine
+(`S_REQ -> S_RESP -> S_WREQ -> S_DONE`). A single-hart reservation is recorded by
+`lr`, consumed by every `sc`, and an `sc` whose address does not match fails
+without touching the bus. In a multi-hart system the reservation would also have
+to be cleared by a foreign store; that is a coherence concern and is stated in
+the header rather than pretended.
+
+Verified two ways: `tb/tb_atomic.sv` (**23 checks, 0 mismatches**) drives the LSU
+against a memory model that honours byte strobes -- every AMO, both widths, the
+signed `min`/`max` ordering, and the four `sc` outcomes (first success, second
+failure, wrong-address failure, matched success); and `test_atomic` runs the same
+operations **in the CPU, 26 retirements matched against the ISS**.
+
+Two defects the tests caught:
+
+* **The AMO write never reached the bus.** `mem_req_valid` was asserted only in
+  `S_REQ`, so the read half of the read-modify-write happened and the write half
+  silently did nothing. The unit testbench showed memory unchanged after every
+  AMO while the returned old values looked correct -- exactly the failure a
+  directed test exists to catch.
+* **The AMO address was wrong.** Bits 31:20 of an AMO instruction carry
+  `funct5|rs2`, not an immediate, but the decoder was setting `IMM_I`, so the
+  address became `rs1 + funct5|rs2`. In-CPU the `lr` read address 0 and returned
+  0 where the ISS expected 100. Atomics now use `IMM_NONE` with `b_sel = B_IMM`,
+  so the address is plain `rs1`.
+
 ### QISA and the INT8 accelerator
 
 Two blocks added after the core was otherwise complete, both with a

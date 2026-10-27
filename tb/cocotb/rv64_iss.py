@@ -85,6 +85,7 @@ class ISS:
         self.nregs = [0] * 32
         self.nquire = 0
         self.nerr_q = 0
+        self.resv = None      # LR/SC reservation address
         self.csr[0x7C0] = 0x2020
         self.csr[0x7C1] = 0
         self.csr[0x7C2] = 0
@@ -259,6 +260,61 @@ class ISS:
             self.write(addr, n, b)
             self.pc = npc
             return None, 0
+        if op == 0x2F:                                    # AMO / LR / SC
+            f5 = (insn >> 27) & 0x1F
+            size = {2: 4, 3: 8}
+            if f3 not in size:
+                raise Trap(CAUSE_ILLEGAL, insn)
+            n = size[f3]
+            addr = u64(a)
+            if addr % n:
+                cause = CAUSE_LOAD_MISALIGN if f5 == 0x02 else CAUSE_STORE_MISALIGN
+                raise Trap(cause, addr)
+            self.pc = npc
+            bits = 8 * n
+            mask = (1 << bits) - 1
+
+            def sxs(v):
+                v &= mask
+                return v - (1 << bits) if v & (1 << (bits - 1)) else v
+
+            if f5 == 0x02:                                # LR
+                v = self.read(addr, n)
+                self.resv = addr
+                return rd, u64(sext(v, bits))
+            if f5 == 0x03:                                # SC
+                if self.resv == addr:
+                    self.write(addr, n, b & mask)
+                    self.resv = None
+                    return rd, 0
+                self.resv = None
+                return rd, 1
+            old = self.read(addr, n)
+            o, sb = old & mask, b & mask
+            so, ss = sxs(old), sxs(b)
+            if f5 == 0x01:
+                new = sb                                   # AMOSWAP
+            elif f5 == 0x00:
+                new = (o + sb) & mask                      # AMOADD
+            elif f5 == 0x04:
+                new = (o ^ sb) & mask                      # AMOXOR
+            elif f5 == 0x0C:
+                new = (o | sb) & mask                      # AMOOR
+            elif f5 == 0x08:
+                new = (o & sb) & mask                      # AMOAND
+            elif f5 == 0x10:
+                new = o if so < ss else sb                 # AMOMIN
+            elif f5 == 0x14:
+                new = o if so > ss else sb                 # AMOMAX
+            elif f5 == 0x18:
+                new = o if o < sb else sb                  # AMOMINU
+            elif f5 == 0x1C:
+                new = o if o > sb else sb                  # AMOMAXU
+            else:
+                raise Trap(CAUSE_ILLEGAL, insn)
+            self.write(addr, n, new)
+            return rd, u64(sext(old, bits))
+
         if op == 0x13:                                    # OP-IMM
             self.pc = npc
             return rd, self._op_imm(f3, insn, a, imm_i, rd)

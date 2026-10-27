@@ -141,6 +141,39 @@ module rv64_decoder (
         endcase
       end
 
+      // ------------------------------------------------------------ ATOMIC
+      // LR/SC and AMOs all write a register (the old value, or the SC status),
+      // so they are decoded as load-shaped: wb_sel = WB_MEM and is_load set,
+      // which makes the pipeline stall and forward exactly as for a load.
+      7'b0101111: begin
+        ctrl.is_atomic = 1'b1;
+        ctrl.is_load   = 1'b1;
+        ctrl.reg_we    = 1'b1;
+        ctrl.wb_sel    = WB_MEM;
+        ctrl.alu_op    = ALU_ADD;
+        ctrl.amo_op    = funct7[6:2];              // funct5
+        // An AMO's address is just rs1: bits 31:20 carry funct5|rs2, not an
+        // immediate, so decoding them as IMM_I adds garbage to the address.
+        ctrl.imm_sel   = IMM_NONE;
+        ctrl.b_sel     = B_IMM;                    // b = 0, so addr = rs1
+        unique case (funct3)
+          3'b010:  ctrl.mem_size = MSZ_W;
+          3'b011:  ctrl.mem_size = MSZ_D;
+          default: ctrl.illegal = 1'b1;
+        endcase
+        unique case (funct7[6:2])
+          5'b00010: ctrl.atomic_kind = AT_LR;
+          5'b00011: ctrl.atomic_kind = AT_SC;
+          5'b00001, 5'b00000, 5'b00100, 5'b01100,
+          5'b01000, 5'b10000, 5'b10100, 5'b11000,
+          5'b11100: ctrl.atomic_kind = AT_AMO;
+          default: begin
+            ctrl.atomic_kind = AT_NONE;
+            ctrl.illegal     = 1'b1;
+          end
+        endcase
+      end
+
       // -------------------------------------------------------------- OP-IMM
       7'b0010011: begin
         ctrl.imm_sel = IMM_I;

@@ -96,6 +96,12 @@ package rv64_pkg;
   localparam logic [1:0] CSR_RC   = 2'd3;  // csrrc / csrrci
 
   // --------------------------------------------------------------- mem sizes
+  // atomic kinds
+  localparam logic [1:0] AT_NONE = 2'd0;
+  localparam logic [1:0] AT_LR   = 2'd1;
+  localparam logic [1:0] AT_SC   = 2'd2;
+  localparam logic [1:0] AT_AMO  = 2'd3;
+
   localparam logic [2:0] MSZ_B = 3'd1;
   localparam logic [2:0] MSZ_H = 3'd2;
   localparam logic [2:0] MSZ_W = 3'd3;
@@ -173,6 +179,11 @@ package rv64_pkg;
     logic        reg_we;
     logic        is_load;
     logic        is_store;
+    // atomics (A extension): a load-reserved, a store-conditional, or a
+    // read-modify-write. `amo_op` is the funct5 field.
+    logic        is_atomic;
+    logic [1:0]  atomic_kind;
+    logic [4:0]  amo_op;
     logic        is_branch;
     logic        is_jal;
     logic        is_jalr;

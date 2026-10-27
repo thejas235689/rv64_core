@@ -37,7 +37,7 @@ exists; **absent** = not in this repository.
 | Out-of-order backend (rename, free list, issue queue, PRF, ROB) | **absent** | would be a separate backend behind the same ISA contract |
 | Supervisor/user modes | **absent** | M-mode only; `mstatus.MPP` is hardwired to 11 |
 | Sv39 translation (TLB, PTW, faults, ASID) | **absent** | |
-| Atomics (LR/SC, AMOs) | **absent** | |
+| Atomics (LR/SC, AMOs) | **done** | `lr.w/d`, `sc.w/d` and all nine AMOs at both widths; reservation register in the LSU, read-modify-write state machine, decoded on opcode 0x2F; verified by a 23-check unit testbench and 26 in-CPU retirements against the ISS |
 | Fetch-fault metadata | **done** | instruction access fault with faulting address |
 | Transactional data memory | **partial** | separate response channel, backpressure, response error; no SC-failure channel |
 | RVV subset (VLEN=64, LMUL=1) | **absent** | |
@@ -65,14 +65,15 @@ fabrics: **all absent** from this repository.
 
 ## Sizing what remains
 
-Two of the fifteen pending items are now implemented (QISA, AI accelerator). The
+Three of the fifteen pending items are now implemented (atomics, QISA, AI
+accelerator). The
 rest are ordered here by dependency and by how much of the existing core they
 disturb. Estimates are for the RTL alone, at this repository's verification
 standard -- a block is not done here until it has a self-checking test.
 
 | Item | Size | Why |
 | --- | --- | --- |
-| Atomics (LR/SC, AMOs) | medium | reservation register + LSU atomic path + decoder; touches the pipeline |
+
 | DMI debug transport | medium | JTAG TAP + DMI shift register; self-contained, sits beside the existing debug unit |
 | Predecode tags, fusion hints | medium | front-end buffering change, isolated |
 | Loop predictor, tagged history, perceptron | medium | branch-predictor rework; must not regress the existing tournament predictor |

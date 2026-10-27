@@ -126,6 +126,9 @@ module riscv_core_top #(
   logic        ex_mem_mem_uns;
   logic        ex_mem_is_load;
   logic        ex_mem_is_store;
+  logic        ex_mem_is_atomic;
+  logic [1:0]  ex_mem_atomic_kind;
+  logic [4:0]  ex_mem_amo_op;
   logic        ex_mem_is_mret;
   logic        ex_mem_is_wfi;
   logic        ex_mem_is_ebreak;
@@ -594,6 +597,8 @@ module riscv_core_top #(
     .req_size      (ex_mem_mem_size),
     .req_uns       (ex_mem_mem_uns),
     .req_we        (ex_mem_is_store),
+    .req_atomic    (ex_mem_atomic_kind),
+    .req_amo_op    (ex_mem_amo_op),
     .pmp_ok        (d_pmp_ok),
     .mem_req_valid (d_req_valid),
     .mem_req_addr  (d_req_addr),
@@ -902,6 +907,9 @@ module riscv_core_top #(
       ex_mem_mem_size   <= MSZ_D;
       ex_mem_mem_uns    <= 1'b0;
       ex_mem_is_load    <= 1'b0;
+      ex_mem_is_atomic  <= 1'b0;
+      ex_mem_atomic_kind<= AT_NONE;
+      ex_mem_amo_op     <= 5'd0;
       ex_mem_is_store   <= 1'b0;
       ex_mem_is_mret    <= 1'b0;
       ex_mem_is_wfi     <= 1'b0;
@@ -936,6 +944,9 @@ module riscv_core_top #(
       ex_mem_mem_uns    <= id_ex_ctrl.mem_uns;
       ex_mem_is_load    <= id_ex_ctrl.is_load;
       ex_mem_is_store   <= id_ex_ctrl.is_store;
+      ex_mem_is_atomic  <= id_ex_ctrl.is_atomic;
+      ex_mem_atomic_kind<= id_ex_ctrl.atomic_kind;
+      ex_mem_amo_op     <= id_ex_ctrl.amo_op;
       ex_mem_is_mret    <= id_ex_ctrl.is_mret;
       ex_mem_is_wfi     <= id_ex_ctrl.is_wfi;
       ex_mem_is_ebreak  <= id_ex_ctrl.is_ebreak;
