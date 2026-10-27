@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_csr.sv -- machine-mode CSR file.
 //   Implements mstatus, misa, mie, mtvec, mcounteren, mscratch, mepc, mcause,

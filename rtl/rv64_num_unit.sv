@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_num_unit.sv -- arithmetic datapath for the custom numeric ABI.
 //

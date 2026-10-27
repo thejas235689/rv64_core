@@ -85,12 +85,14 @@ module tb_core_top #(
   // ---- memory ---------------------------------------------------------------
   logic [63:0] mem [0:MEM_WORDS-1];
 
-  // Real memory powers up as zeros, not X.  Initialising also keeps an
+  // Real memory powers up as zeros, not X. Initialising also keeps an
   // out-of-range fetch decoding as an illegal instruction instead of
   // propagating X into the core.
-  initial begin
-    for (int i = 0; i < MEM_WORDS; i++) mem[i] = 64'd0;
-  end
+  //
+  // The zeroing happens inside the same always_ff that serves the bus: an
+  // `initial` block plus an always_ff would make `mem` a multiply-driven
+  // variable, which is legal Verilog but a real hazard (and slang rejects it).
+  logic mem_first = 1'b1;
 
   function automatic logic [63:0] mem_rd(input logic [63:0] a);
     return mem[a[16:3]];
@@ -104,7 +106,10 @@ module tb_core_top #(
   assign d_req_ready  = !d_bp;
 
   always_ff @(posedge clk) begin
-    if (host_clear) begin
+    if (mem_first) begin
+      mem_first <= 1'b0;
+      for (int i = 0; i < MEM_WORDS; i++) mem[i] <= 64'd0;
+    end else if (host_clear) begin
       for (int i = 0; i < MEM_WORDS; i++) mem[i] <= 64'd0;
     end else begin
     // host program load: one 32-bit parcel per beat, selected by addr[2]

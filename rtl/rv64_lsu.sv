@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_lsu.sv -- load/store unit and data-interface sequencer.
 //   Owns the request/response handshake with the data port: request backpressure

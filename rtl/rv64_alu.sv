@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_alu.sv -- 64-bit integer ALU: RV64I, RV64M-adjacent word ops, Zba, Zbb,
 //                Zbc (clmul), Zbs and Zicond.  Purely combinational.

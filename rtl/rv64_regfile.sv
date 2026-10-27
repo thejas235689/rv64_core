@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_regfile.sv -- 32 x 64 architectural integer register file.
 //   Two asynchronous read ports, one synchronous write port, one debug read

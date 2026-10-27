@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // riscv_core_top.sv -- single-hart 64-bit RISC-V core, machine mode.
 //

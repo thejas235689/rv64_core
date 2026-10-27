@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_num_pkg.sv -- definitions for the custom numeric ABI.
 //

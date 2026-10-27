@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_xcetask.sv -- bounded custom task slots with a completion / timeout
 // lifecycle and an optional completion interrupt.

@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_bpu.sv -- branch prediction unit.
 //   Tournament selection between a gshare predictor (8-bit GHR) and a bimodal

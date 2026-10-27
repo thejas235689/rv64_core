@@ -1,0 +1,94 @@
+/*
+ * Portable Stimulus model for the rv64_core numeric ABI.
+ *
+ * STATUS: UNCOMPILED. No PSS tool is available in the environment this was
+ * written in (no pssc, no Perspec, no Questa VIP), so this model has never been
+ * elaborated or run. It is written to the Accellera PSS 2.0 intent so a team
+ * with a commercial or open PSS tool can adopt it; it is not a claim that PSS
+ * coverage exists.
+ *
+ * Intent: describe *what* to test rather than *how* to drive it, so the same
+ * model can be solved against the UVM environment, the cocotb harness, or
+ * silicon bring-up.
+ */
+
+component rv64_numeric {
+
+    // ---- the numeric ABI's operations and widths -------------------------
+    enum num_op_e {
+        QADD, QSUB, QMUL, QCLR, QACC, QGET, ADAPT, ERR,
+        PADD, PSUB, PMUL, PDIV,
+        LNMUL, LNDIV,
+        RADD, RMUL,
+        FADD, FMUL,
+        TOINT, FROMINT
+    };
+
+    enum num_fmt_e { W8, W16, W32, W64 };
+
+    // ---- one numeric operation -------------------------------------------
+    action numeric_op {
+        rand num_op_e   op;
+        rand num_fmt_e  fmt;
+        rand bit [63:0] a;
+        rand bit [63:0] b;
+
+        // Fixed-Q operands are Q32.32 boundary values; the research families
+        // use encodings that stress their own format, so the constraint is on
+        // the *encoding space* rather than on a numeric range.
+        constraint c_operands {
+            if (op inside [QADD, QSUB, QMUL]) {
+                a in [0, 0x1_0000_0000, 0x7FFF_FFFF_FFFF_FFFF,
+                      0x8000_0000_0000_0000, 0xFFFF_FFFF_FFFF_FFFF];
+                b in [0, 0x1_0000_0000, 0x7FFF_FFFF_FFFF_FFFF,
+                      0x8000_0000_0000_0000, 0xFFFF_FFFF_FFFF_FFFF];
+            }
+            if (op inside [PADD, PSUB, PMUL, PDIV]) {
+                // posit encodings: zero, one, maxpos, minpos, one-neg
+                a in [0x00, 0x40, 0x7F, 0x01, 0xC0,
+                      0x0000, 0x4000, 0x7FFF, 0x0001, 0xC000,
+                      0x0000_0000, 0x4000_0000, 0x7FFF_FFFF, 0xC000_0000];
+            }
+            if (op inside [LNMUL, LNDIV]) {
+                a in [0x0000_8000, 0x0001_0000, 0x8000_0000, 0x7FFF_FFFF];
+            }
+            if (op inside [RADD, RMUL]) {
+                a in [0x000, 0x123, 0x456, 0xFFF, 0xABC];
+            }
+            if (op inside [FADD, FMUL]) {
+                a in [0x0000_0000, 0x3F80_0000, 0x7F80_0000, 0x7FC0_0000,
+                      0x7F7F_FFFF, 0x0000_0001];
+            }
+        }
+    }
+
+    // ---- a sweep across one family at one width --------------------------
+    action family_sweep {
+        rand num_fmt_e fmt;
+        numeric_op    ops[];
+
+        constraint c_size { ops.size() inside [4..16]; }
+        constraint c_same_fmt {
+            foreach (ops[i]) { ops[i].fmt == fmt; }
+        }
+
+        // every research family is exercised, in both directions
+        constraint c_families {
+            foreach (ops[i]) {
+                ops[i].op inside [PADD, PSUB, PMUL, PDIV,
+                                  LNMUL, LNDIV, RADD, RMUL, FADD, FMUL];
+            }
+        }
+    }
+
+    // ---- the regression the project actually wants ----------------------
+    action numeric_regression {
+        family_sweep sweeps[];
+
+        // one sweep per width, so `fmt` is covered rather than sampled
+        constraint c_widths {
+            sweeps.size() == 3;
+            foreach (sweeps[i]) { sweeps[i].fmt == W8 + i; }
+        }
+    }
+}

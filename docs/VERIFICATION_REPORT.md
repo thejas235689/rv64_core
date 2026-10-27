@@ -268,6 +268,23 @@ for numeric instructions and comparing traces would prove nothing): **299
 retirements match the ISS**, so the numeric path is now verified in the CPU and
 not only standalone.
 
+**Static analysis.** `sim/lint.sh` runs `slang` (a full SystemVerilog front end)
+over the core and both testbenches, then Verilator `--lint-only`. slang is clean
+-- **0 errors, 0 warnings on all three tops** -- after two real fixes it forced:
+
+* **Mixed timescales.** The RTL had no `` `timescale `` while the testbenches did,
+  which is a genuine simulation hazard, not a style opinion. All 18 RTL files now
+  declare `1ns/1ps`.
+* **A multiply-driven memory in the testbench.** `tb_core_top.sv` zeroed its
+  memory in an `initial` block and also wrote it from an `always_ff`. Legal
+  Verilog, but a real hazard; the power-up zeroing moved into the same
+  `always_ff`.
+
+Verilator reports 27 width warnings, all widening/truncation in the numeric
+packing and the quire read-back paths. Those are intentional (packing narrow
+fields, reading a 128-bit quire down to 64 bits), and are reported rather than
+suppressed so a future change that widens something unintentionally shows up.
+
 **Tool coverage.** Verified under xezim (standalone vectors: 10756 checks, 0
 mismatches) and Icarus (cocotb: 24/24 tests). **Verilator cannot run in this
 environment**: cocotb's Verilator flow shells out to `make` to build the C++
@@ -275,11 +292,12 @@ model, and `make` is not installed and cannot be (no root). `sim/run.py --sim
 verilator` is wired up with `--timing -Wno-fatal`, so it will work wherever make
 exists; it is untested here.
 
-**Not implemented:** the 8-bit and 32-bit posit variants -- the `fmt` field still
-selects nothing, so all four families are fixed at their single width (posit16,
-32-bit LNS log, 12-bit packed RNS, binary32). Parameterising posit by width is a
-datapath refactor rather than a flag, because the regime length, fraction width
-and internal fixed-point scale all move with N. **UVM now covers them.** `rv64_numeric_test` runs a numeric program through the
+**PSS.** `pss/rv64_numeric.pss` describes the numeric regression as a Portable
+Stimulus model -- operations, widths, and the operand space each family needs to
+be stressed with. It is **uncompiled**: no PSS tool (pssc, Perspec, Questa VIP)
+is available in this environment, so it has never been elaborated or solved. It
+is written to the Accellera PSS 2.0 intent for a team that has a PSS tool, and is
+not evidence that PSS coverage exists. **UVM now covers them.** `rv64_numeric_test` runs a numeric program through the
 SystemVerilog UVM environment: **156 retirements and 1 trap matched**, zero
 errors. That was only possible after teaching the ISS custom-0 -- the scoreboard
 compares retire traces, and a numeric instruction writes no GPR, so the program

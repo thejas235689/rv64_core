@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_fetch.sv -- fetch buffering with request/response tracking.
 //   The instruction port returns one aligned 64-bit beat carrying two 32-bit

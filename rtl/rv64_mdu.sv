@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_mdu.sv -- RV64M multiply/divide unit.
 //   MUL*  : single-cycle combinational product, registered, done next cycle.

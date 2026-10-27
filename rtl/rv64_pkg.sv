@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_pkg.sv -- shared types, opcodes and constants for the RV64 core slice.
 // No state, no logic: package only.  Imported by every module in rtl/.

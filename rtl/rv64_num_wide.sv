@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_num_wide.sv -- the four research numeric families.
 //
@@ -488,7 +489,7 @@ module rv64_num_wide (
                      ((tail != (128'd1 << (disc - 1))) || (fracbits[0] == 1'b1));
           if (round_up) begin
             fracbits = fracbits + 128'd1;
-            if (fracbits >> nfrac) begin
+            if ((fracbits >> nfrac) != 128'd0) begin   // explicit: a vector is true if any bit is set
               fracbits = 128'd0;
               r = r + 1;
               if (r > 1) begin

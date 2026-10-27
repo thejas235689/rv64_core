@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_pmp.sv -- 8-entry physical memory protection.
 //   OFF / TOR / NA4 / NAPOT matching, whole-access checks, lowest-numbered

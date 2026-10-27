@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_plic_lite.sv -- four-source platform-level interrupt controller (lite).
 //   Per-source priority, global enable mask and priority threshold, with

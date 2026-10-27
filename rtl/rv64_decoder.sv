@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_decoder.sv -- instruction decode for RV64IM + Zba + Zbb + Zbc + Zbs +
 //                    Zicond + Zihintpause, machine mode, Zicsr.

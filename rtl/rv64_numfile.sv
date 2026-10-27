@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_numfile.sv -- 32 x 64-bit numeric register bank for the custom numeric
 // ABI. Separate from the integer register file: every entry is writable (there
