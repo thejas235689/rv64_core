@@ -92,8 +92,12 @@ module rv64_mmu (
   end
 
   // ---- walker state --------------------------------------------------------
-  typedef enum logic [2:0] {W_IDLE, W_REQ, W_RESP, W_DONE, W_FAULT} wstate_e;
-  wstate_e     wst;
+  // Plain bits rather than an enum: Icarus does not advance an enum state
+  // variable in this FSM (the branch runs, the state assignment is lost), while
+  // slang, Verilator and xezim all accept the enum form.
+  localparam logic [2:0] W_IDLE = 3'd0, W_REQ = 3'd1, W_RESP = 3'd2,
+                         W_DONE = 3'd3, W_FAULT = 3'd4;
+  logic [2:0]  wst;
   logic [1:0]  level;
   logic [43:0] a_ppn;          // current table PPN
   logic [8:0]  vpn_sel;        // VPN at the current level
@@ -240,7 +244,7 @@ module rv64_mmu (
         tlb_perm[i] <= 4'd0;
       end
     end else begin
-      unique case (wst)
+      case (wst)
         W_IDLE: begin
           if (req_valid) begin
             v_q     <= vaddr;
@@ -251,6 +255,10 @@ module rv64_mmu (
               bare_q <= 1'b1;
               wst    <= W_DONE;
             end else if (tlb_hit) begin
+              // bare_q must be cleared here too: a TLB hit straight after a
+              // pass-through access kept the stale flag and returned the virtual
+              // address instead of the translated one.
+              bare_q       <= 1'b0;
               leaf_ppn     <= tlb_ppn[tlb_idx];
               leaf_level   <= 2'd0;
               leaf_is_leaf <= 1'b1;

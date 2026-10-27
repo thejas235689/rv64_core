@@ -71,7 +71,21 @@ module tb_mmu;
     begin
       req_valid = 1; vaddr = va; acc_type = acc;
       @(posedge clk); #1; req_valid = 0;
-      while (!resp_valid) @(posedge clk);
+      // The settling delay has to be INSIDE the loop: evaluating resp_valid
+      // immediately at the edge reads it before the non-blocking update, so the
+      // single-cycle W_DONE window is missed and a later, unrelated value is
+      // sampled instead.
+      // bounded wait: an unbounded spin hides a hang as a timeout with no
+      // message, which is exactly what Icarus did here.
+      begin
+        int guard;
+        guard = 0;
+        while (!resp_valid && guard < 200) begin @(posedge clk); #1; guard++; end
+        if (guard >= 200) begin
+          errors++;
+          $display("MISMATCH translation never completed for va=%h acc=%0d", va, acc);
+        end
+      end
       #1;
       pa = paddr; flt = fault; cause = fault_cause;
       @(posedge clk); #1;

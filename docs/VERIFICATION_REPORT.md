@@ -428,12 +428,24 @@ requirement), megapage alignment checks, the correct page-fault cause per access
 type, and MPRV gating so M-mode loads and stores translate while M-mode fetches
 do not.
 
-**Status: implemented, lints clean, NOT verified.** Verilator reports **0
-warnings**, and a cycle-by-cycle probe confirms the walk itself is correct -- root
-PTE at 0x1000, L1 at 0x2000, L0 at 0x3008, landing on the leaf with the expected
-PPN. But `tb/tb_mmu.sv` reports **22 checks, 6 mismatches**, and I did not finish
-isolating the remainder. It is not wired into the load/store path either, so the
-core still runs untranslated and `satp` still reads zero.
+**Status: verified under xezim, tool-specific failure under Icarus, not wired into
+the core.**
+
+| Tool | Result |
+| --- | --- |
+| xezim 0.11.3 | **22 checks, 0 mismatches -- PASS** |
+| slang | clean, 0 errors 0 warnings |
+| Verilator | lint clean, 0 warnings |
+| Icarus 14.0 | the first (bare) translation never completes -- **not a pass** |
+
+The Icarus failure is a tool issue I did not isolate: a probe shows the FSM
+setting `bare_q` but never leaving `W_IDLE`, i.e. the branch executes and its
+state assignment is lost. It is not the enum state variable (replacing the enum
+with plain bits and localparams changed nothing) and not a duplicate driver (there
+is one sequential block and one case). Because the core regression runs under
+Icarus, the MMU is deliberately **not** instantiated in the core: wiring it in
+would take the 25 passing core tests down with it. `satp` still reads zero and the
+core still runs untranslated.
 
 Defects found on the way, three of them real and one a lesson about debugging:
 
@@ -452,6 +464,16 @@ Defects found on the way, three of them real and one a lesson about debugging:
   and sent me looking at the output mux; `W_FAULT` is 4 and `W_DONE` is 3, so the
   walker was faulting and the mux was innocent. Reading the enum declaration
   first would have saved two rounds.
+* **My testbench sampled a one-cycle window at the wrong instant.** The wait loop
+  was `while (!resp_valid) @(posedge clk);` -- it evaluates `resp_valid` at the
+  edge, before the non-blocking update settles, so the single-cycle `W_DONE`
+  window was missed and an unrelated later value was read. That accounted for
+  **five of the six** original failures. The settling delay now sits inside the
+  loop, and the wait is bounded so a hang reports itself instead of timing out
+  silently.
+* **`bare_q` was only cleared on the walk path**, so a TLB hit immediately after a
+  pass-through access kept the stale flag and returned the virtual address. That
+  was the sixth.
 
 ### S/U privilege modes
 

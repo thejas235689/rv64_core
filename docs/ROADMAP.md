@@ -36,7 +36,7 @@ exists; **absent** = not in this repository.
 | --- | --- | --- |
 | Out-of-order backend (rename, free list, issue queue, PRF, ROB) | **absent** | would be a separate backend behind the same ISA contract |
 | Supervisor/user modes | **done** | M/S/U privilege register, S CSRs, medeleg/mideleg delegation, mret/sret, CSR privilege checks, PMP sees the real privilege. Not implemented: MPRV, SUM/MXR enforcement, independent sie/sip |
-| Sv39 translation (TLB, PTW, faults, ASID) | **partial** | `rtl/rv64_mmu.sv`: 16-entry TLB, 3-level walker, permission and fault rules, MPRV gating. Lints clean, walk verified by probe, but the testbench has 6 of 22 checks failing and it is NOT wired into the load/store path. No ASID tagging, no superpage TLB entries, A/D checked but not set |
+| Sv39 translation (TLB, PTW, faults, ASID) | **partial** | `rtl/rv64_mmu.sv`: 16-entry TLB, 3-level walker, permission and fault rules, MPRV gating. **22 checks, 0 mismatches under xezim**; slang and Verilator clean. Not wired into the load/store path, and the same testbench does not complete under Icarus. No ASID tagging, no superpage TLB entries, A/D checked but not set |
 | Atomics (LR/SC, AMOs) | **done** | `lr.w/d`, `sc.w/d` and all nine AMOs at both widths; reservation register in the LSU, read-modify-write state machine, decoded on opcode 0x2F; verified by a 23-check unit testbench and 26 in-CPU retirements against the ISS |
 | Fetch-fault metadata | **done** | instruction access fault with faulting address |
 | Transactional data memory | **partial** | separate response channel, backpressure, response error; no SC-failure channel |
