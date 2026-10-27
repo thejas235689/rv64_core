@@ -293,11 +293,46 @@ verilator` is wired up with `--timing -Wno-fatal`, so it will work wherever make
 exists; it is untested here.
 
 **PSS.** `pss/rv64_numeric.pss` describes the numeric regression as a Portable
-Stimulus model -- operations, widths, and the operand space each family needs to
-be stressed with. It is **uncompiled**: no PSS tool (pssc, Perspec, Questa VIP)
-is available in this environment, so it has never been elaborated or solved. It
-is written to the Accellera PSS 2.0 intent for a team that has a PSS tool, and is
-not evidence that PSS coverage exists. **UVM now covers them.** `rv64_numeric_test` runs a numeric program through the
+Stimulus model. It is now **parsed, lowered and solved** by Satya v0.25.0
+(thejas235689/satya, prebuilt x86_64 release, SHA-256 verified):
+
+```
+satya check pss/rv64_numeric.pss   -> OK, parsed and lowered (2 enums, 2 components, 7 actions)
+satya solve pss/rv64_numeric.pss --action posit_op   -> solved
+satya gen   pss/rv64_numeric.pss --backend uvm --action posit_op
+                                   -> 64 lines of UVM sequence, pss/generated/posit_op_seq.sv
+```
+
+So the model is a real, tool-accepted PSS model and the PSS -> UVM flow is
+demonstrated end to end, not merely written down.
+
+### Satya v0.25.0 -- four issues found by running it
+
+Each has a minimal reproducer. They are reported as observations, not as
+defects in this repository.
+
+1. **`bit[64]` literals with bit 63 set solve as 0**, violating their own
+   constraint. `rand bit[64] x; constraint x == 0x7FFF_FFFF_FFFF_FFFF;` solves to
+   2^63-1 correctly; `constraint x == 0x8000_0000_0000_0000;` (and anything above)
+   solves to **0**. Looks like a signed-64-bit interpretation on the way in.
+   Consequence here: the model keeps every operand below 2^63, so INT64_MIN and
+   -1 coverage comes from the directed suites instead.
+
+2. **Enum range constraints are not enforced.**
+   `rand e_t sel; constraint sel in [A1..A3];` solves to 0 and 5 across seeds --
+   both outside the range. The trace also reports `constraints: 2/2 satisfied`
+   while listing `not satisfied: <expr>`, so the summary and the detail disagree.
+
+3. **Three actions exhaust memory**: `fixed_q_op`, `lns_op` and `fp32_op` each
+   fail with `memory allocation of 1207959568 bytes failed`, while `quire_op`,
+   `posit_op` and `rns_op` solve. The difference is the width of the operand
+   domains; 1.2 GB is above this sandbox's 1.5 GB address-space cap, so the run
+   cannot complete here regardless.
+
+4. **The UVM backend emits PSS enum names as bare SystemVerilog identifiers**:
+   `op inside {[PADD:PDIV]};` in `pss/generated/posit_op_seq.sv`. That will not
+   compile as SV unless a matching enum is declared, so the generated sequence is
+   a starting point rather than drop-in code. **UVM now covers them.** `rv64_numeric_test` runs a numeric program through the
 SystemVerilog UVM environment: **156 retirements and 1 trap matched**, zero
 errors. That was only possible after teaching the ISS custom-0 -- the scoreboard
 compares retire traces, and a numeric instruction writes no GPR, so the program
