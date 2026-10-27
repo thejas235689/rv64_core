@@ -438,6 +438,21 @@ path needs), no coherence, no RRIP or replacement policy beyond direct mapping, 
 prefetch. It is also **not wired into the core** -- the fetch port still goes
 straight to memory, so this is a verified block rather than a working L1.
 
+**The wiring was attempted and reverted.** Inserting the cache between the fetch
+unit and the instruction bus (with the PMP gate moved onto the fill port) built
+cleanly and then broke **8 of the 26 core tests**: the core fetched wrong
+instructions -- `test_control` saw `insn 0x05500493` where the ISS expected
+`0x07700513`, `test_random` diverged at retirement 198, and several tests turned
+into illegal-instruction traps. The cache's own testbench stayed green throughout,
+so the defect is in the handshake between the fetch unit and the cache rather than
+in the cache itself. I did not isolate it within the time available, and leaving a
+core that fetches wrong instructions is worse than leaving the cache out, so the
+change was reverted rather than committed half-working.
+
+A `resp_error` output was added to the cache during that attempt and is kept: an
+errored fill must reach the fetch unit as an access fault, and the original block
+had no way to say so.
+
 ### Tagged history and a perceptron predictor
 
 The predictor set is now: bimodal + gshare tournament, BTB, RAS, a loop-count

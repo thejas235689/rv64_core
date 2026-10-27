@@ -28,6 +28,7 @@ module rv64_icache (
   output logic        resp_valid,
   output logic [63:0] resp_data,
   output logic        resp_miss,      // this access had to fill
+  output logic        resp_error,     // the fill failed; the fetch must fault
 
   // ---- fill port -----------------------------------------------------------
   output logic        fill_valid,
@@ -55,6 +56,7 @@ module rv64_icache (
   cstate_e     cst;
   logic [63:0] addr_q;
   logic        miss_q;
+  logic        err_q;
 
   assign fill_valid = (cst == C_FILL);
   assign fill_addr  = {addr_q[63:3], 3'b000};
@@ -62,12 +64,14 @@ module rv64_icache (
   assign resp_valid = (cst == C_DONE);
   assign resp_data  = data_q[addr_q[8:3]];
   assign resp_miss  = miss_q;
+  assign resp_error = err_q;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       cst        <= C_IDLE;
       addr_q     <= 64'd0;
       miss_q     <= 1'b0;
+      err_q      <= 1'b0;
       hit_count  <= 32'd0;
       miss_count <= 32'd0;
       for (int i = 0; i < NLINES; i++) begin
@@ -82,10 +86,12 @@ module rv64_icache (
             addr_q <= req_addr;
             if (hit) begin
               miss_q    <= 1'b0;
+              err_q     <= 1'b0;
               cst       <= C_DONE;
               hit_count <= hit_count + 32'd1;
             end else begin
               miss_q     <= 1'b1;
+              err_q      <= 1'b0;
               cst        <= C_FILL;
               miss_count <= miss_count + 32'd1;
             end
@@ -96,6 +102,7 @@ module rv64_icache (
           if (fill_rsp_valid) begin
             // install the line; an errored fill is not cached, so the next
             // access retries rather than serving bad data forever
+            err_q <= fill_rsp_error;
             if (!fill_rsp_error) begin
               tag_q[addr_q[8:3]]   <= addr_q[63:9];
               data_q[addr_q[8:3]]  <= fill_rsp_data;
