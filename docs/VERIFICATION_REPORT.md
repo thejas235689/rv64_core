@@ -420,6 +420,31 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### XRV512 (implemented, NOT verified)
+
+`rtl/rv64_xrv512_file.sv` and `rtl/rv64_xrv512.sv`: a 32 x 512-bit register file
+with two full-width read ports, a write port and a single-lane port, driving
+eight 64-bit lanes through VADD/VSUB/VMUL/VAND/VOR/VXOR/VMINU/VMAXU/VMINS/VMAXS
+and VRED (lane sum). It compiles cleanly under slang, and the register file's lane
+port is demonstrably working -- a probe shows `lane_q` taking 0,1,2... and a lane
+read returning the right value.
+
+**It is not verified, and I am not claiming otherwise.** `tb/tb_xrv512.sv` reports
+5 mismatches: every lane of the destination ends up holding the *first* lane's
+result, so a VADD of (10,20,...) and (1,2,...) yields 11 in all eight lanes
+instead of 11,22,...
+
+Three rewrites did not fix it: the lane compute with a computed part-select
+(`rdata_a[64*l +: 64]`), then with shifts (`rdata_a >> (64*l)`), then with eight
+explicitly-indexed lanes and constant part-selects, and finally the register file's
+lane read and write rewritten as cases over constant indices. All four produce the
+same symptom, which points at something more basic than the indexing -- most likely
+the lane writes never reaching distinct lanes at all, so every source lane reads
+the same value.
+
+This is the first block in the project left in this state, and the honest summary
+is that it needs another session with a waveform rather than more guessing.
+
 ### L2 cache with RRIP (verified standalone)
 
 `rtl/rv64_l2cache.sv`: 16 sets x 4 ways x 32 bytes, so a line is four 64-bit beats
