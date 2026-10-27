@@ -32,7 +32,12 @@ RADD, RMUL = 14, 15
 FADD, FMUL = 16, 17
 
 LNS_ZERO = 0x8000_0000
-POS_FRAC_BITS = 34
+POS_FRAC_BITS = 64
+POS_LIM = (1 << 127) - 1
+
+
+def posit_width(fmt):
+    return {1: 8, 2: 32}.get(fmt, 16)
 FP_QNAN = 0x7FC0_0000
 
 
@@ -41,8 +46,49 @@ def _s32(v):
     return v - (1 << 32) if v & 0x8000_0000 else v
 
 
-def rns_pack(r3, r5, r7, r11):
-    return (r3 & 3) | ((r5 & 7) << 2) | ((r7 & 7) << 5) | ((r11 & 15) << 8)
+def rns_pack(r3, r5, r7, r11, r13=0, fmt=0):
+    v = (r3 & 3) | ((r5 & 7) << 2) | ((r7 & 7) << 5)
+    if fmt != 1:
+        v |= (r11 & 15) << 8
+    if fmt == 2:
+        v |= (r13 & 15) << 12
+    return v
+
+
+def _sx(v, w):
+    v &= (1 << w) - 1
+    return v - (1 << w) if v & (1 << (w - 1)) else v
+
+
+def lns_width(fmt):
+    return {1: 16, 2: 64}.get(fmt, 32)
+
+
+def lns_op(op, a, b, fmt=0):
+    """LNS at the width selected by fmt; the zero code is 1<<(w-1)."""
+    w = lns_width(fmt)
+    mask = (1 << w) - 1
+    zero = 1 << (w - 1)
+    maxv, minv = zero - 1, -zero
+    fa, fb = a & mask, b & mask
+    sa, sb = _sx(fa, w), _sx(fb, w)
+    a_zero, b_zero = fa == zero, fb == zero
+    flags = 0
+    if op == LNMUL:
+        if a_zero or b_zero:
+            return zero, 0
+        t = sa + sb
+    else:
+        if b_zero:
+            return maxv & mask, 1 << 4
+        if a_zero:
+            return zero, 0
+        t = sa - sb
+    if t > maxv:
+        return maxv & mask, 1 << 0
+    if t < minv:
+        return zero, 1 << 0
+    return t & mask, flags
 
 
 def _f32_parts(v):
@@ -144,14 +190,14 @@ def f32_add(a, b):
     return (sign << 31) | (exp << 23) | (man & 0x7FFFFF), 0
 
 
-def posit_decode(p):
-    """posit<16,1> -> signed Q30.34"""
-    sgn = (p >> 15) & 1
-    body = p & 0x7FFF
+def posit_decode(p, n=16):
+    """posit< n,1> -> signed Q63.64"""
+    sgn = (p >> (n - 1)) & 1
+    body = p & ((1 << (n - 1)) - 1)
     if body == 0:
         return 0
-    i, k = 14, 0
-    if (body >> 14) & 1:
+    i, k = n - 2, 0
+    if (body >> (n - 2)) & 1:
         while i >= 0 and (body >> i) & 1:
             k += 1
             i -= 1
@@ -160,19 +206,19 @@ def posit_decode(p):
         while i >= 0 and not ((body >> i) & 1):
             k -= 1
             i -= 1
-    e, frac, n = 0, 0, 0
+    e, frac, nf = 0, 0, 0
     if i >= 1:
         e = (body >> (i - 1)) & 1
         frac = body & ((1 << (i - 1)) - 1)
-        n = i - 1
-    mant = ((1 << 14) + frac) >> (14 - n)
-    shift = 2 * k + e + POS_FRAC_BITS - n
+        nf = i - 1
+    mant = ((1 << (n - 2)) + frac) >> ((n - 2) - nf)
+    shift = 2 * k + e + POS_FRAC_BITS - nf
     v = mant << shift if shift >= 0 else mant >> (-shift)
     return -v if sgn else v
 
 
-def posit_encode(v):
-    """signed Q30.34 -> posit<16,1>, round to nearest even"""
+def posit_encode(v, n=16):
+    """signed Q63.64 -> posit< n,1>, round to nearest even"""
     sgn = 1 if v < 0 else 0
     mag = -v if v < 0 else v
     if mag == 0:
@@ -185,15 +231,13 @@ def posit_encode(v):
         rlen, regime_val = k + 2, (1 << (k + 2)) - 2
     else:
         rlen, regime_val = (-k) + 1, 1
-    nfrac = 14 - rlen
-    if nfrac < 0 or rlen > 15:
-        # the regime alone no longer fits the 15-bit body: saturate to the
-        # largest representable magnitude rather than emit a negative shift
-        return 0x7FFF if sgn == 0 else 0x8001
-    below = ((mag << (63 - lead)) & ((1 << 64) - 1)) if lead >= 1 else 0
-    fracbits = ((below >> (63 - nfrac)) & ((1 << nfrac) - 1)) if nfrac > 0 else 0
-    disc = 63 - nfrac
-    tail = (below & ((1 << disc) - 1)) if 0 < disc < 64 else 0
+    nfrac = (n - 2) - rlen
+    if nfrac < 0 or rlen > n - 1:
+        return ((1 << (n - 1)) | 1) if sgn else ((1 << (n - 1)) - 1)
+    below = ((mag << (127 - lead)) & ((1 << 128) - 1)) if lead >= 1 else 0
+    fracbits = ((below >> (127 - nfrac)) & ((1 << nfrac) - 1)) if nfrac > 0 else 0
+    disc = 127 - nfrac
+    tail = (below & ((1 << disc) - 1)) if 0 < disc < 128 else 0
     if nfrac > 0 and disc >= 1:
         guard = (below >> (disc - 1)) & 1
         if guard and (tail != (1 << (disc - 1)) or (fracbits & 1)):
@@ -208,12 +252,12 @@ def posit_encode(v):
                         rlen, regime_val = k + 2, (1 << (k + 2)) - 2
                     else:
                         rlen, regime_val = (-k) + 1, 1
-                    nfrac = max(0, 14 - rlen)
-                    if rlen > 15:
-                        return 0x7FFF if sgn == 0 else 0x8001
-    body = ((regime_val << (15 - rlen)) | (r << (14 - rlen)) |
+                    nfrac = max(0, (n - 2) - rlen)
+                    if rlen > n - 1:
+                        return ((1 << (n - 1)) | 1) if sgn else ((1 << (n - 1)) - 1)
+    body = ((regime_val << ((n - 1) - rlen)) | (r << ((n - 2) - rlen)) |
             (fracbits & ((1 << nfrac) - 1)))
-    return (sgn << 15) | (body & 0x7FFF)
+    return (sgn << (n - 1)) | (body & ((1 << (n - 1)) - 1))
 
 
 def _trunc_div(a, b):
@@ -221,43 +265,31 @@ def _trunc_div(a, b):
     return -q if (a < 0) != (b < 0) else q
 
 
-def posit_op(op, a, b):
-    da, db = posit_decode(a & 0xFFFF), posit_decode(b & 0xFFFF)
+def posit_op(op, a, b, fmt=0):
+    n = posit_width(fmt)
+    mask = (1 << n) - 1
+    da, db = posit_decode(a & mask, n), posit_decode(b & mask, n)
     flags = 0
     if op == PADD:
         res = da + db
-        if ((da >> 63) & 1) == ((db >> 63) & 1) and ((res >> 63) & 1) != ((da >> 63) & 1):
-            res = -(1 << 63) if (da >> 63) & 1 else (1 << 63) - 1
-            flags |= (1 << 5) | (1 << 0)
     elif op == PSUB:
         res = da - db
-        if ((da >> 63) & 1) != ((db >> 63) & 1) and ((res >> 63) & 1) != ((da >> 63) & 1):
-            res = -(1 << 63) if (da >> 63) & 1 else (1 << 63) - 1
-            flags |= (1 << 5) | (1 << 0)
     elif op == PMUL:
         res = (da * db) >> POS_FRAC_BITS
-        # mirror the RTL: the shifted product can exceed the 64-bit range, and
-        # truncating it wraps a large positive product negative
-        if res > (1 << 63) - 1:
-            res = (1 << 63) - 1
-            flags |= (1 << 5) | (1 << 0)
-        elif res < -(1 << 63):
-            res = -(1 << 63)
-            flags |= (1 << 5) | (1 << 0)
     else:
         if db == 0:
             res = 0
             flags |= 1 << 4
-        else:
-            res = _trunc_div(da << POS_FRAC_BITS, db)
-            # mirror the RTL clamp before the 64-bit narrowing
-            if res > (1 << 63) - 1:
-                res = (1 << 63) - 1
-                flags |= (1 << 5) | (1 << 0)
-            elif res < -(1 << 63):
-                res = -(1 << 63)
-                flags |= (1 << 5) | (1 << 0)
-    return posit_encode(res), flags
+            return posit_encode(res, n), flags
+        res = _trunc_div(da << POS_FRAC_BITS, db)
+    # mirror the RTL: the 128-bit internal range is the clamp point
+    if res > POS_LIM:
+        res = POS_LIM
+        flags |= (1 << 5) | (1 << 0)
+    elif res < -POS_LIM - 1:
+        res = -POS_LIM - 1
+        flags |= (1 << 5) | (1 << 0)
+    return posit_encode(res, n), flags
 
 # cfg field positions
 CFG_ROUND, CFG_SAT, CFG_PREC, CFG_ES, CFG_ERREN, CFG_ADAPT = 0, 2, 8, 16, 20, 21
@@ -305,7 +337,7 @@ def cfg_fields(cfg):
                 err_en=(cfg >> CFG_ERREN) & 1)
 
 
-def model(op, a, b, cfg, quire, err_q):
+def model(op, a, b, cfg, quire, err_q, fmt=0):
     """Return (y, flags, err_now, quire_next, err_next) for one operation."""
     f = cfg_fields(cfg)
     rnd = f["round"] & 1
@@ -322,7 +354,7 @@ def model(op, a, b, cfg, quire, err_q):
         opb, lost_b = adapt(b, f["prec"], rnd)
 
     if op in (PADD, PSUB, PMUL, PDIV):
-        y, fl = posit_op(op, a, b)
+        y, fl = posit_op(op, a, b, fmt)
         flags |= fl
         return y, flags, err_now, quire, err_next
 
@@ -337,40 +369,18 @@ def model(op, a, b, cfg, quire, err_q):
         a5, b5   = (a >> 2) & 7, (b >> 2) & 7
         a7, b7   = (a >> 5) & 7, (b >> 5) & 7
         a11, b11 = (a >> 8) & 15, (b >> 8) & 15
+        a13, b13 = (a >> 12) & 15, (b >> 12) & 15
         if op == RADD:
-            y = rns_pack((a3 + b3) % 3, (a5 + b5) % 5, (a7 + b7) % 7, (a11 + b11) % 11)
+            y = rns_pack((a3 + b3) % 3, (a5 + b5) % 5, (a7 + b7) % 7,
+                         (a11 + b11) % 11, (a13 + b13) % 13, fmt)
         else:
-            y = rns_pack((a3 * b3) % 3, (a5 * b5) % 5, (a7 * b7) % 7, (a11 * b11) % 11)
+            y = rns_pack((a3 * b3) % 3, (a5 * b5) % 5, (a7 * b7) % 7,
+                         (a11 * b11) % 11, (a13 * b13) % 13, fmt)
         return y, flags, err_now, quire, err_next
 
     if op in (LNMUL, LNDIV):
-        la, lb = a & 0xFFFFFFFF, b & 0xFFFFFFFF
-        sa_, sb_ = _s32(la), _s32(lb)
-        a_zero, b_zero = la == LNS_ZERO, lb == LNS_ZERO
-        if op == LNMUL:
-            if a_zero or b_zero:
-                y = LNS_ZERO
-            else:
-                t = sa_ + sb_
-                if t > 0x7FFF_FFFF:
-                    y, flags = 0x7FFF_FFFF, flags | (1 << 0)
-                elif t < -0x8000_0000:
-                    y, flags = LNS_ZERO, flags | (1 << 0)
-                else:
-                    y = t & 0xFFFFFFFF
-        else:
-            if b_zero:
-                y, flags = 0x7FFF_FFFF, flags | (1 << 4)
-            elif a_zero:
-                y = LNS_ZERO
-            else:
-                t = sa_ - sb_
-                if t > 0x7FFF_FFFF:
-                    y, flags = 0x7FFF_FFFF, flags | (1 << 0)
-                elif t < -0x8000_0000:
-                    y, flags = LNS_ZERO, flags | (1 << 0)
-                else:
-                    y = t & 0xFFFFFFFF
+        y, fl = lns_op(op, a, b, fmt)
+        flags |= fl
         return y, flags, err_now, quire, err_next
 
     if op in (QADD, QSUB):
@@ -535,6 +545,16 @@ def build_vectors():
         for yv in pos:
             for op in (PADD, PSUB, PMUL, PDIV):
                 vecs.append((op, 0, x, yv, cfg()))
+    # the same sweep at 8 and 32 bits, so fmt is exercised
+    pos8  = [0x00, 0x40, 0x50, 0x60, 0x70, 0x48, 0x30, 0x20, 0xC0, 0x7F, 0x10, 0x08]
+    pos32 = [0x0000_0000, 0x4000_0000, 0x5000_0000, 0x6000_0000, 0x7000_0000,
+             0x4800_0000, 0x3000_0000, 0x2000_0000, 0xC000_0000, 0x7FFF_FFFF,
+             0x1000_0000, 0x0800_0000]
+    for fmt_sel, pool in ((1, pos8), (2, pos32)):
+        for x in pool:
+            for yv in pool:
+                for op in (PADD, PSUB, PMUL, PDIV):
+                    vecs.append((op, fmt_sel, x, yv, cfg()))
 
     # ---- random -------------------------------------------------------------
     ops_impl = [QADD, QSUB, QMUL, ADAPT]
@@ -558,7 +578,7 @@ def main():
     err_q = 0
     fin, fexp = [], []
     for op, fmt, a, b, cfg in vecs:
-        y, flags, err_now, quire_next, err_next = model(op, a, b, cfg, quire, err_q)
+        y, flags, err_now, quire_next, err_next = model(op, a, b, cfg, quire, err_q, fmt)
         fin.append(f"{(fmt << 5) | (op & 0x1F):016x}")
         fin.append(f"{a & M64:016x}")
         fin.append(f"{b & M64:016x}")

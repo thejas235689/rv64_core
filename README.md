@@ -162,7 +162,7 @@ Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
   780 retirements) **passes** through the UVM wrapper, so the wrapper itself is
   proven; only the full 4444-retirement run is out of reach at this driver
   speed. Fixing the driver is the next item.
-* **8 UVM tests: 7 pass, 1 is throughput-blocked.** `rv64_illegal_test` (120 unimplemented
+* **9 UVM tests: 8 pass, 1 is throughput-blocked.** `rv64_illegal_test` (120 unimplemented
   encodings, each expected to trap) passes and in doing so found two real
   defects: MRET/EBREAK let the younger instruction advance into MEM and execute
   on the wrong path, and OP-IMM-32 accepted funct3=7 as `srliw`. Both are fixed.
@@ -241,8 +241,10 @@ verified -- 10756 checks, 0 mismatches:
 | IEEE binary32 | `FADD`, `FMUL` | RNE, inf/NaN, subnormals flushed to zero |
 | Posit<16,1> | `PADD`, `PSUB`, `PMUL`, `PDIV` | decode to Q30.34, operate, re-encode |
 
-**Not implemented:** the 8-bit and 32-bit posit variants -- `fmt` still selects
-nothing, so each family is fixed at one width. See `docs/VERIFICATION_REPORT.md`.
+`fmt` selects the width: posit<8,1>/<16,1>/<32,1>, LNS at Q8.8/Q16.16/Q32.32, and
+RNS with {3,5,7}/{3,5,7,11}/{3,5,7,11,13}. Verified by 15364 vector checks and by
+`rv64_numeric_test` through the UVM environment. See
+`docs/VERIFICATION_REPORT.md`.
 
 ## 7. Xcetask (in progress)
 

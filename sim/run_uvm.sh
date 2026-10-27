@@ -35,7 +35,7 @@ ulimit -v unlimited 2>/dev/null || true
 
 TESTS=("$@")
 if [ ${#TESTS[@]} -eq 0 ]; then
-  TESTS=(rv64_alu_test rv64_mem_test rv64_trap_test rv64_random_test rv64_backpressure_test rv64_isa_small_test rv64_illegal_test)
+  TESTS=(rv64_alu_test rv64_mem_test rv64_trap_test rv64_random_test rv64_backpressure_test rv64_isa_small_test rv64_illegal_test rv64_numeric_test)
 fi
 
 RTL="rtl/rv64_pkg.sv rtl/rv64_alu.sv rtl/rv64_mdu.sv rtl/rv64_regfile.sv \

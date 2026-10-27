@@ -202,8 +202,10 @@ class ISS:
                 return None, 0
             if nop == 0x12:
                 return rd, na
+            # fmt (funct3) selects the width for posit / LNS / RNS, so it has
+            # to reach the model or every non-16-bit vector disagrees
             ny, nflags, nerr_now, nqnext, nerr_next = nummodel.model(
-                nop, na, nb, self.csr[0x7C0], self.nquire, self.nerr_q)
+                nop, na, nb, self.csr[0x7C0], self.nquire, self.nerr_q, f3)
             self.nquire = nqnext
             self.nerr_q = nerr_next
             self.csr[0x7C1] = (self.csr[0x7C1] | nflags) & 0xFF

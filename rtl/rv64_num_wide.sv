@@ -57,6 +57,12 @@ module rv64_num_wide (
     return r[3:0];
   endfunction
 
+  function automatic logic [3:0] mod13(input logic [8:0] v);
+    logic [8:0] r;
+    r = v % 9'd13;
+    return r[3:0];
+  endfunction
+
   logic [1:0] a3, b3;
   logic [2:0] a5, b5, a7, b7;
   logic [3:0] a11, b11;
@@ -67,18 +73,28 @@ module rv64_num_wide (
   assign a7 = a[7:5];   assign b7 = b[7:5];
   assign a11 = a[11:8]; assign b11 = b[11:8];
 
+  // fmt selects the modulus set, and with it the packed width:
+  //   0 -> {3,5,7,11} in 12 bits    1 -> {3,5,7} in 8 bits
+  //   2 -> {3,5,7,11,13} in 16 bits
+  logic [3:0] a13, b13;
+
+  assign a13 = a[15:12];
+  assign b13 = b[15:12];
+
   always_comb begin
     rns_y = 64'd0;
     if (op == NUM_RADD) begin
       rns_y[1:0]  = mod3({1'b0, a3} + {1'b0, b3});
       rns_y[4:2]  = mod5({1'b0, a5} + {1'b0, b5});
       rns_y[7:5]  = mod7({1'b0, a7} + {1'b0, b7});
-      rns_y[11:8] = mod11({1'b0, a11} + {1'b0, b11});
+      if (fmt != 3'd1) rns_y[11:8] = mod11({1'b0, a11} + {1'b0, b11});
+      if (fmt == 3'd2) rns_y[15:12] = mod13({1'b0, a13} + {1'b0, b13});
     end else begin
       rns_y[1:0]  = mod3(a3 * b3);
       rns_y[4:2]  = mod5(a5 * b5);
       rns_y[7:5]  = mod7(a7 * b7);
-      rns_y[11:8] = mod11(a11 * b11);
+      if (fmt != 3'd1) rns_y[11:8] = mod11(a11 * b11);
+      if (fmt == 3'd2) rns_y[15:12] = mod13(a13 * b13);
     end
   end
 
@@ -89,55 +105,98 @@ module rv64_num_wide (
   // 32'h8000_0000 is -infinity and encodes zero. Multiply is addition, divide
   // is subtraction, and both are exact in the log domain.
   // ===========================================================================
-  localparam logic [31:0] LNS_ZERO = 32'h8000_0000;
-
-  logic signed [31:0] la, lb;
-  logic signed [32:0] lsum;
-  logic               la_zero, lb_zero;
-  logic [31:0]        lns_y;
-  logic [7:0]         lns_flags;
-
-  assign la = $signed(a[31:0]);
-  assign lb = $signed(b[31:0]);
-  assign la_zero = (a[31:0] == LNS_ZERO);
-  assign lb_zero = (b[31:0] == LNS_ZERO);
+  // fmt selects the log width and with it the Q format:
+  //   0 -> Q16.16 in 32 bits   1 -> Q8.8 in 16 bits   2 -> Q32.32 in 64 bits
+  logic [6:0]          lns_w;
+  logic signed [63:0]  lns_zero, lns_max, lns_min;
+  logic signed [63:0]  la_w, lb_w;
+  logic [63:0]         a_w, b_w;
+  logic                la_zero, lb_zero;
+  logic signed [64:0]  lsum;
+  // A concatenation is UNSIGNED in Verilog, so {sign, min} compared as unsigned
+  // made every result look below the minimum. The bounds are widened into
+  // signed variables so the comparisons stay signed.
+  logic signed [64:0]  lns_max65, lns_min65;
+  logic [63:0]         lns_mask;
+  logic [63:0]         lns_y;
+  logic [7:0]          lns_flags;
 
   always_comb begin
-    lsum      = 33'sd0;
-    lns_y     = LNS_ZERO;
+    case (fmt)
+      3'd1:    lns_w = 7'd16;
+      3'd2:    lns_w = 7'd64;
+      default: lns_w = 7'd32;
+    endcase
+    lns_zero = $signed(64'd1) <<< (lns_w - 1);      // -infinity / zero code
+    lns_max  = (64'sd1 <<< (lns_w - 1)) - 64'sd1;
+    lns_min  = -(64'sd1 <<< (lns_w - 1));
+
+    // sign-extend each operand at its own width, and zero-extend for the
+    // zero-code comparison
+    case (fmt)
+      3'd1: begin
+        la_w = {{48{a[15]}}, a[15:0]};
+        lb_w = {{48{b[15]}}, b[15:0]};
+        a_w  = {48'd0, a[15:0]};
+        b_w  = {48'd0, b[15:0]};
+      end
+      3'd2: begin
+        la_w = $signed(a);
+        lb_w = $signed(b);
+        a_w  = a;
+        b_w  = b;
+      end
+      default: begin
+        la_w = {{32{a[31]}}, a[31:0]};
+        lb_w = {{32{b[31]}}, b[31:0]};
+        a_w  = {32'd0, a[31:0]};
+        b_w  = {32'd0, b[31:0]};
+      end
+    endcase
+
+    lns_mask  = (64'd1 << lns_w) - 64'd1;
+    lns_max65 = {lns_max[63], lns_max};
+    lns_min65 = {lns_min[63], lns_min};
+    la_zero = (a_w == lns_zero);
+    lb_zero = (b_w == lns_zero);
+  end
+
+  always_comb begin
+    lsum      = 65'sd0;
+    lns_y     = 64'd0;
     lns_flags = 8'd0;
 
     if (op == NUM_LNMUL) begin
       if (la_zero || lb_zero) begin
-        lns_y = LNS_ZERO;
+        lns_y = lns_zero[63:0];
       end else begin
-        lsum = {la[31], la} + {lb[31], lb};
-        if (lsum > 33'sh7FFF_FFFF) begin
-          lns_y = 32'h7FFF_FFFF;
+        lsum = $signed(la_w) + $signed(lb_w);
+        if (lsum > lns_max65) begin
+          lns_y = lns_max[63:0];
           lns_flags[FLAG_OVERFLOW] = 1'b1;
-        end else if (lsum < -33'sh8000_0000) begin
-          lns_y = LNS_ZERO;
+        end else if (lsum < lns_min65) begin
+          lns_y = lns_zero[63:0];
           lns_flags[FLAG_OVERFLOW] = 1'b1;
         end else begin
-          lns_y = lsum[31:0];
+          lns_y = lsum[63:0];
         end
       end
     end else begin
       if (lb_zero) begin
-        lns_y = 32'h7FFF_FFFF;
+        lns_y = lns_max[63:0];
         lns_flags[FLAG_DIVZERO] = 1'b1;
       end else if (la_zero) begin
-        lns_y = LNS_ZERO;
+        lns_y = lns_zero[63:0];
       end else begin
-        lsum = {la[31], la} - {lb[31], lb};
-        if (lsum > 33'sh7FFF_FFFF) begin
-          lns_y = 32'h7FFF_FFFF;
+        lsum = $signed(la_w) - $signed(lb_w);
+        if (lsum > lns_max65) begin
+          lns_y = lns_max[63:0];
           lns_flags[FLAG_OVERFLOW] = 1'b1;
-        end else if (lsum < -33'sh8000_0000) begin
-          lns_y = LNS_ZERO;
+        end else if (lsum < lns_min65) begin
+          lns_y = lns_zero[63:0];
           lns_flags[FLAG_OVERFLOW] = 1'b1;
         end else begin
-          lns_y = lsum[31:0];
+          lns_y = lsum[63:0];
         end
       end
     end
@@ -315,53 +374,63 @@ module rv64_num_wide (
   end
 
   // ===========================================================================
-  // posit<16,1>
+  // posit family -- posit<8,1>, posit<16,1>, posit<32,1>
   //
   //   sign | regime | exponent(es=1) | fraction
   //   value = (-1)^sign * useed^k * 2^e * (1 + f),  useed = 2^(2^es) = 4
   //
-  // Arithmetic is done in signed Q30.34: 30 integer bits hold posit16's maximum
-  // magnitude (just under 2^30) and 34 fraction bits hold its smallest (about
-  // 2^-31). Decode, operate, encode.
+  // `fmt` selects the width: 0 = 16 bits, 1 = 8 bits, 2 = 32 bits. Arithmetic
+  // is done in a signed Q63.64 fixed point (128 bits), which is the smallest
+  // format that holds posit32's range (about 2^60) as well as posit8's and
+  // posit16's, so one datapath serves all three.
   // ===========================================================================
-  localparam int POS_FRAC_BITS = 34;
+  localparam int POS_FRAC_BITS = 64;
+  localparam int POS_W = 128;
 
-  function automatic logic signed [63:0] posit_decode(input logic [15:0] p);
-    logic        sgn;
-    logic [14:0] body;
-    logic [4:0]  run;
-    logic        stopped;
-    int          j, idx, k, n_frac, shift;
-    logic [14:0] frac;
-    logic [63:0] mant;
-    logic signed [63:0] out;
+  function automatic int posit_width(input logic [2:0] f);
+    case (f)
+      3'd1:    return 8;
+      3'd2:    return 32;
+      default: return 16;
+    endcase
+  endfunction
+
+  // decode one posit of width n into Q63.64
+  function automatic logic signed [127:0] posit_decode(input logic [31:0] p,
+                                                       input int n);
+    logic               sgn, stopped;
+    logic [31:0]        body;
+    int                 run, j, idx, k, n_frac, shift;
+    logic [31:0]        frac;
+    logic [127:0]       mant;
+    logic signed [127:0] out;
     begin
-      sgn  = p[15];
-      body = p[14:0];
-      run = 5'd0; stopped = 1'b0; frac = 15'd0; n_frac = 0; k = 0;
-      if (body == 15'd0) begin
-        out = 64'sd0;
+      sgn  = p[n-1];
+      body = p & ((32'd1 << (n-1)) - 32'd1);
+      run = 0; stopped = 1'b0; frac = 32'd0; n_frac = 0; k = 0;
+      if (body == 32'd0) begin
+        out = 128'sd0;
       end else begin
-        // length of the run of identical bits starting at bit 14 (fixed bound:
-        // variable-bound loops and `break` are not portable across simulators)
-        for (j = 14; j >= 0; j = j - 1) begin
-          if (!stopped && (body[j] == body[14])) run = run + 5'd1;
+        // length of the run of identical bits starting at bit n-2
+        for (j = n - 2; j >= 0; j = j - 1) begin
+          if (!stopped && (body[j] == body[n-2])) run = run + 1;
           else stopped = 1'b1;
         end
-        if (body[14]) k = run - 1;
-        else          k = -run;
+        if (body[n-2]) k = run - 1;
+        else           k = -run;
 
-        // the regime's terminating bit is at 14-run; the es exponent follows it
-        idx = 14 - run - 1;
+        idx = (n - 2) - run - 1;          // the es exponent bit
         if (idx >= 0) begin
           n_frac = idx;
-          frac   = body & ((15'd1 << idx) - 15'd1);
+          frac   = body & ((32'd1 << idx) - 32'd1);
         end else begin
           n_frac = 0;
-          frac   = 15'd0;
+          frac   = 32'd0;
         end
 
-        mant  = ({49'd0, 1'b1, frac[13:0]}) >> (14 - n_frac);
+        // variable part-selects are not portable, so the significand is built
+        // with shifts: (2^(n-2) + frac) >> ((n-2) - n_frac)
+        mant  = ((128'd1 << (n - 2)) + {96'd0, frac}) >> ((n - 2) - n_frac);
         shift = 2*k + ((idx >= 0) ? ((body >> idx) & 1) : 0) + POS_FRAC_BITS - n_frac;
         if (shift >= 0) out = mant <<< shift;
         else            out = mant >>> (-shift);
@@ -371,171 +440,147 @@ module rv64_num_wide (
     end
   endfunction
 
-  // The regime has a variable length, so the fields are placed with one shift
-  // rather than a bit loop: build `regime | exponent | fraction` as a binary
-  // number and position it from bit 14 downwards.
-  function automatic logic [15:0] posit_encode(input logic signed [63:0] v);
-    logic        sgn, round_up;
-    logic [63:0] mag, below, tail, body;
-    int          lead, e2, k, r, nfrac, rlen, disc, i;
-    logic [63:0] regime_val, fracbits;
-    logic [15:0] out;
+  // encode Q63.64 back into a posit of width n, round to nearest even
+  function automatic logic [31:0] posit_encode(input logic signed [127:0] v,
+                                               input int n);
+    logic               sgn, round_up;
+    logic [127:0]       mag, below, tail, body;
+    int                 lead, e2, k, r, nfrac, rlen, disc, i;
+    logic [127:0]       regime_val, fracbits;
+    logic [31:0]        out;
     begin
-      sgn = v[63];
-      mag = sgn ? (~v + 64'd1) : v;
-      out = 16'd0;
-      if (mag == 64'd0) begin
-        out = 16'd0;
+      sgn = v[127];
+      mag = sgn ? (~v + 128'd1) : v;
+      out = 32'd0;
+      if (mag == 128'd0) begin
+        out = 32'd0;
       end else begin
-        // highest set bit, found with a mask-based loop (no break)
         lead = 0;
-        for (i = 0; i <= 63; i++) if (mag[i]) lead = i;
+        for (i = 0; i <= 127; i++) if (mag[i]) lead = i;
         e2 = lead - POS_FRAC_BITS;
         if (e2 >= 0) k = e2 >> 1;
         else         k = -(((-e2) + 1) >> 1);
         r = e2 - 2 * k;
 
         // k >= 0 is k+1 ones followed by a terminating zero, so the regime is
-        // k+2 bits wide; k < 0 is |k| zeros followed by a terminating one.
+        // k+2 bits; k < 0 is |k| zeros followed by a terminating one
         if (k >= 0) begin
           rlen       = k + 2;
-          regime_val = (64'd1 << (k + 2)) - 64'd2;
+          regime_val = (128'd1 << (k + 2)) - 128'd2;
         end else begin
           rlen       = (-k) + 1;
-          regime_val = 64'd1;
+          regime_val = 128'd1;
         end
 
-        // body is 15 bits: rlen + 1 (es) + nfrac, so nfrac = 14 - rlen
-        nfrac = 14 - rlen;
-        if (nfrac < 0 || rlen > 15) begin
-          // the regime alone no longer fits: saturate to the largest magnitude
-          out = sgn ? 16'h8001 : 16'h7FFF;
+        // body is n-1 bits: rlen + 1 (es) + nfrac
+        nfrac = (n - 2) - rlen;
+        if (nfrac < 0 || rlen > (n - 1)) begin
+          out = sgn ? (32'd1 << (n-1)) | 32'd1 : ((32'd1 << (n-1)) - 32'd1);
         end else begin
-          // put the leading one at bit 63: shifting by 64-lead would push it
-          // off the end of the word and lose the whole significand
-          below    = (lead >= 1) ? (mag << (63 - lead)) : 64'd0;
-          fracbits = (nfrac == 0) ? 64'd0
-                                  : ((below >> (63 - nfrac)) & ((64'd1 << nfrac) - 64'd1));
-          disc     = 63 - nfrac;
-          tail     = (disc <= 0) ? 64'd0
-                                 : ((disc >= 64) ? below : (below & ((64'd1 << disc) - 64'd1)));
+          below    = (lead >= 1) ? (mag << (127 - lead)) : 128'd0;
+          fracbits = (nfrac == 0) ? 128'd0
+                                  : ((below >> (127 - nfrac)) & ((128'd1 << nfrac) - 128'd1));
+          disc     = 127 - nfrac;
+          tail     = (disc <= 0) ? 128'd0
+                                 : ((disc >= 128) ? below : (below & ((128'd1 << disc) - 128'd1)));
           round_up = (nfrac > 0) && (disc >= 1) &&
-                     (((below >> (disc - 1)) & 64'd1) == 64'd1) &&
-                     ((tail != (64'd1 << (disc - 1))) || (fracbits[0] == 1'b1));
+                     (((below >> (disc - 1)) & 128'd1) == 128'd1) &&
+                     ((tail != (128'd1 << (disc - 1))) || (fracbits[0] == 1'b1));
           if (round_up) begin
-            fracbits = fracbits + 64'd1;
+            fracbits = fracbits + 128'd1;
             if (fracbits >> nfrac) begin
-              fracbits = 64'd0;
+              fracbits = 128'd0;
               r = r + 1;
               if (r > 1) begin
                 r = 0;
                 k = k + 1;
                 if (k >= 0) begin
                   rlen       = k + 2;
-                  regime_val = (64'd1 << (k + 2)) - 64'd2;
+                  regime_val = (128'd1 << (k + 2)) - 128'd2;
                 end else begin
                   rlen       = (-k) + 1;
-                  regime_val = 64'd1;
+                  regime_val = 128'd1;
                 end
-                nfrac = 14 - rlen;
+                nfrac = (n - 2) - rlen;
                 if (nfrac < 0) nfrac = 0;
               end
             end
           end
-          // regime at the top of the 15-bit body, then the es bit, then the
-          // fraction: shifts are measured from bit 14 downwards
-          body = (regime_val << (15 - rlen)) |
-                 ((r[0] ? 64'd1 : 64'd0) << (14 - rlen)) |
-                 (fracbits & ((64'd1 << nfrac) - 64'd1));
-          out = {sgn, body[14:0]};
+          body = (regime_val << ((n - 1) - rlen)) |
+                 ((r[0] ? 128'd1 : 128'd0) << ((n - 2) - rlen)) |
+                 (fracbits & ((128'd1 << nfrac) - 128'd1));
+          out = (sgn ? (32'd1 << (n - 1)) : 32'd0) |
+                (body[31:0] & ((32'd1 << (n - 1)) - 32'd1));
         end
       end
       return out;
     end
   endfunction
 
-  logic signed [63:0] pd_a, pd_b, pres;
-  logic signed [127:0] pmul_wide;
-  logic signed [127:0] pdiv_num;
-  logic signed [127:0] pmul_shift;
-  logic signed [127:0] pdiv_q;
-  logic [63:0] posit_y;
-  logic [7:0]  posit_flags;
+  logic signed [127:0] pd_a, pd_b, pres;
+  logic signed [255:0] pmul_wide;
+  logic signed [255:0] pmul_shift;
+  logic signed [255:0] pdiv_num;
+  logic signed [255:0] pdiv_q;
+  int                  pos_n;
+  logic [63:0]         posit_y;
+  logic [7:0]          posit_flags;
 
   always_comb begin
     posit_y     = 64'd0;
     posit_flags = 8'd0;
-    pd_a        = posit_decode(a[15:0]);
-    pd_b        = posit_decode(b[15:0]);
-    pres        = 64'sd0;
-    pmul_wide   = 128'sd0;
-    pdiv_num    = 128'sd0;
-    pmul_shift  = 128'sd0;
-    pdiv_q      = 128'sd0;
+    pos_n       = posit_width(fmt);
+    pd_a        = posit_decode(a[31:0], pos_n);
+    pd_b        = posit_decode(b[31:0], pos_n);
+    pres        = 128'sd0;
+    pmul_wide   = 256'sd0;
+    pmul_shift  = 256'sd0;
+    pdiv_num    = 256'sd0;
+    pdiv_q      = 256'sd0;
 
     case (op)
-      NUM_PADD: begin
-        pres = pd_a + pd_b;
-        if (pd_a[63] == pd_b[63] && pres[63] != pd_a[63]) begin
-          pres = pd_a[63] ? {1'b1, 63'd0} : {1'b0, {63{1'b1}}};
-          posit_flags[FLAG_SATURATE] = 1'b1;
-          posit_flags[FLAG_OVERFLOW] = 1'b1;
-        end
-      end
-      NUM_PSUB: begin
-        pres = pd_a - pd_b;
-        if (pd_a[63] != pd_b[63] && pres[63] != pd_a[63]) begin
-          pres = pd_a[63] ? {1'b1, 63'd0} : {1'b0, {63{1'b1}}};
-          posit_flags[FLAG_SATURATE] = 1'b1;
-          posit_flags[FLAG_OVERFLOW] = 1'b1;
-        end
-      end
+      NUM_PADD: pres = pd_a + pd_b;
+      NUM_PSUB: pres = pd_a - pd_b;
       NUM_PMUL: begin
         pmul_wide  = pd_a * pd_b;
         pmul_shift = pmul_wide >>> POS_FRAC_BITS;
-        // A 128-bit product shifted down can still exceed 64 bits. Truncating it
-        // wraps a large positive product negative, which then encodes to the
-        // negative rail -- so clamp before the narrowing.
-        if (pmul_shift > 128'sh0000_0000_7FFF_FFFF_FFFF_FFFF) begin
-          pres = 64'sh7FFF_FFFF_FFFF_FFFF;
+        // the shifted product can exceed the 128-bit range; narrowing it wraps
+        // a large positive result negative
+        if (pmul_shift > 256'sh7FFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF) begin
+          pres = 128'sh7FFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF;
           posit_flags[FLAG_SATURATE] = 1'b1;
           posit_flags[FLAG_OVERFLOW] = 1'b1;
-        end else if (pmul_shift < -128'sh0000_0000_8000_0000_0000_0000) begin
-          pres = 64'sh8000_0000_0000_0000;
+        end else if (pmul_shift < -256'sh8000_0000_0000_0000_0000_0000_0000_0000) begin
+          pres = 128'sh8000_0000_0000_0000_0000_0000_0000_0000;
           posit_flags[FLAG_SATURATE] = 1'b1;
           posit_flags[FLAG_OVERFLOW] = 1'b1;
         end else begin
-          pres = pmul_shift[63:0];
+          pres = pmul_shift[127:0];
         end
       end
       default: begin
-        if (pd_b == 64'sd0) begin
-          pres = 64'sd0;
+        if (pd_b == 128'sd0) begin
+          pres = 128'sd0;
           posit_flags[FLAG_DIVZERO] = 1'b1;
         end else begin
-          // the numerator must be widened before the shift: (pd_a << 34) in a
-          // 64-bit word overflows for any value above 2^30, which is most of
-          // the posit range
           pdiv_num = $signed(pd_a) <<< POS_FRAC_BITS;
           pdiv_q   = pdiv_num / $signed(pd_b);
-          // the quotient of two Q30.34 values can exceed the 64-bit range, and
-          // narrowing it wraps a large positive quotient negative
-          if (pdiv_q > 128'sh0000_0000_7FFF_FFFF_FFFF_FFFF) begin
-            pres = 64'sh7FFF_FFFF_FFFF_FFFF;
+          if (pdiv_q > 256'sh7FFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF) begin
+            pres = 128'sh7FFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF_FFFF;
             posit_flags[FLAG_SATURATE] = 1'b1;
             posit_flags[FLAG_OVERFLOW] = 1'b1;
-          end else if (pdiv_q < -128'sh0000_0000_8000_0000_0000_0000) begin
-            pres = 64'sh8000_0000_0000_0000;
+          end else if (pdiv_q < -256'sh8000_0000_0000_0000_0000_0000_0000_0000) begin
+            pres = 128'sh8000_0000_0000_0000_0000_0000_0000_0000;
             posit_flags[FLAG_SATURATE] = 1'b1;
             posit_flags[FLAG_OVERFLOW] = 1'b1;
           end else begin
-            pres = pdiv_q[63:0];
+            pres = pdiv_q[127:0];
           end
         end
       end
     endcase
 
-    posit_y = {48'd0, posit_encode(pres)};
+    posit_y = {32'd0, posit_encode(pres, pos_n)};
   end
 
   // ===========================================================================
@@ -552,7 +597,8 @@ module rv64_num_wide (
         // per-channel modular arithmetic is exact: no flags
       end
       NUM_LNMUL, NUM_LNDIV: begin
-        y     = {32'd0, lns_y};
+        // the result is the width-truncated log field, not the widened one
+        y     = {32'd0, lns_y & lns_mask};
         flags = lns_flags;
       end
       NUM_PADD, NUM_PSUB, NUM_PMUL, NUM_PDIV: begin
@@ -570,8 +616,6 @@ module rv64_num_wide (
     endcase
   end
 
-  logic unused_fmt;
-  assign unused_fmt = ^fmt;
 
 endmodule
 `default_nettype wire

@@ -219,6 +219,64 @@ def build_isa_program(small=False):
     return "\n".join(L)
 
 
+def build_numeric_program():
+    """Numeric-ABI program for the UVM scoreboard.
+
+    Every numeric op is followed by NUM_TOINT so its result reaches an integer
+    register -- without that the retirement trace carries no writes for numeric
+    instructions and comparing traces would prove nothing.
+    """
+    def enc(op, rd=0, rs1=0, rs2=0, fmt=0):
+        return (op << 25) | (rs2 << 20) | (rs1 << 15) | (fmt << 12) | (rd << 7) | 0x0B
+
+    L = []
+    # fixed-Q operands
+    for i, v in enumerate([0x2_0000_0000, 0x3_0000_0000, 0x1_8000_0000]):
+        L.extend(li(POOL_BASE + i, v))
+        L.append(f".word 0x{enc(19, rd=i, rs1=POOL_BASE+i):08x}")
+    for op in (0, 1, 2):                                  # qadd / qsub / qmul
+        for i in range(3):
+            for j in range(3):
+                L.append(f".word 0x{enc(op, rd=8, rs1=i, rs2=j):08x}")
+                L.append(f".word 0x{enc(18, rd=10 + (i*3+j) % 8, rs1=8):08x}")
+    L.append(f".word 0x{enc(3, rd=0, rs1=0):08x}")        # quire clear
+    L.append(f".word 0x{enc(4, rd=0, rs1=0, rs2=1):08x}") # quire accumulate
+    L.append(f".word 0x{enc(5, rd=8, rs1=0):08x}")        # quire read
+    L.append(f".word 0x{enc(18, rd=9, rs1=8):08x}")
+    # research families, each at all three widths
+    pools = {
+        8:  [(0x4000, 0x4000), (0x5000, 0x4000)],                       # posit16
+        9:  [(0x4000, 0x4000)],
+        10: [(0x4000, 0x4000)],
+        11: [(0x5000, 0x4000)],
+        12: [(0x0001_0000, 0x0002_0000)],                               # LNS 32
+        13: [(0x0002_0000, 0x0001_0000)],
+        14: [(0x123, 0x456)],                                           # RNS 12
+        15: [(0x001, 0x002)],
+        16: [(0x3F800000, 0x40000000)],                                 # FP32
+        17: [(0x3F800000, 0x40000000)],
+    }
+    for op, pairs in pools.items():
+        for (av, bv) in pairs:
+            L.extend(li(POOL_BASE, av))
+            L.append(f".word 0x{enc(19, rd=1, rs1=POOL_BASE):08x}")
+            L.extend(li(POOL_BASE, bv))
+            L.append(f".word 0x{enc(19, rd=2, rs1=POOL_BASE):08x}")
+            L.append(f".word 0x{enc(op, rd=8, rs1=1, rs2=2):08x}")
+            L.append(f".word 0x{enc(18, rd=11, rs1=8):08x}")
+    # the width variants: fmt 1 (8-bit posit) and 2 (32-bit posit)
+    for fmt_sel, av, bv in ((1, 0x40, 0x40), (2, 0x4000_0000, 0x4000_0000)):
+        L.extend(li(POOL_BASE, av))
+        L.append(f".word 0x{enc(19, rd=1, rs1=POOL_BASE):08x}")
+        L.extend(li(POOL_BASE, bv))
+        L.append(f".word 0x{enc(19, rd=2, rs1=POOL_BASE):08x}")
+        for op in (8, 10):
+            L.append(f".word 0x{enc(op, rd=8, rs1=1, rs2=2, fmt=fmt_sel):08x}")
+            L.append(f".word 0x{enc(18, rd=12, rs1=8):08x}")
+    L.append("ecall")
+    return "\n".join(L)
+
+
 def build_illegal_program():
     """Every unimplemented major opcode and reserved sub-encoding must trap."""
     # 0x0B (custom-0) is implemented by the numeric ABI and must not be listed
@@ -358,6 +416,10 @@ def main():
     ill_words, _ = assemble(ill_src)
     # each illegal word costs one trap plus the handler instructions
     emit("illegal", ill_src, max_retire=6 * len(ill_words))
+
+    num_src = with_handler(build_numeric_program())
+    num_words, _ = assemble(num_src)
+    emit("numeric", num_src, max_retire=len(num_words) - 1)
 
 
 if __name__ == "__main__":

@@ -203,6 +203,18 @@ Posit, LNS, RNS and IEEE families remain unimplemented.
 Four families are implemented as a separate combinational block so each can be
 reasoned about and tested on its own.
 
+`fmt` now selects the width for all three parameterised families:
+
+| `fmt` | posit | LNS | RNS |
+| --- | --- | --- | --- |
+| 0 | posit<16,1> | Q16.16 in 32 bits | {3,5,7,11} in 12 bits |
+| 1 | posit<8,1> | Q8.8 in 16 bits | {3,5,7} in 8 bits |
+| 2 | posit<32,1> | Q32.32 in 64 bits | {3,5,7,11,13} in 16 bits |
+
+Posit arithmetic moved to a 128-bit Q63.64 internal format so one datapath serves
+all three widths -- posit32's range is about 2^60, which does not fit the Q30.34
+used before.
+
 | Family | Ops | Status |
 | --- | --- | --- |
 | RNS | `RADD`, `RMUL` | **verified** -- moduli 3/5/7/11, per-channel modular, exact |
@@ -210,7 +222,18 @@ reasoned about and tested on its own.
 | IEEE binary32 | `FADD`, `FMUL` | **verified** -- RNE, inf/NaN handled, subnormals flushed to zero |
 | posit<16,1> | `PADD`, `PSUB`, `PMUL`, `PDIV` | **verified** -- decode to Q30.34, operate, re-encode with RNE |
 
-Standalone vector suite: **10756 checks, 0 mismatches** across all four families.
+Standalone vector suite: **15364 checks, 0 mismatches** across all four families
+and all three widths.
+
+Two further defects found while adding the widths:
+
+* **An unsigned comparison in the LNS range check.** `{sign, min}` is a
+  concatenation, and a concatenation is *unsigned* in Verilog, so
+  `lsum < {lns_min[63], lns_min}` compared unsigned and every result looked
+  below the minimum -- LNMUL returned the zero code with OVERFLOW set. The
+  bounds are now widened into signed variables.
+* **The ISS did not receive `fmt`**, so every non-16-bit vector disagreed with
+  the DUT in the UVM run. The scoreboard was right and the model was stale.
 
 The two final posit defects were both narrowing overflows: the multiply's
 128-bit product and the divide's 128-bit quotient were truncated to 64 bits
@@ -256,9 +279,16 @@ exists; it is untested here.
 selects nothing, so all four families are fixed at their single width (posit16,
 32-bit LNS log, 12-bit packed RNS, binary32). Parameterising posit by width is a
 datapath refactor rather than a flag, because the regime length, fraction width
-and internal fixed-point scale all move with N. The UVM environments
-(SystemVerilog and rustdv) also do not yet exercise these families; they are
-driven by the standalone vector suite only.
+and internal fixed-point scale all move with N. **UVM now covers them.** `rv64_numeric_test` runs a numeric program through the
+SystemVerilog UVM environment: **156 retirements and 1 trap matched**, zero
+errors. That was only possible after teaching the ISS custom-0 -- the scoreboard
+compares retire traces, and a numeric instruction writes no GPR, so the program
+bridges each result back with NUM_TOINT to make the comparison mean something.
+
+The rustdv environment needs no new components for this: it serves the program
+image and compares retire traces against the same vectors, so pointing
+`RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
+**uncompiled** -- no Rust toolchain is reachable in this environment.
 
 ### Xcetask (`rv64_xcetask`)
 
