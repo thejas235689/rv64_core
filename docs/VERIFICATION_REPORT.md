@@ -268,6 +268,55 @@ for numeric instructions and comparing traces would prove nothing): **299
 retirements match the ISS**, so the numeric path is now verified in the CPU and
 not only standalone.
 
+**WENGOLD (validity kernel).** `sim/wengold.sh` runs
+[WENGOLD](https://github.com/thejas235689/wengold) over the tree: dependency
+graph, completeness, singularity and CDC. It installs with pip, so unlike Satya
+it runs here.
+
+```
+index        45 files, 46 nodes, 86 edges -- complete, 0 unresolved
+completeness only open item: unresolved include uvm_macros.svh (external UVM)
+singularity  well conditioned; no block dominates
+             worst: rv64_num_wide, a change there reaches 6 blocks (median 4)
+cdc (core)   one domain, no crossings -- consistent with a single-clock design
+cdc (uart)   `rx` reported as "unresolved (no determinable domain)"
+```
+
+**pyslang is required for an accurate graph.** Without it WENGOLD falls back to a
+bounded regex elaborator, and that fallback reported a false positive on this
+design: `int: instantiated as posit_width in rv64_num_wide but not defined`. It
+was reading the function declaration `function automatic int posit_width(...)` as
+a module instantiation of a module called `int`. With pyslang installed the graph
+is complete with nothing unresolved.
+
+Two limits worth stating rather than glossing:
+
+* **CDC cannot see an undeclared asynchronous input.** The UART's `rx` is
+  genuinely asynchronous and goes through a two-flop synchroniser, but WENGOLD
+  lists it under "unresolved (no determinable domain)" rather than flagging it.
+  That is conservative -- it does not claim a violation that is not there -- but
+  it also means an *unsynchronised* async input would not be caught unless the
+  domain is declared.
+* **The formal engine cannot take this RTL, and WENGOLD says so itself.** Its
+  README states the front-end covers register-level RTL and "does not accept a
+  full core: on CV32E40P it covers 2 files of 125". Confirmed here: it cannot
+  tokenize a concatenation, so `rv64_clint` and `rv64_aiacc` both come back
+  UNKNOWN. `--sva` does generate bindable assertions for them, which is the
+  useful mode for this repository.
+
+Two defects found in WENGOLD while doing this, reported here rather than only
+worked around:
+
+1. **`formal` raises an uncaught exception instead of reporting UNKNOWN.** A
+   property containing `$past` raises `UnsupportedConstruct` from
+   `wengold/formal/rtl_model.py:90` and escapes as a Python traceback. The RTL
+   path handles the same exception gracefully ("front-end: cannot tokenize..."),
+   so it is the property-parse path specifically that is missing the handler.
+2. **The regex fallback misreads a function declaration as an instantiation**,
+   producing the false undefined-block above. `--backend slang` avoids it, but
+   the fallback is the default when pyslang is absent, so the first run of a new
+   user on a design like this produces a misleading "incomplete" verdict.
+
 **Static analysis.** `sim/lint.sh` runs `slang` (a full SystemVerilog front end)
 over the core and both testbenches, then Verilator `--lint-only`. slang is clean
 -- **0 errors, 0 warnings on all three tops** -- after two real fixes it forced:
