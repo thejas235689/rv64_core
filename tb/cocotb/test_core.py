@@ -1692,3 +1692,44 @@ async def test_dcache_hits(dut):
     misses = int(dut.u_core.dc_misses.value)
     dut._log.info(f"dcache: {hits} hits, {misses} misses")
     assert hits > 0, f"data cache never hit ({hits} hits, {misses} misses)"
+
+
+@cocotb.test()
+async def test_amcce_bypass(dut):
+    """AMCCE must detect a streaming workload and switch the D-cache to BYPASS.
+
+    The program reads 128 distinct lines -- every access misses -- which is exactly
+    the scan that fills a cache with data it never reuses. After one window the
+    engine should have selected BYPASS, and the D-cache should stop allocating.
+    """
+    L = []
+    L.extend(li64(5, 0x4000))            # base
+    L.extend(li64(6, 128))               # iterations
+    L.append("ld x7, 0(x5)")             # a distinct line every time
+    L.append("addi x5, x5, 8")
+    L.append("addi x6, x6, -1")
+    L.append("bne x6, x0, -12")
+    L.append("ecall")
+
+    words, _ = assemble("\n".join(L))
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=40000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "amcce-bypass")
+
+    core = dut.u_core
+    mode = int(core.amcce_mode.value)
+    misses = int(core.amcce_misses.value)
+    switches = int(core.amcce_switches.value)
+    dut._log.info(f"amcce: mode={mode} misses={misses} switches={switches}")
+    assert misses > 64, f"expected a streaming run, only {misses} misses"
+    assert mode == 1, f"AMCCE should have selected BYPASS (1), got mode {mode}"
+    assert switches >= 1, "AMCCE should have recorded at least one switch"

@@ -26,6 +26,7 @@ module tb_dcache;
     .bus_req_wstrb(bus_req_wstrb), .bus_req_wdata(bus_req_wdata),
     .bus_req_ready(bus_req_ready), .bus_rsp_valid(bus_rsp_valid),
     .bus_rsp_rdata(bus_rsp_rdata), .bus_rsp_error(bus_rsp_error),
+    .bypass(1'b0), .acc_hit(), .acc_miss(),
     .hit_count(hits), .miss_count(misses)
   );
 

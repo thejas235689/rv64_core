@@ -185,6 +185,27 @@ module riscv_core_top #(
   logic [63:0] dc_req_addr, dc_req_wdata, dc_rsp_rdata;
   logic [7:0]  dc_req_wstrb;
   logic [31:0] dc_hits, dc_misses;
+  // ---- AMCCE: watch the D-cache and choose its mode -----------------------
+  logic        dc_acc_hit, dc_acc_miss, amcce_bypass;
+  logic [1:0]  amcce_mode;
+  logic [31:0] amcce_hits, amcce_misses, amcce_switches;
+
+  rv64_amcce u_amcce (
+    .clk            (clk),
+    .rst_n          (rst_n),
+    .acc_valid      (dc_acc_hit | dc_acc_miss),
+    .acc_hit        (dc_acc_hit),
+    .acc_miss       (dc_acc_miss),
+    .mode           (amcce_mode),
+    .bypass         (amcce_bypass),
+    .csr_we         (1'b0),
+    .csr_addr       (4'd0),
+    .csr_wdata      (64'd0),
+    .csr_rdata      (),
+    .total_hits     (amcce_hits),
+    .total_misses   (amcce_misses),
+    .mode_switches  (amcce_switches)
+  );
 
   rv64_dcache u_dcache (
     .clk            (clk),
@@ -207,6 +228,9 @@ module riscv_core_top #(
     .bus_rsp_valid  (d_rsp_valid),
     .bus_rsp_rdata  (d_rsp_rdata),
     .bus_rsp_error  (d_rsp_error),
+    .bypass         (amcce_bypass),
+    .acc_hit        (dc_acc_hit),
+    .acc_miss       (dc_acc_miss),
     .hit_count      (dc_hits),
     .miss_count     (dc_misses)
   );

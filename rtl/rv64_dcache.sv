@@ -51,6 +51,13 @@ module rv64_dcache (
   input  logic [63:0] bus_rsp_rdata,
   input  logic        bus_rsp_error,
 
+  // ---- policy input --------------------------------------------------------
+  input  logic        bypass,         // from AMCCE: do not allocate
+
+  // ---- observation ---------------------------------------------------------
+  output logic        acc_hit,        // one-cycle pulse per completed access
+  output logic        acc_miss,
+
   // ---- counters ------------------------------------------------------------
   output logic [31:0] hit_count,
   output logic [31:0] miss_count
@@ -76,6 +83,8 @@ module rv64_dcache (
   logic        we_q;
   logic [63:0] rdata_q;
   logic        err_q;
+  logic        bypass_q;
+  logic        hit_pulse_q, miss_pulse_q;
 
   assign req_ready = (dst == D_IDLE);
 
@@ -85,6 +94,8 @@ module rv64_dcache (
   assign bus_req_wstrb = (dst == D_WREQ) ? wstrb_q : 8'h00;
   assign bus_req_wdata = wdata_q;
 
+  assign acc_hit   = hit_pulse_q;
+  assign acc_miss  = miss_pulse_q;
   assign rsp_valid = (dst == D_DONE);
   assign rsp_rdata = rdata_q;
   assign rsp_error = err_q;
@@ -109,6 +120,9 @@ module rv64_dcache (
       we_q       <= 1'b0;
       rdata_q    <= 64'd0;
       err_q      <= 1'b0;
+      bypass_q   <= 1'b0;
+      hit_pulse_q<= 1'b0;
+      miss_pulse_q <= 1'b0;
       hit_count  <= 32'd0;
       miss_count <= 32'd0;
       for (int i = 0; i < NLINES; i++) begin
@@ -117,10 +131,13 @@ module rv64_dcache (
         valid_q[i] <= 1'b0;
       end
     end else begin
+      hit_pulse_q  <= 1'b0;
+      miss_pulse_q <= 1'b0;
       case (dst)
         D_IDLE: begin
           if (req_valid) begin
             addr_q  <= req_addr;
+            bypass_q <= bypass;
             wdata_q <= req_wdata;
             wstrb_q <= req_wstrb;
             we_q    <= req_we;
@@ -130,25 +147,31 @@ module rv64_dcache (
               if (hit) begin
                 data_q[idx] <= merge(data_q[idx], req_wdata, req_wstrb);
                 hit_count   <= hit_count + 32'd1;
+                hit_pulse_q <= 1'b1;
               end else begin
                 miss_count  <= miss_count + 32'd1;
+                miss_pulse_q<= 1'b1;
               end
               dst <= D_WREQ;
             end else if (hit) begin
               rdata_q    <= data_q[idx];
               err_q      <= 1'b0;
               hit_count  <= hit_count + 32'd1;
+              hit_pulse_q<= 1'b1;
               dst        <= D_DONE;
             end else begin
-              miss_count <= miss_count + 32'd1;
-              dst        <= D_FILL;
+              miss_count  <= miss_count + 32'd1;
+              miss_pulse_q<= 1'b1;
+              dst         <= D_FILL;
             end
           end
         end
 
         D_FILL: begin
           if (bus_rsp_valid) begin
-            if (!bus_rsp_error) begin
+            // BYPASS means streaming: return the data but do not allocate, so
+            // the scan does not evict the working set
+            if (!bus_rsp_error && !bypass_q) begin
               tag_q[addr_q[8:3]]   <= addr_q[63:9];
               data_q[addr_q[8:3]]  <= bus_rsp_rdata;
               valid_q[addr_q[8:3]] <= 1'b1;

@@ -445,10 +445,25 @@ rate holding NORMAL across two windows, then holding BYPASS at 50% after a strea
 window (hysteresis in both directions), the hit/miss/switch counters, and disabling
 freezing the counters.
 
-**Not integrated.** No cache in this tree consumes `mode` yet, so the engine decides
-and nothing obeys it. It also has no address knowledge, so it infers streaming from
-the miss rate alone rather than recognising a stride; RETAIN is reported but no
-consumer acts on it.
+**Integrated and proven in the core.** The D-cache now reports a hit/miss pulse per
+completed access, takes a `bypass` input, and stops allocating while it is set. The
+engine is enabled out of reset -- a policy block that starts deaf does nothing until
+software pokes a CSR, and the core has no path that does.
+
+`test_amcce_bypass` runs 128 loads at distinct addresses in a live core -- every
+access a miss, the scan that fills a cache with data it never reuses -- and asserts
+the engine switched: **mode=BYPASS, 128 misses, 1 switch**, with the retirement
+trace still matching the ISS, so bypass changed the policy and not the answers.
+
+```
+cocotb        29/29  (incl. test_amcce_bypass)
+PMP 5/5  PLIC 2/2
+tb_amcce under xezim and Icarus   18 checks, 0 mismatches
+lint PASS
+```
+
+It still has no address knowledge, so it infers streaming from the miss rate alone
+rather than recognising a stride, and RETAIN is reported but no consumer acts on it.
 
 ### Boot ROM and image authentication (verified standalone)
 

@@ -102,7 +102,7 @@ module rv64_amcce (
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
-      enable_q  <= 1'b0;
+      enable_q  <= 1'b1;   // enabled by default; a CSR write can disable it
       window_q  <= 16'd64;
       hi_q      <= 16'd75;         // > 75% miss -> bypass
       lo_q      <= 16'd25;         // < 25% miss -> normal
