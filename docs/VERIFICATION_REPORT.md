@@ -420,6 +420,31 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Boot ROM and image authentication (verified standalone)
+
+`rtl/rv64_bootrom.sv`: a 2 KB read-only ROM the fetch path reads at reset, holding
+a four-instruction stub (set the stack from pc, load the payload entry 0x8000_0000
+into x1, `jalr` to it). Reads outside the 2 KB window raise `rsp_error`.
+
+`rtl/rv64_bootauth.sv`: streams the boot image through FNV-1a-64 and asserts
+`boot_ok` only when the digest matches the expected value; a mismatch raises
+`boot_fail` and leaves `boot_ok` low, so the core can be held in reset.
+
+**16 checks, 0 mismatches under xezim and Icarus**: the reset vector, both stub
+beats, the last in-range beat, an out-of-range read faulting, and then the digest
+path -- a **known-answer** check against `0xf88c4a6e10254d59` computed independently
+in Python rather than read back from the DUT, a one-word image with its own digest,
+and a wrong expected digest that must refuse to boot while still reporting the real
+digest.
+
+**FNV-1a is not a cryptographic signature, and the header says so.** It detects
+corruption and accidental mismatch; it does not resist an attacker who can rewrite
+both the image and the expected digest. A real root of trust needs a signature check
+(RSA/ECDSA) or a keyed MAC, which this block does not implement.
+
+**OpenSBI itself is not here.** OpenSBI is firmware, not RTL -- this is the ROM and
+the authentication gate that would release a core to run it, not the firmware image.
+
 ### RVV subset (verified standalone)
 
 `rtl/rv64_vregfile.sv` and `rtl/rv64_vunit.sv`: a 32 x 64-bit vector register file
