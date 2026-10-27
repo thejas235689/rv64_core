@@ -37,10 +37,6 @@ module tb_platform;
   );
 
   int errors = 0, checks = 0;
-  // DMI TAP checks are counted separately: they are KNOWN-OPEN (see the report).
-  // Keeping them out of the pass/fail total would hide them, so they are counted
-  // and printed, just not folded into the CLINT/UART verdict.
-  int dmi_errors = 0, dmi_checks = 0;
 
   task automatic chk(input string name, input logic [63:0] got, input logic [63:0] exp);
     begin
@@ -58,35 +54,43 @@ module tb_platform;
   endtask
 
   // ---- TAP helpers ---------------------------------------------------------
+  // Ten TMS-high edges reach Test-Logic-Reset from ANY state (five are enough,
+  // ten is the standard rule), and one TMS-low edge then goes to Run-Test/Idle.
+  // The previous five-edge version left the TAP in Select-DR, so every later
+  // sequence started one state off and the IR/DR phases wrapped.
   task automatic tap_reset;
-    begin tms=1; tdi=0; repeat (5) @(posedge tck); tms=0; @(posedge tck); end
+    begin
+      tdi = 0;
+      for (int i = 0; i < 10; i++) begin tms = 1; @(posedge tck); #1; end
+      tms = 0; @(posedge tck); #1;
+    end
   endtask
 
   task automatic tap_ir(input logic [4:0] v);
     begin
-      tms=1; @(posedge tck);          // Select-DR
-      tms=1; @(posedge tck);          // Select-IR
-      tms=0; @(posedge tck);          // Capture-IR
-      tms=0; @(posedge tck);          // Shift-IR
-      for (int i = 0; i < 5; i++) begin tdi = v[i]; @(posedge tck); end
-      tms=1; @(posedge tck);          // Exit1-IR
-      tms=1; @(posedge tck);          // Update-IR
-      tms=0; @(posedge tck);          // Run-Test/Idle
+      tms=1; @(posedge tck); #1; // Select-DR
+      tms=1; @(posedge tck); #1; // Select-IR
+      tms=0; @(posedge tck); #1; // Capture-IR
+      tms=0; @(posedge tck); #1; // Shift-IR
+      for (int i = 0; i < 5; i++) begin tdi = v[i]; @(posedge tck); #1; end
+      tms=1; @(posedge tck); #1; // Exit1-IR
+      tms=1; @(posedge tck); #1; // Update-IR
+      tms=0; @(posedge tck); #1; // Idle
     end
   endtask
 
   task automatic tap_dr(input logic [40:0] din, output logic [40:0] dout);
     begin
       dout = 41'd0;
-      tms=1; @(posedge tck);          // Select-DR
-      tms=0; @(posedge tck);          // Capture-DR
-      tms=0; @(posedge tck);          // Shift-DR
+      tms=1; @(posedge tck); #1;      // Select-DR
+      tms=0; @(posedge tck); #1;      // Capture-DR
+      tms=0; @(posedge tck); #1;      // Shift-DR
       for (int i = 0; i < 41; i++) begin
         tdi = din[i]; @(posedge tck); #1; dout[i] = tdo;
       end
-      tms=1; @(posedge tck);          // Exit1-DR
-      tms=1; @(posedge tck);          // Update-DR
-      tms=0; @(posedge tck);          // Run-Test/Idle
+      tms=1; @(posedge tck); #1;      // Exit1-DR
+      tms=1; @(posedge tck); #1;      // Update-DR
+      tms=0; @(posedge tck); #1;      // Run-Test/Idle
     end
   endtask
 
@@ -164,29 +168,32 @@ module tb_platform;
     chk("DMI IDCODE bit0", dr_out[0], 32'h1CA1_0D01 & 1);
 
     tap_reset();
-    tap_ir(5'h11);                          // DMI
     // write DMCONTROL: haltreq = 1
+    tap_reset(); tap_ir(5'h11);
     dr_in = {2'b10, 32'h8000_0000, 7'h10};
     tap_dr(dr_in, dr_out);
     repeat (2) @(posedge tck);
-    dmi_checks++; if (d_halt_req !== 1'b1) begin dmi_errors++; $display("KNOWN-OPEN DMI haltreq not reaching core"); end
+    chk("DMI haltreq reaches core", d_halt_req, 1'b1);
 
     // read DMSTATUS with the core reporting halted
     d_halted = 1'b1;
-    dr_in = {2'b01, 32'd0, 7'h11};
+    tap_reset(); tap_ir(5'h11);
+    dr_in = {2'b01, 32'd0, 7'h11};          // read DMSTATUS: request
     tap_dr(dr_in, dr_out);
-    dmi_checks++; if (dr_out[17] !== 1'b1) begin dmi_errors++; $display("KNOWN-OPEN DMI dmstatus allhalted read back 0"); end
+    dr_in = {2'b00, 32'd0, 7'h11};          // a nop scan collects the response
+    tap_dr(dr_in, dr_out);
+    // the DMI data field starts at bit 7, so DMSTATUS data[9] (allhalted) is bit 16
+    chk("DMI dmstatus allhalted", dr_out[16], 1'b1);
 
     // resumereq is a one-shot pulse
+    tap_reset(); tap_ir(5'h11);
     dr_in = {2'b10, 32'h4000_0000, 7'h10};
     tap_dr(dr_in, dr_out);
-    repeat (2) @(posedge tck);
-    dmi_checks++; if (d_resume_req !== 1'b0) begin dmi_errors++; $display("KNOWN-OPEN DMI resumereq did not self-clear"); end
+    repeat (4) @(posedge tck);
+    chk("DMI resumereq self-clears", d_resume_req, 1'b0);
 
-    $display("tb_platform: %0d checks, %0d mismatches (CLINT + UART)", checks, errors);
-    $display("tb_platform: DMI %0d checks, %0d open (TAP sequencing not yet right)",
-             dmi_checks, dmi_errors);
-    if (errors == 0) $display("RESULT: PASS (CLINT + UART)"); else $display("RESULT: FAIL");
+    $display("tb_platform: %0d checks, %0d mismatches", checks, errors);
+    if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");
     $finish;
   end
 endmodule

@@ -71,6 +71,10 @@ module rv64_dmi (
   // a read or write of DATA0/REGSEL, pulsed when Update-DR latches a DMI word
   logic        dmi_wr;
   logic        dmi_rd;
+  // Update-DR is an EVENT. Qualifying the request registers on the level of
+  // dmi_wr made them re-assert every TCK, so a one-shot like resumereq never
+  // self-cleared.
+  logic        dmi_update;
   logic [6:0]  dmi_addr;
   logic [31:0] dmi_wdata;
 
@@ -85,10 +89,18 @@ module rv64_dmi (
   assign dbg_reg_addr   = regsel;
   assign ndmreset       = ndmreset_q;
 
-  // DATA0 reads back what DMI staged, or the core's register port.
-  logic [63:0] data0_out;
+  // Read data for the current DMI address. The earlier version returned the
+  // DATA0 value whatever the address was, so a DMSTATUS read came back as the
+  // GPR contents -- the address has to be decoded.
+  logic [31:0] data0_out;
   always_comb begin
-    data0_out = (reg_data0 != 64'd0) ? reg_data0 : dbg_reg_data;
+    case (dmi_addr)
+      7'h04:   data0_out = (reg_data0 != 64'd0) ? reg_data0[31:0] : dbg_reg_data[31:0];
+      7'h10:   data0_out = {haltreq_q, resumereq_q, 3'd0, step_q, 24'd0, ndmreset_q, 1'b0};
+      7'h11:   data0_out = {22'd0, dbg_halted, ~dbg_halted, 8'd0};
+      7'h20:   data0_out = {27'd0, regsel};
+      default: data0_out = 32'd0;
+    endcase
   end
 
   // ---- TAP FSM -------------------------------------------------------------
@@ -151,6 +163,12 @@ module rv64_dmi (
   end
   assign tdo = tdo_r;
 
+  // one TCK pulse when Update-DR latches a DMI word
+  always_ff @(posedge tck or negedge trst_n) begin
+    if (!trst_n) dmi_update <= 1'b0;
+    else         dmi_update <= (st == T_UPD_DR) && (ir == IR_DMI);
+  end
+
   // ---- DMI register semantics ---------------------------------------------
   always_ff @(posedge tck or negedge trst_n) begin
     if (!trst_n) begin
@@ -165,7 +183,7 @@ module rv64_dmi (
       resumereq_q <= 1'b0;
       step_q      <= 1'b0;
 
-      if (dmi_wr) begin
+      if (dmi_update && dmi_wr) begin
         unique case (dmi_addr)
           7'h04: reg_data0 <= {32'd0, dmi_wdata};
           7'h10: begin

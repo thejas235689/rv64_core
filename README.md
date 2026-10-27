@@ -41,7 +41,7 @@ to a private repository as-is.
 | Debug | External halt/resume, single-step, EBREAK debug entry, GPR read port |
 | Watchpoints | Memory-address comparator with hit reporting (not a precise debug entry) |
 | Atomics (A) | `lr.w/d`, `sc.w/d`, all nine AMOs in `.w` and `.d`, read-modify-write in the LSU with a reservation register |
-| Platform blocks | CLINT (mtime/mtimecmp timer IRQ, MSIP) and a UART (8N1, TX+RX, loopback-verified) as standalone blocks with CSR ports; a JTAG TAP + DMI transport that is **not yet verified** |
+| Platform blocks | CLINT (mtime/mtimecmp timer IRQ, MSIP) and a UART (8N1, TX+RX, loopback-verified) as standalone blocks with CSR ports; a JTAG TAP + DMI transport (halt/resume/step, DMSTATUS reads) — all verified |
 | QISA | 8-entry qubit model: X/Y/Z/H/CNOT/measure, phase and superposition tracking, seeded LFSR collapse (`rtl/rv64_qisa.sv`, CSR window `0x7E0`) |
 | AI accelerator | INT8 4x4x4 matrix multiply-accumulate, INT32 accumulation, one cycle per product (`rtl/rv64_aiacc.sv`, CSR window `0x7E8`) |
 | Observability | Retirement PC/instruction, GPR writeback, trap cause/PC, interrupt flag, privilege, debug event, counters |

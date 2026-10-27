@@ -65,9 +65,8 @@ fabrics: **all absent** from this repository.
 
 ## Sizing what remains
 
-Five of the fifteen pending items are now implemented (atomics, QISA, AI
-accelerator, CLINT, UART), and a sixth -- the DMI transport -- is implemented but
-not yet verified. The
+Six of the fifteen pending items are now implemented and verified (atomics,
+QISA, AI accelerator, CLINT, UART, DMI transport). The
 rest are ordered here by dependency and by how much of the existing core they
 disturb. Estimates are for the RTL alone, at this repository's verification
 standard -- a block is not done here until it has a self-checking test.
@@ -85,7 +84,7 @@ standard -- a block is not done here until it has a self-checking test.
 | RVV subset (VLEN=64) | large | vector register file, decoder, execution units |
 | XRV512 (32x512 bank) | large | queued behind the 64-bit work; 2 KB register file plus ops |
 | Out-of-order backend | very large | rename, free list, issue queue, PRF, ROB -- larger than the entire current core |
-| Platform (ROM, UART, CLINT, OpenSBI, boot auth) | **partial** | CLINT and UART implemented and verified; DMI transport implemented but its TAP testbench is open; ROM boot, OpenSBI and boot authentication absent |
+| Platform (ROM, UART, CLINT, OpenSBI, boot auth) | **partial** | CLINT, UART and the DMI transport implemented and verified; ROM boot, OpenSBI and boot authentication absent |
 | Research blocks (DNA, neuromorphic, photonic, interconnect) | large, under-specified | need a written contract before RTL is meaningful |
 
 ## Suggested order of work from here

@@ -431,17 +431,35 @@ position.
 | --- | --- |
 | `rv64_clint` | **verified** -- mtime/mtimecmp timer interrupt with enable gating, MSIP software interrupt; 14 checks with the UART |
 | `rv64_uart` | **verified** -- 8N1 transmit and receive, looped back in the testbench, byte and framing checked |
-| `rv64_dmi` | **elaborates and lints clean, TAP testbench NOT passing** -- 2 of 3 TAP checks are open |
+| `rv64_dmi` | **verified** -- JTAG TAP, DMI transport, halt/resume/step and DMSTATUS reads |
 
 The DMI is the JTAG TAP plus the 41-bit DMI shift register with the standard
 dtmcs/dmi instruction codes, decoding onto the core's existing halt/resume/step
-and GPR-read ports. It is honestly incomplete in two ways, both stated in the
-file header: there is **no abstract-command layer** (no progbuf, no command
-queue, no system-bus master -- register access is direct via REGSEL/DATA0), and
-its **testbench cannot yet drive the TAP reliably**: the state machine reaches
-`CAP_IR` where the test expects `IDLE`, so a DMI write never reaches `Update-DR`
-and `haltreq` never asserts. The checks are counted separately and printed as
-KNOWN-OPEN rather than folded into the pass total or deleted.
+and GPR-read ports. **17 checks, 0 mismatches** across the three platform blocks.
+
+It remains honestly incomplete in one way, stated in the file header: there is
+**no abstract-command layer** -- no progbuf, no command queue, no system-bus
+master. Register access is direct via REGSEL/DATA0.
+
+Getting it to pass took four fixes, and only one of them was in the testbench:
+
+* **`tap_reset` left the TAP in Select-DR, not Run-Test/Idle.** Five TMS-high
+  edges were not enough from every entry state, so each later sequence started
+  one state off and the IR/DR phases wrapped -- a `tap_ir` that should have ended
+  in Idle ended in Capture-IR, and the IR ended up as the last five bits of a DR
+  shift (0x08) instead of 0x11. Ten TMS-high edges reach Test-Logic-Reset from
+  any state.
+* **The request registers responded to the level of `dmi_wr`**, which stays high
+  after Update-DR, so a one-shot like `resumereq` re-asserted every TCK and never
+  self-cleared. Update-DR is an event; it now generates a one-TCK `dmi_update`
+  pulse that qualifies the request registers.
+* **The read path ignored the DMI address** and returned the DATA0 value whatever
+  was asked for, so a DMSTATUS read came back as the GPR contents. It now decodes
+  DATA0 / DMCONTROL / DMSTATUS / REGSEL.
+* **My own check indexed the wrong bit.** The DMI data field starts at bit 7, so
+  DMSTATUS `data[9]` (allhalted) is bit 16, not 17. The RTL was right and the
+  testbench was wrong -- the same shape of mistake as the QISA expectations
+  earlier.
 
 Three defects the platform tests caught:
 
