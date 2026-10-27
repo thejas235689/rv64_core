@@ -65,12 +65,13 @@ module rv64_vunit (
   wire [4:0]  vd_i   = insn_q[11:7];
   wire [4:0]  rs1_i  = insn_q[19:15];
 
+  wire        vm       = insn_q[25];    // 1 = unmasked
   wire [1:0]  sew_sel = vtype_q[4:3];
   wire [6:0]  nelem   = (sew_sel == 2'd0) ? 7'd8 : (sew_sel == 2'd1) ? 7'd4
                       : (sew_sel == 2'd2) ? 7'd2 : 7'd1;
 
   // ---- register file -------------------------------------------------------
-  logic [63:0] rdata1, rdata2, rdata3, cdata;
+  logic [63:0] rdata1, rdata2, rdata3, rdata_mask, cdata;
   logic [63:0] vd_new;
   logic        vd_we;
   logic [4:0]  vd_addr;
@@ -81,6 +82,7 @@ module rv64_vunit (
     .raddr1(vs2_i), .rdata1(rdata2),      // vs2 is the first source
     .raddr2(vs1_i), .rdata2(rdata1),      // vs1 is the second source
     .raddr3(vd_i),  .rdata3(rdata3),      // destination, for the tail
+    .rdata_mask(rdata_mask),              // v0
     .waddr(vd_addr), .wdata(vd_new), .we(vd_we),
     .caddr(caddr_q), .cdata(cdata),
     .cwdata(csr_wdata), .cwe(csr_we && (csr_addr == 4'd7))
@@ -93,6 +95,34 @@ module rv64_vunit (
   wire  [63:0] s2_val = (funct3 == 3'b100) ? xval_q
                       : (funct3 == 3'b011) ? {{59{insn_q[19]}}, insn_q[19:15]}
                       : rdata1;
+
+  // the mask bit for element i, taken from v0 at the element width
+  function automatic logic mask_bit(input logic [2:0] i, input logic [1:0] sew);
+    logic [63:0] m;
+    begin
+      m = rdata_mask;
+      // one mask bit per ELEMENT: element i uses bit i of v0, whatever the width
+      mask_bit = m[i];
+    end
+  endfunction
+
+  // ---- reductions ----------------------------------------------------------
+  // funct3 = 010 (OPMVV) with the vred funct6 codes. vs1[0] seeds the result and
+  // the answer lands in element 0 of vd, which is what the ISA specifies.
+  function automatic logic [63:0] reduce_op(input logic [5:0] fn,
+                                            input logic [63:0] acc, input logic [63:0] x);
+    unique case (fn)
+      6'b000000: reduce_op = acc + x;                       // vredsum
+      6'b000001: reduce_op = acc & x;                       // vredand
+      6'b000010: reduce_op = acc | x;                       // vredor
+      6'b000011: reduce_op = acc ^ x;                       // vredxor
+      6'b000100: reduce_op = (x < acc) ? x : acc;           // vredminu
+      6'b000101: reduce_op = ($signed(x) < $signed(acc)) ? x : acc;  // vredmin
+      6'b000110: reduce_op = (x > acc) ? x : acc;           // vredmaxu
+      6'b000111: reduce_op = ($signed(x) > $signed(acc)) ? x : acc;  // vredmax
+      default:   reduce_op = acc + x;
+    endcase
+  endfunction
 
   // ---- elementwise arithmetic ---------------------------------------------
   function automatic logic [63:0] vop(input logic [5:0] fn,
@@ -162,10 +192,32 @@ module rv64_vunit (
       if (funct3 == 3'b111) begin
         // vsetvli / vsetivli: vl and vtype come from the instruction
         acc   = 64'd0;
+      end else if (funct3 == 3'b010) begin
+        // ---- reduction: vs1[0] seeds, elements of vs2 fold in, vd[0] gets it
+        logic [63:0] r_e, x_e;
+        vd_we = 1'b1;
+        acc   = rdata3;                       // preserve the rest of vd
+        r_e   = get_elem(rdata1, 3'd0, sew_sel);
+        for (int i = 0; i < 8; i++) begin
+          if ((i < vl_q) && (i < nelem)) begin
+            x_e = get_elem(rdata2, i[2:0], sew_sel);
+            r_e = reduce_op(funct6, r_e, x_e);
+          end
+        end
+        // masking applies to the result element only
+        if (vm || mask_bit(3'd0, sew_sel)) begin
+          unique case (sew_sel)
+            2'd0: acc[7:0]   = r_e[7:0];
+            2'd1: acc[15:0]  = r_e[15:0];
+            2'd2: acc[31:0]  = r_e[31:0];
+            default: acc     = r_e;
+          endcase
+        end
       end else begin
         vd_we = 1'b1;
         for (int i = 0; i < 8; i++) begin
-          if ((i < vl_q) && (i < nelem)) begin
+          // masking: with vm=0 only elements whose v0 bit is set are written
+          if ((i < vl_q) && (i < nelem) && (vm || mask_bit(i[2:0], sew_sel))) begin
             a_e = get_elem(rdata2, i[2:0], sew_sel);
             // .vv takes element i of vs1; .vx/.vi replicate one scalar
             b_e = (funct3 == 3'b000) ? get_elem(rdata1, i[2:0], sew_sel)

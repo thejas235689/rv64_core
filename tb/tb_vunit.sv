@@ -50,6 +50,16 @@ module tb_vunit;
                                          input logic [4:0] vs1, input logic [4:0] vd);
     return {fn, 1'b1, vs2, vs1, 3'b000, vd, 7'b1010111};
   endfunction
+  // vm = 0 -> masked by v0
+  function automatic logic [31:0] enc_vv_m(input logic [5:0] fn, input logic [4:0] vs2,
+                                           input logic [4:0] vs1, input logic [4:0] vd);
+    return {fn, 1'b0, vs2, vs1, 3'b000, vd, 7'b1010111};
+  endfunction
+  // reduction: funct3 = 010 (OPMVV)
+  function automatic logic [31:0] enc_red(input logic [5:0] fn, input logic [4:0] vs2,
+                                          input logic [4:0] vs1, input logic [4:0] vd);
+    return {fn, 1'b1, vs2, vs1, 3'b010, vd, 7'b1010111};
+  endfunction
   function automatic logic [31:0] enc_vx(input logic [5:0] fn, input logic [4:0] vs2,
                                          input logic [4:0] rs1, input logic [4:0] vd);
     return {fn, 1'b1, vs2, rs1, 3'b100, vd, 7'b1010111};
@@ -130,8 +140,33 @@ module tb_vunit;
     get_vreg(5'd13, d);
     chk("vmv.v.v copies", d, 64'h0807_0605_0403_0201);
 
-    // ---- 10. instruction counter ----------------------------------------
-    chk("insn counter", insn_count, 32'd10);
+    // ---- 10. masked vadd: only the selected elements are written ---------
+    issue(enc_vset(11'h000));            // e8, vl = 8
+    set_vreg(5'd0, 64'h0000_0000_0000_000F);   // v0: elements 0..3 active
+    set_vreg(5'd14, 64'h0101_0101_0101_0101);
+    set_vreg(5'd15, 64'hFFFF_FFFF_FFFF_FFFF);  // vd starts all-ones
+    issue(enc_vv_m(6'b000000, 5'd14, 5'd14, 5'd15));  // v15 += v14, masked
+    get_vreg(5'd15, d);
+    chk("masking writes only active elements", d, 64'hFFFF_FFFF_0202_0202);
+
+    // ---- 11. vredsum.vs: sum of v4 elements + seed ----------------------
+    // v4 = 1,2,3,4,5,6,7,8 -> sum 36; vs1[0] = 4 -> 40
+    set_vreg(5'd16, 64'd4);
+    issue(enc_red(6'b000000, 5'd4, 5'd16, 5'd17));
+    get_vreg(5'd17, d);
+    chk("vredsum with a seed", d, 64'd40);
+
+    // ---- 12. vredmaxu / vredminu ----------------------------------------
+    issue(enc_red(6'b000110, 5'd4, 5'd16, 5'd18));   // max of v4, seeded 4
+    get_vreg(5'd18, d);
+    chk("vredmaxu", d, 64'd8);
+    set_vreg(5'd19, 64'd200);                        // seed above every element
+    issue(enc_red(6'b000100, 5'd4, 5'd19, 5'd20));   // min
+    get_vreg(5'd20, d);
+    chk("vredminu", d, 64'd1);
+
+    // ---- 13. instruction counter ----------------------------------------
+    chk("insn counter", insn_count, 32'd15);
 
     $display("tb_vunit: %0d checks, %0d mismatches (insns=%0d)", checks, errors, insn_count);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

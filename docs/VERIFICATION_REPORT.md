@@ -550,11 +550,25 @@ the vector file: `v3 = 123` from `vadd.vv v3, v2, v1` with v1=100, v2=23. The IS
 not model the unit, so the test asserts the DUT's registers rather than reading the
 result back into a GPR, which would break the trace comparison.
 
-**Not implemented, in the header:** no masking (`vm` ignored -- every operation is
-unmasked), no `vlmul` grouping, no widening/narrowing, fixed-point or
-floating-point operations, no `vle`/`vse` vector loads or stores, no slides,
-permutes or reductions, no `vstart` resumption (it is read but execution always
-starts at 0), and no chaining.
+**Masking and reductions are implemented.** `vm` (instruction bit 25) with `v0` as
+the mask register: with `vm=0` only elements whose mask bit is set are written, and
+elements at or above `vl` still keep their previous value. Reductions cover
+`vredsum`, `vredand`, `vredor`, `vredxor`, `vredminu`, `vredmin`, `vredmaxu` and
+`vredmax` (funct3 = 010), with `vs1[0]` seeding the result and the answer landing in
+element 0 of `vd`.
+
+**16 checks, 0 mismatches under xezim and Icarus**, now including a masked add
+(`v0 = 0x0F` writes four of eight elements and leaves the rest untouched) and
+`vredsum`/`vredmaxu`/`vredminu` with seeds.
+
+One bug found: **the mask bit was indexed per byte of the element** (`m[8*i]`)
+instead of per element. RVV packs one mask bit per element regardless of SEW, so
+only element 0 was ever active and a masked add changed one byte out of four.
+
+**Not implemented, in the header:** no `vlmul` grouping, no widening/narrowing,
+fixed-point or floating-point operations, no `vle`/`vse` vector loads or stores, no
+slides or permutes, no `vstart` resumption (it is read but execution always starts
+at 0), and no chaining.
 
 ### XRV512 (integrated)
 
