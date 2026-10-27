@@ -1617,3 +1617,40 @@ async def test_sv39_identity(dut):
     compare(h, iss_trace, "sv39-identity")
     cov("sv39")
     dut._log.info(f"sv39 identity: {len(h.trace)} retirements matched the ISS")
+
+
+@cocotb.test()
+async def test_icache_hits(dut):
+    """The instruction cache must actually hit, not merely be present.
+
+    A loop runs the same instructions repeatedly, so the second pass must be
+    served from the cache. Without this the core would pass every functional test
+    with a cache that never hit -- correct, and pointless.
+    """
+    L = []
+    L.append("addi x5, x0, 0")
+    L.append("addi x6, x0, 8")
+    L.append("addi x5, x5, 1")          # loop body
+    L.append("blt x5, x6, -4")          # back to the body
+    L.append("ecall")
+
+    words, _ = assemble("\n".join(L))
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "icache-hits")
+
+    # the counters live inside the core instance
+    core = dut.u_core if hasattr(dut, "u_core") else dut
+    hits = int(core.ic_hits.value)
+    misses = int(core.ic_misses.value)
+    dut._log.info(f"icache: {hits} hits, {misses} misses")
+    assert hits > 0, f"instruction cache never hit ({hits} hits, {misses} misses)"

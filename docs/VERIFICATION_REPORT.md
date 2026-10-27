@@ -438,19 +438,24 @@ path needs), no coherence, no RRIP or replacement policy beyond direct mapping, 
 prefetch. It is also **not wired into the core** -- the fetch port still goes
 straight to memory, so this is a verified block rather than a working L1.
 
-**A new isolated harness narrows where the problem is.** `tb/tb_fetch_cache.sv`
+**Resolved: it was a ready/valid handshake bug.** `tb/tb_fetch_cache.sv`
 drives the fetch unit and the cache together, with no core around them: a
 sequential walk, warm re-fetches, a mid-stream redirect, two lines sharing a cache
 index, and back-to-back fetches. **26 checks, 0 mismatches, 7 hits and 10 misses**
 -- the pair works.
 
-So the failure is *not* in the fetch unit, and not in the cache. Instrumenting the
-cache inside the core shows it filling and hitting with the right addresses and the
-right data throughout the failing test. The divergence is in how the rest of the
-pipeline interacts with the extra latency -- `pause`, `redirect` and `consume` are
-all driven from the core's control logic, and that is where to look next.
+That harness is what found it. The cache only samples a request in `C_IDLE`, but
+its `req_ready` was tied to `1'b1` in the core, so the fetch unit marked a request
+"accepted" on `req_valid && req_ready` even when the cache was mid-fill and dropped
+it -- and then waited for a response that never came. The isolated harness never
+showed it because the cache was always idle when a request arrived there.
 
-**The core wiring was attempted twice and reverted both times.** Inserting the cache between the fetch
+The cache now reports `req_ready = (cst == C_IDLE)` and the core connects it. With
+that, **27/27 core tests pass**, including `test_icache_hits`, which runs a loop and
+asserts the counters are non-zero -- **4 hits, 4 misses**. That test exists because
+a cache that never hits would pass every functional test while being pointless.
+
+**Earlier attempts, kept for the record.** Inserting the cache between the fetch
 unit and the instruction bus (with the PMP gate moved onto the fill port) built
 cleanly and then broke **8 of the 26 core tests**: the core fetched wrong
 instructions -- `test_control` saw `insn 0x05500493` where the ISS expected
@@ -516,7 +521,7 @@ do not.
 | --- | --- |
 | `tb/tb_mmu.sv` under xezim | 22 checks, 0 mismatches |
 | `test_sv39_identity` in the core | 39 retirements matched the ISS with translation active |
-| cocotb regression | 26/26 |
+| cocotb regression | 27/27 |
 | slang / Verilator | clean, 0 warnings |
 
 The MMU sits inside `rv64_lsu` with a translation phase (`S_XLATE`) before the

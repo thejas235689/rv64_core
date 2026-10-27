@@ -180,6 +180,32 @@ module riscv_core_top #(
   logic        f_req_valid;
   logic [63:0] f_req_addr;
   logic        f_consume, f_pause, f_redirect;
+  // ---- instruction cache between the fetch unit and the bus ----------------
+  logic        ic_req_ready, ic_resp_valid, ic_resp_miss, ic_resp_error;
+  logic [63:0] ic_resp_data;
+  logic        ic_fill_valid;
+  logic [63:0] ic_fill_addr;
+  logic [31:0] ic_hits, ic_misses;
+
+  rv64_icache u_icache (
+    .clk            (clk),
+    .rst_n          (rst_n),
+    .req_valid      (f_req_valid),
+    .req_addr       (f_req_addr),
+    .req_ready      (ic_req_ready),
+    .resp_valid     (ic_resp_valid),
+    .resp_data      (ic_resp_data),
+    .resp_miss      (ic_resp_miss),
+    .resp_error     (ic_resp_error),
+    .fill_valid     (ic_fill_valid),
+    .fill_addr      (ic_fill_addr),
+    .fill_ready     (if_req_ready),
+    .fill_rsp_valid (if_rsp_valid),
+    .fill_rsp_data  (if_rsp_data),
+    .fill_rsp_error (if_rsp_error),
+    .hit_count      (ic_hits),
+    .miss_count     (ic_misses)
+  );
   logic [63:0] f_redirect_pc;
 
   logic        fetch_pmp_ok;
@@ -212,10 +238,10 @@ module riscv_core_top #(
     .pause       (f_pause || fetch_stopped || f_redirect),
     .req_valid   (f_req_valid),
     .req_addr    (f_req_addr),
-    .req_ready   (if_req_ready),
-    .rsp_valid   (if_rsp_valid),
-    .rsp_data    (if_rsp_data),
-    .rsp_error   (if_rsp_error),
+    .req_ready   (ic_req_ready),
+    .rsp_valid   (ic_resp_valid),
+    .rsp_data    (ic_resp_data),
+    .rsp_error   (ic_resp_error),
     .insn_valid  (f_insn_valid),
     .insn_pc     (f_insn_pc),
     .insn        (f_insn),
@@ -227,8 +253,8 @@ module riscv_core_top #(
     .tag_fusion_kind  (f_tag_fusion_kind)
   );
 
-  assign if_req_valid = f_req_valid && fetch_pmp_ok;
-  assign if_req_addr  = f_req_addr;
+  assign if_req_valid = ic_fill_valid && fetch_pmp_ok;
+  assign if_req_addr  = ic_fill_addr;
 
   // ===========================================================================
   // Branch prediction

@@ -25,6 +25,7 @@ module rv64_icache (
   // ---- core side -----------------------------------------------------------
   input  logic        req_valid,
   input  logic [63:0] req_addr,
+  output logic        req_ready,      // only accept while idle
   output logic        resp_valid,
   output logic [63:0] resp_data,
   output logic        resp_miss,      // this access had to fill
@@ -58,6 +59,10 @@ module rv64_icache (
   logic        miss_q;
   logic        err_q;
 
+  // The core marks a request accepted on req_valid && req_ready. Reporting ready
+  // unconditionally while only sampling in C_IDLE lost every request that
+  // arrived during a fill, and the requester then waited for a response forever.
+  assign req_ready  = (cst == C_IDLE);
   assign fill_valid = (cst == C_FILL);
   assign fill_addr  = {addr_q[63:3], 3'b000};
 

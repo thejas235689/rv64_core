@@ -46,7 +46,7 @@ to a private repository as-is.
 | AI accelerator | INT8 4x4x4 matrix multiply-accumulate, INT32 accumulation, one cycle per product (`rtl/rv64_aiacc.sv`, CSR window `0x7E8`) |
 | Observability | Retirement PC/instruction, GPR writeback, trap cause/PC, interrupt flag, privilege, debug event, counters |
 
-**Not in this core:** data caches, out-of-order backend, RVV, XRV512, and the research blocks (DNA, neuromorphic, photonic,
+**Not in this core:** data caches, L2/L3, out-of-order backend, RVV, XRV512, and the research blocks (DNA, neuromorphic, photonic,
 interconnect), plus the platform pieces. The custom numeric ABI, Xcetask, QISA
 and the AI accelerator are implemented. `docs/ROADMAP.md` maps the full target
 feature list against what exists here, sizes what remains, and states which items

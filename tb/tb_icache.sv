@@ -6,7 +6,7 @@ module tb_icache;
 
   logic        req_valid;
   logic [63:0] req_addr;
-  logic        resp_valid, resp_miss;
+  logic        req_ready, resp_valid, resp_miss;
   logic [63:0] resp_data;
 
   logic        fill_valid, fill_ready, fill_rsp_valid, fill_rsp_error;
@@ -15,7 +15,7 @@ module tb_icache;
 
   rv64_icache u_cache (
     .clk(clk), .rst_n(rst_n),
-    .req_valid(req_valid), .req_addr(req_addr),
+    .req_valid(req_valid), .req_addr(req_addr), .req_ready(req_ready),
     .resp_valid(resp_valid), .resp_data(resp_data), .resp_miss(resp_miss),
     .fill_valid(fill_valid), .fill_addr(fill_addr), .fill_ready(fill_ready),
     .fill_rsp_valid(fill_rsp_valid), .fill_rsp_data(fill_rsp_data),

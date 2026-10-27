@@ -20,7 +20,7 @@ module tb_fetch_cache;
   logic [1:0]  tag_fusion_kind;
 
   // cache core-side
-  logic        c_req_valid, c_resp_valid, c_resp_miss, c_resp_error;
+  logic        c_req_ready, c_resp_valid, c_resp_miss, c_resp_error;
   logic [63:0] c_req_addr, c_resp_data;
   logic        fill_valid, fill_ready, fill_rsp_valid, fill_rsp_error;
   logic [63:0] fill_addr, fill_rsp_data;
@@ -39,7 +39,7 @@ module tb_fetch_cache;
 
   rv64_icache u_cache (
     .clk(clk), .rst_n(rst_n),
-    .req_valid(req_valid), .req_addr(req_addr),
+    .req_valid(req_valid), .req_addr(req_addr), .req_ready(c_req_ready),
     .resp_valid(rsp_valid), .resp_data(rsp_data),
     .resp_miss(c_resp_miss), .resp_error(rsp_error),
     .fill_valid(fill_valid), .fill_addr(fill_addr),
