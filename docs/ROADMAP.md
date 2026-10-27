@@ -41,10 +41,10 @@ exists; **absent** = not in this repository.
 | Fetch-fault metadata | **done** | instruction access fault with faulting address |
 | Transactional data memory | **partial** | separate response channel, backpressure, response error; no SC-failure channel |
 | RVV subset (VLEN=64, LMUL=1) | **absent** | |
-| Custom numeric ABI (posit/quire, LNS, RNS, fixed-Q, error tracking) | **partial** | 32x64 numeric bank, fixed-Q Q32.32, 128-bit quire, adaptive precision, error tracking and sticky-flag/config CSRs are implemented and verified; posit/LNS/RNS/IEEE families reserved but unimplemented; wired into the pipeline via the custom-0 opcode with int<->numeric bridges, interlock and CSRs; reachable from software |
+| Custom numeric ABI (posit/quire, LNS, RNS, fixed-Q, error tracking) | **done** | 32x64 numeric bank, fixed-Q Q32.32, 128-bit quire, adaptive precision, error tracking and CSRs, plus all four research families (RNS, LNS, IEEE binary32, posit at 8/16/32 bits) selected by `fmt`; wired via custom-0 with int<->numeric bridges and reachable from software |
 | XRV512 (32×512-bit bank) | **absent** | |
 | Xcetask (task slots, completion, timeout IRQ) | **partial** | bounded slot lifecycle, token ownership, per-slot timeout, cancel/free, stray-completion rejection and optional completion interrupt implemented and verified (38 checks); wired into the core on a CSR window at 0x7D0-0x7D8 with engine ports and a completion interrupt output; reachable from software | |
-| QISA (8-entry qubit model) | **absent** | |
+| QISA (8-entry qubit model) | **done** | `rtl/rv64_qisa.sv`, CSR window 0x7E0; 47-check self-checking testbench. Models state (value, superposition, phase), not amplitudes -- see the header | |
 | AI accelerator (INT8 4×4×4) | **absent** | |
 | Adaptive cache / AMCCE compression sidecar | **absent** | |
 
@@ -62,6 +62,29 @@ Compressed-instruction decompressor, floating-point blocks, AXI4/AXI5/ACE5/CHI
 adapters, coherent and L4 caches, DNA vector/stream/object engines, genomic
 primitives, neurocore, photonic accelerator control, power/security/telemetry
 fabrics: **all absent** from this repository.
+
+## Sizing what remains
+
+Two of the fifteen pending items are now implemented (QISA, AI accelerator). The
+rest are ordered here by dependency and by how much of the existing core they
+disturb. Estimates are for the RTL alone, at this repository's verification
+standard -- a block is not done here until it has a self-checking test.
+
+| Item | Size | Why |
+| --- | --- | --- |
+| Atomics (LR/SC, AMOs) | medium | reservation register + LSU atomic path + decoder; touches the pipeline |
+| DMI debug transport | medium | JTAG TAP + DMI shift register; self-contained, sits beside the existing debug unit |
+| Predecode tags, fusion hints | medium | front-end buffering change, isolated |
+| Loop predictor, tagged history, perceptron | medium | branch-predictor rework; must not regress the existing tournament predictor |
+| S/U privilege modes | medium-large | privilege checks across CSR, trap, PMP and LSU |
+| Sv39 (TLB, PTW, faults) | large | full MMU plus page-table walker and fault plumbing |
+| L1 I-cache, L1 D-cache | large | each is a cache with fill, eviction, RRIP and coherence hooks |
+| L2/L3, adaptive cache, AMCCE | large | depends on the L1s |
+| RVV subset (VLEN=64) | large | vector register file, decoder, execution units |
+| XRV512 (32x512 bank) | large | queued behind the 64-bit work; 2 KB register file plus ops |
+| Out-of-order backend | very large | rename, free list, issue queue, PRF, ROB -- larger than the entire current core |
+| Platform (ROM, UART, CLINT, OpenSBI, boot auth) | large | a platform, not a core; several independent blocks |
+| Research blocks (DNA, neuromorphic, photonic, interconnect) | large, under-specified | need a written contract before RTL is meaningful |
 
 ## Suggested order of work from here
 

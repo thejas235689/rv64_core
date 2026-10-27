@@ -350,6 +350,37 @@ module riscv_core_top #(
     .irq           (task_irq_o)
   );
 
+  // ===========================================================================
+  // QISA qubit model (0x7E0) and INT8 accelerator (0x7E8)
+  // ===========================================================================
+  logic        qisa_csr_sel;
+  logic        aiacc_csr_sel;
+  logic [63:0] qisa_csr_rdata;
+  logic [63:0] aiacc_csr_rdata;
+
+  assign qisa_csr_sel  = (id_ex_ctrl.csr_addr >= CSR_QISA_BASE) &&
+                         (id_ex_ctrl.csr_addr <= (CSR_QISA_BASE + 12'd6));
+  assign aiacc_csr_sel = (id_ex_ctrl.csr_addr >= CSR_AIACC_BASE) &&
+                         (id_ex_ctrl.csr_addr <= (CSR_AIACC_BASE + 12'd5));
+
+  rv64_qisa u_qisa (
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .csr_we    (csr_we && qisa_csr_sel),
+    .csr_addr  (id_ex_ctrl.csr_addr[3:0] - CSR_QISA_BASE[3:0]),
+    .csr_wdata (csr_wdata),
+    .csr_rdata (qisa_csr_rdata)
+  );
+
+  rv64_aiacc u_aiacc (
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .csr_we    (csr_we && aiacc_csr_sel),
+    .csr_addr  (id_ex_ctrl.csr_addr[3:0] - CSR_AIACC_BASE[3:0]),
+    .csr_wdata (csr_wdata),
+    .csr_rdata (aiacc_csr_rdata)
+  );
+
   // exactly one pulse per numeric instruction, however long EX is held
   logic num_exec;
   assign num_exec = id_ex_v && id_ex_ctrl.is_num && ex_advance && !trap_taken;
@@ -397,6 +428,8 @@ module riscv_core_top #(
 
   always_comb begin
     if (task_csr_sel)     csr_rdata = task_csr_rdata;
+    else if (qisa_csr_sel)  csr_rdata = qisa_csr_rdata;
+    else if (aiacc_csr_sel) csr_rdata = aiacc_csr_rdata;
     else if (num_csr_sel) csr_rdata = num_csr_rdata;
     else                  csr_rdata = main_csr_rdata;
   end
@@ -510,7 +543,8 @@ module riscv_core_top #(
     ex_exc_tval  = 64'd0;
 
     if (id_ex_ctrl.illegal ||
-        (id_ex_ctrl.is_csr && !csr_valid && !num_csr_valid && !task_csr_sel)) begin
+        (id_ex_ctrl.is_csr && !csr_valid && !num_csr_valid && !task_csr_sel &&
+         !qisa_csr_sel && !aiacc_csr_sel)) begin
       ex_exc       = 1'b1;
       ex_exc_cause = CAUSE_ILLEGAL;
       ex_exc_tval  = {32'd0, id_ex_insn};
@@ -589,7 +623,7 @@ module riscv_core_top #(
   assign csr_wdata = id_ex_ctrl.csr_imm ? {59'd0, id_ex_rs1} : op_a;
   // the numeric CSRs live outside the machine CSR file, so the access is
   // arbitrated here: address decode picks exactly one of the two files
-  assign csr_we    = id_ex_v && id_ex_ctrl.is_csr && (csr_valid || num_csr_valid || task_csr_sel) &&
+  assign csr_we    = id_ex_v && id_ex_ctrl.is_csr && (csr_valid || num_csr_valid || task_csr_sel || qisa_csr_sel || aiacc_csr_sel) &&
                      !trap_to_csr && !ex_hold;
 
   rv64_csr u_csr (

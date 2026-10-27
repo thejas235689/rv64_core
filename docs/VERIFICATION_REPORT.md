@@ -371,6 +371,28 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### QISA and the INT8 accelerator
+
+Two blocks added after the core was otherwise complete, both with a
+self-checking testbench (`tb/tb_qisa_aiacc.sv`, **47 checks, 0 mismatches**) and
+both wired into the core on their own CSR windows (`0x7E0`, `0x7E8`).
+
+* `rv64_qisa` -- 8-entry qubit model. It models *state* (value, superposition,
+  phase) and not amplitudes: 256 complex amplitudes would not fit a CSR window
+  and would tell a CPU testbench nothing. H/H = identity, X on a superposed qubit
+  flips the phase, CNOT with a superposed control marks the target superposed,
+  and measurement collapses a superposed qubit from a seeded LFSR so runs are
+  reproducible. The header says all of this; it is a quantum-*inspired* model.
+* `rv64_aiacc` -- INT8 4x4x4 multiply-accumulate with INT32 accumulation,
+  combinational, one cycle per product. Verified against C = A x I (identity),
+  all-ones (every element 4, sum 64) and the signed case -1 x 2 = -8.
+
+One real defect found by the testbench: the accelerator's read path took the
+element index from the live write bus, so a read always returned element 0. The
+index is now a register. A second finding was in the testbench itself -- two
+hand-computed QISA expectations had the bit positions wrong, and the RTL was
+right.
+
 ### Xcetask (`rv64_xcetask`)
 
 ```
