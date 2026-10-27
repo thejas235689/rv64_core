@@ -11,10 +11,42 @@ module tb_vunit;
   logic [31:0] insn_count;
   logic        illegal;
 
+  // ---- element memory model ----------------------------------------------
+  logic        m_req_valid, m_req_we, m_req_ready, m_rsp_valid;
+  logic [63:0] m_req_addr, m_req_wdata, m_rsp_rdata;
+  logic [7:0]  m_req_wstrb;
+  logic [63:0] mem [0:4095];
+
+  assign m_req_ready = 1'b1;
+  logic m_pend;
+  assign m_rsp_valid = m_pend;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      m_pend <= 1'b0; m_rsp_rdata <= 64'd0;
+      for (int i = 0; i < 4096; i++) mem[i] <= 64'd0;
+    end else begin
+      m_pend <= 1'b0;
+      if (m_req_valid && m_req_ready) begin
+        if (m_req_we) begin
+          for (int b = 0; b < 8; b++)
+            if (m_req_wstrb[b]) mem[m_req_addr[11:3]][8*b +: 8] <= m_req_wdata[8*b +: 8];
+        end else begin
+          m_rsp_rdata <= mem[m_req_addr[11:3]];
+          m_pend      <= 1'b1;
+        end
+      end
+    end
+  end
+
   rv64_vunit u_v (
     .clk(clk), .rst_n(rst_n),
     .csr_we(csr_we), .csr_addr(csr_addr), .csr_wdata(csr_wdata),
-    .csr_rdata(csr_rdata), .insn_count(insn_count), .illegal(illegal)
+    .csr_rdata(csr_rdata), .insn_count(insn_count), .illegal(illegal),
+    .mem_req_valid(m_req_valid), .mem_req_addr(m_req_addr), .mem_req_we(m_req_we),
+    .mem_req_wstrb(m_req_wstrb), .mem_req_wdata(m_req_wdata),
+    .mem_req_ready(m_req_ready), .mem_rsp_valid(m_rsp_valid),
+    .mem_rsp_rdata(m_rsp_rdata), .mem_rsp_error(1'b0)
   );
 
   int checks = 0, errors = 0;
@@ -41,6 +73,18 @@ module tb_vunit;
     begin wr(4'd6, {59'd0, r}); rd(4'd6, v); end
   endtask
 
+  // wait for a vector walk to start and then finish
+  task automatic wait_walk();
+    begin
+      int g; g = 0;
+      while (!u_v.el_walk_q && g < 20) begin @(posedge clk); #1; g++; end
+      g = 0;
+      while (u_v.el_walk_q && g < 300) begin @(posedge clk); #1; g++; end
+      if (g >= 300) begin errors++; $display("MISMATCH walk never finished"); end
+      @(posedge clk); #1;
+    end
+  endtask
+
   task automatic issue(input logic [31:0] insn);
     begin wr(4'd4, {32'd0, insn}); wr(4'd0, 64'd1); end
   endtask
@@ -56,6 +100,15 @@ module tb_vunit;
     return {fn, 1'b0, vs2, vs1, 3'b000, vd, 7'b1010111};
   endfunction
   // reduction: funct3 = 010 (OPMVV)
+  // vle<n>.v vd, (base)   -- opcode 0000111
+  function automatic logic [31:0] enc_vle(input logic [2:0] width, input logic [4:0] vd);
+    return {3'd0, 1'b0, 2'b00, 1'b1, 5'd0, 5'd0, width, vd, 7'b0000111};
+  endfunction
+  // vse<n>.v vs3, (base)  -- opcode 0100111
+  function automatic logic [31:0] enc_vse(input logic [2:0] width, input logic [4:0] vs3);
+    return {3'd0, 1'b0, 2'b00, 1'b1, 5'd0, 5'd0, width, vs3, 7'b0100111};
+  endfunction
+
   function automatic logic [31:0] enc_red(input logic [5:0] fn, input logic [4:0] vs2,
                                           input logic [4:0] vs1, input logic [4:0] vd);
     return {fn, 1'b1, vs2, vs1, 3'b010, vd, 7'b1010111};
@@ -165,8 +218,24 @@ module tb_vunit;
     get_vreg(5'd20, d);
     chk("vredminu", d, 64'd1);
 
-    // ---- 13. instruction counter ----------------------------------------
-    chk("insn counter", insn_count, 32'd15);
+    // ---- 13. vle8.v: load eight bytes from memory ----------------------
+    issue(enc_vset(11'h000));            // e8, vl = 8
+    for (int i = 0; i < 8; i++) mem[(64'h100 >> 3)] [8*i +: 8] = 8'h10 + i;
+    wr(4'd10, 64'h100);                  // base address
+    issue(enc_vle(3'b000, 5'd21));       // vle8.v v21, (base)
+    wait_walk();
+    get_vreg(5'd21, d);
+    chk("vle8.v loaded eight elements", d, 64'h1716_1514_1312_1110);
+
+    // ---- 14. vse8.v: store eight bytes to memory -----------------------
+    // v4 holds 1,2,3,...,8 from earlier
+    wr(4'd10, 64'h200);
+    issue(enc_vse(3'b000, 5'd4));        // vse8.v v4, (base)
+    wait_walk();
+    chk("vse8.v stored eight elements", mem[(64'h200 >> 3)], 64'h0807_0605_0403_0201);
+
+    // ---- 15. instruction counter ----------------------------------------
+    chk("insn counter", insn_count, 32'd18);
 
     $display("tb_vunit: %0d checks, %0d mismatches (insns=%0d)", checks, errors, insn_count);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

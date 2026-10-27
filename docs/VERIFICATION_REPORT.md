@@ -565,10 +565,32 @@ One bug found: **the mask bit was indexed per byte of the element** (`m[8*i]`)
 instead of per element. RVV packs one mask bit per element regardless of SEW, so
 only element 0 was ever active and a masked add changed one byte out of four.
 
+**Vector loads and stores are implemented.** `vle8/16/32/64.v` and
+`vse8/16/32/64.v` walk elements 0..`vl`, one 64-bit beat per element, honouring the
+mask (an inactive element is skipped without touching memory). The element's byte
+offset inside the returned beat is handled, and a store places its data at the same
+offset with the matching byte strobes. The base address comes from the control
+window (csr 10) rather than the integer file, the same simplification the `.vx`
+scalar uses.
+
+**18 checks, 0 mismatches under xezim and Icarus**, now including `vle8.v` loading
+eight bytes from memory and `vse8.v` storing eight back.
+
+Three bugs found:
+
+* **The load ignored the element's offset inside the beat**, so all eight elements
+  read the same byte -- the register filled with `0x10` eight times. Extraction is
+  now a shift by the byte offset, by constants rather than a computed part-select.
+* **A store read its source from the `vs1` port**, but a store's source is `vs3`,
+  which occupies the `vd` field. It stored `v0` (the mask, `0x0F`) instead of the
+  intended register -- visible only because the test checked all eight bytes.
+* The store also needed its data and strobes shifted to the element's offset.
+
 **Not implemented, in the header:** no `vlmul` grouping, no widening/narrowing,
-fixed-point or floating-point operations, no `vle`/`vse` vector loads or stores, no
-slides or permutes, no `vstart` resumption (it is read but execution always starts
-at 0), and no chaining.
+fixed-point or floating-point operations, no slides or permutes, no `vstart`
+resumption (it is read but execution always starts at 0), and no chaining. The
+element memory port is **not connected to the data bus in the core** -- it is tied
+off, because wiring it needs the same arbitration the L2 integration is missing.
 
 ### XRV512 (integrated)
 

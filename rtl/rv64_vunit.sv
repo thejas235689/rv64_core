@@ -38,6 +38,20 @@ module rv64_vunit (
   input  logic [63:0] csr_wdata,
   output logic [63:0] csr_rdata,
 
+  // ---- element memory port (vle / vse) ------------------------------------
+  // One 64-bit beat per element. The base address comes from the control window
+  // (csr 10) rather than the integer file, because this unit is not wired to the
+  // GPRs -- the same simplification the .vx scalar uses.
+  output logic        mem_req_valid,
+  output logic [63:0] mem_req_addr,
+  output logic        mem_req_we,
+  output logic [7:0]  mem_req_wstrb,
+  output logic [63:0] mem_req_wdata,
+  input  logic        mem_req_ready,
+  input  logic        mem_rsp_valid,
+  input  logic [63:0] mem_rsp_rdata,
+  input  logic        mem_rsp_error,
+
   // ---- observability -------------------------------------------------------
   output logic [31:0] insn_count,
   output logic        illegal
@@ -52,6 +66,15 @@ module rv64_vunit (
 
   logic [31:0] insn_count_q;
   logic        illegal_q;
+
+  // ---- vector load / store ------------------------------------------------
+  logic [63:0] base_q;
+  logic [2:0]  el_q;            // element index being transferred
+  logic        el_walk_q, el_issued_q, el_mask_q;
+  logic        is_store_q;
+  logic [63:0] ld_acc;
+  logic        load_we_q;       // this write comes from a load, not an ALU op
+
 
   // ---- the instruction being executed -------------------------------------
   logic [31:0] insn_q;
@@ -88,6 +111,16 @@ module rv64_vunit (
     .cwdata(csr_wdata), .cwe(csr_we && (csr_addr == 4'd7))
   );
 
+  wire [5:0] elem_bytes = (sew_sel == 2'd0) ? 6'd1 : (sew_sel == 2'd1) ? 6'd2
+                        : (sew_sel == 2'd2) ? 6'd4 : 6'd8;
+
+  wire el_active = (el_q < vl_q) && (vm || mask_bit(el_q, sew_sel));
+  assign mem_req_valid = el_walk_q && !el_issued_q && el_active;
+  assign mem_req_addr  = base_q + ({58'd0, el_q} * {58'd0, elem_bytes});
+  assign mem_req_we    = is_store_q;
+  assign mem_req_wstrb = is_store_q ? (wstrb_for(sew_sel) << mem_req_addr[2:0]) : 8'h00;
+  assign mem_req_wdata = is_store_q ? (get_elem(rdata3, el_q, sew_sel) << (8 * mem_req_addr[2:0])) : 64'd0;
+
   // ---- scalar operand for the .vx and .vi forms ---------------------------
   // For .vx the scalar comes from a register supplied on the control window
   // (csr 9), because this unit is not wired to the core's integer file yet.
@@ -95,6 +128,63 @@ module rv64_vunit (
   wire  [63:0] s2_val = (funct3 == 3'b100) ? xval_q
                       : (funct3 == 3'b011) ? {{59{insn_q[19]}}, insn_q[19:15]}
                       : rdata1;
+
+  // insert one element into a register image, constant slices only
+  function automatic logic [63:0] set_elem(input logic [63:0] v, input logic [2:0] i,
+                                           input logic [1:0] sew, input logic [63:0] x);
+    logic [63:0] r;
+    begin
+      r = v;
+      unique case (sew)
+        2'd0: unique case (i)
+                3'd0: r[7:0]   = x[7:0];
+                3'd1: r[15:8]  = x[7:0];
+                3'd2: r[23:16] = x[7:0];
+                3'd3: r[31:24] = x[7:0];
+                3'd4: r[39:32] = x[7:0];
+                3'd5: r[47:40] = x[7:0];
+                3'd6: r[55:48] = x[7:0];
+                default: r[63:56] = x[7:0];
+              endcase
+        2'd1: unique case (i[1:0])
+                2'd0: r[15:0]  = x[15:0];
+                2'd1: r[31:16] = x[15:0];
+                2'd2: r[47:32] = x[15:0];
+                default: r[63:48] = x[15:0];
+              endcase
+        2'd2: begin
+                if (i[0] == 1'b0) r[31:0]  = x[31:0];
+                else              r[63:32] = x[31:0];
+              end
+        default: r = x;
+      endcase
+      set_elem = r;
+    end
+  endfunction
+
+  // An element sits at a byte offset inside the 64-bit beat. Shifts by constants
+  // only: a computed part-select has misbehaved in the tools used here.
+  function automatic logic [63:0] beat_at(input logic [63:0] b, input logic [2:0] off);
+    unique case (off)
+      3'd0:    beat_at = b;
+      3'd1:    beat_at = b >> 8;
+      3'd2:    beat_at = b >> 16;
+      3'd3:    beat_at = b >> 24;
+      3'd4:    beat_at = b >> 32;
+      3'd5:    beat_at = b >> 40;
+      3'd6:    beat_at = b >> 48;
+      default: beat_at = b >> 56;
+    endcase
+  endfunction
+
+  function automatic logic [7:0] wstrb_for(input logic [1:0] sew);
+    unique case (sew)
+      2'd0:    wstrb_for = 8'h01;
+      2'd1:    wstrb_for = 8'h03;
+      2'd2:    wstrb_for = 8'h0F;
+      default: wstrb_for = 8'hFF;
+    endcase
+  endfunction
 
   // the mask bit for element i, taken from v0 at the element width
   function automatic logic mask_bit(input logic [2:0] i, input logic [1:0] sew);
@@ -186,9 +276,14 @@ module rv64_vunit (
     acc   = rdata3;                 // start from vd so the tail keeps its value
     vd_we = 1'b0;
     vd_addr = vd_i;
+    if (load_we_q) begin
+      // a completed vector load writes the accumulated register
+      vd_we = 1'b1;
+      acc   = ld_acc;
+    end
     w = (sew_sel == 2'd0) ? 7'd8 : (sew_sel == 2'd1) ? 7'd16
       : (sew_sel == 2'd2) ? 7'd32 : 7'd64;
-    if (go_q && (opcode == 7'b1010111)) begin
+    if (go_q && (opcode == 7'b1010111) && !load_we_q) begin
       if (funct3 == 3'b111) begin
         // vsetvli / vsetivli: vl and vtype come from the instruction
         acc   = 64'd0;
@@ -266,6 +361,7 @@ module rv64_vunit (
       4'd5: csr_rdata = {63'd0, vxsat_q};
       4'd6: csr_rdata = cdata;
       4'd9: csr_rdata = xval_q;
+      4'd10: csr_rdata = base_q;
       default: csr_rdata = 64'd0;
     endcase
   end
@@ -282,11 +378,56 @@ module rv64_vunit (
       insn_q      <= 32'd0;
       go_q        <= 1'b0;
       xval_q      <= 64'd0;
+      base_q      <= 64'd0;
+      el_q        <= 3'd0;
+      el_walk_q   <= 1'b0;
+      el_issued_q <= 1'b0;
+      el_mask_q   <= 1'b0;
+      is_store_q  <= 1'b0;
+      ld_acc      <= 64'd0;
+      load_we_q   <= 1'b0;
       caddr_q     <= 5'd0;
       insn_count_q <= 32'd0;
       illegal_q   <= 1'b0;
     end else begin
       go_q <= 1'b0;
+
+      // ---- vector load / store walk -------------------------------------
+      if (go_q && ((opcode == 7'b0000111) || (opcode == 7'b0100111)) && !el_walk_q) begin
+        el_q        <= 3'd0;
+        el_issued_q <= 1'b0;
+        el_walk_q   <= 1'b1;
+        is_store_q  <= (opcode == 7'b0100111);
+        ld_acc      <= rdata3;          // keep vd's untouched elements
+      end else if (el_walk_q) begin
+        if (!el_issued_q) begin
+          if (el_active && mem_req_ready) el_issued_q <= 1'b1;
+          // an inactive element is skipped without touching memory
+          else if (!el_active) begin
+            if (el_q + 3'd1 >= nelem) el_walk_q <= 1'b0;
+            else                      el_q <= el_q + 3'd1;
+          end
+        end else if (is_store_q) begin
+          // the store is done once the bus took it
+          el_issued_q <= 1'b0;
+          if (el_q + 3'd1 >= nelem) el_walk_q <= 1'b0;
+          else                      el_q <= el_q + 3'd1;
+        end else if (mem_rsp_valid) begin
+          // a load element lands in the accumulator
+          ld_acc      <= set_elem(ld_acc, el_q, sew_sel,
+                                  beat_at(mem_rsp_rdata, mem_req_addr[2:0]));
+          el_issued_q <= 1'b0;
+          if (el_q + 3'd1 >= nelem) el_walk_q <= 1'b0;
+          else                      el_q <= el_q + 3'd1;
+        end
+      end
+
+      // the loaded register is written when the walk completes
+      if (el_walk_q && !is_store_q && (el_q + 3'd1 >= nelem) && el_issued_q && mem_rsp_valid)
+        load_we_q <= 1'b1;
+      else
+        load_we_q <= 1'b0;
+
       if (csr_we) begin
         unique case (csr_addr)
           4'd0: if (csr_wdata[0]) begin
@@ -307,6 +448,7 @@ module rv64_vunit (
           4'd5: vxsat_q <= csr_wdata[0];
           4'd6: caddr_q <= csr_wdata[4:0];
           4'd9: xval_q  <= csr_wdata;
+          4'd10: base_q <= csr_wdata;
           default: ;
         endcase
       end
