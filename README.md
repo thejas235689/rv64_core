@@ -33,7 +33,7 @@ to a private repository as-is.
 | Bit manipulation | Zba, Zbb, Zbc, Zbs, Zicond, Zihintpause |
 | Register state | 32×64 register file, `x0` write-suppressed |
 | Front end | Fetch buffering, request/response tracking, single outstanding request; predecode tags cross-checked against the decoder; fusion hints (hints only, no fused datapath) |
-| Branch prediction | Gshare + bimodal BHT with a tournament chooser, BTB, 8-entry return-address stack |
+| Branch prediction | Gshare + bimodal BHT with a tournament chooser, BTB, 8-entry return-address stack, and a loop-count predictor for counted-loop exits |
 | Memory ops | Byte/halfword/word/doubleword loads and stores, sign/zero extension, byte strobes, misalignment traps |
 | Protection | 8 PMP entries, OFF/TOR/NA4/NAPOT matching, whole-access checks, M-mode lock semantics (unit-tested) |
 | System control | Machine CSRs, synchronous exceptions, illegal-instruction traps, `mret`, `wfi` |

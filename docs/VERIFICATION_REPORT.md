@@ -420,6 +420,39 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Loop predictor
+
+The branch predictor was a 256-entry bimodal + gshare tournament with a choice
+predictor, a 64-entry BTB and an 8-entry RAS. A counted loop defeats that: the
+final iteration is the only one not taken, so per-branch history cannot call it
+and the exit mispredicts every pass.
+
+`rv64_bpu.sv` now carries a 16-entry loop-count table alongside the tournament:
+it learns a trip count and predicts the exit directly. **9 checks, 0 mismatches**
+in `tb/tb_bpu_loop.sv` -- a 5-iteration loop predicted taken at the head for four
+iterations and not-taken on the exit with a `pc+4` target, a 3-iteration loop
+relearned on a different PC, and a branch that is never not-taken left to the
+tournament.
+
+Two defects, and the second is the one worth reading:
+
+* **The trip count was learned on taken updates.** That let a branch which is
+  never not-taken accumulate a count and then wrongly predict its own exit. The
+  count is now learned only from the exit itself.
+* **The loop override used the BTB target without requiring a BTB hit.** With a
+  loop-table entry but no valid BTB line, the taken target came from a stale BTB
+  entry -- and in the full core that sent execution to address 0. `test_control`
+  and `test_pmp` both failed, `test_pmp` by looping on load-access faults. The
+  override is now gated on `btb_hit`. This is exactly the kind of defect a
+  directed unit test cannot catch on its own: the loop testbench was green while
+  the core was broken, because it only ever trained the loop through a BTB entry
+  that happened to be valid.
+
+Regression after the fix: cocotb 25/25, PMP 5/5, PLIC 2/2, slang clean.
+
+**Not done:** the same roadmap item also listed tagged history and a perceptron
+predictor. Neither is implemented. This is the loop predictor alone.
+
 ### Front-end predecode and fusion hints
 
 `rtl/rv64_predecode.sv` classifies an instruction from its encoding alone --

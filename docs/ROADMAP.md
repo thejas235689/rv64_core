@@ -65,8 +65,9 @@ fabrics: **all absent** from this repository.
 
 ## Sizing what remains
 
-Seven of the fifteen pending items are now implemented and verified (atomics,
-QISA, AI accelerator, CLINT, UART, DMI transport, predecode/fusion hints). The
+Seven of the fifteen pending items are implemented and verified (atomics, QISA,
+AI accelerator, CLINT, UART, DMI transport, predecode/fusion hints). An eighth is
+partial: the loop predictor is done, tagged history and the perceptron are not. The
 rest are ordered here by dependency and by how much of the existing core they
 disturb. Estimates are for the RTL alone, at this repository's verification
 standard -- a block is not done here until it has a self-checking test.
@@ -76,7 +77,7 @@ standard -- a block is not done here until it has a self-checking test.
 
 
 
-| Loop predictor, tagged history, perceptron | medium | branch-predictor rework; must not regress the existing tournament predictor |
+
 | S/U privilege modes | medium-large | privilege checks across CSR, trap, PMP and LSU |
 | Sv39 (TLB, PTW, faults) | large | full MMU plus page-table walker and fault plumbing |
 | L1 I-cache, L1 D-cache | large | each is a cache with fill, eviction, RRIP and coherence hooks |

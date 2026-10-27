@@ -44,6 +44,32 @@ module rv64_bpu (
   logic [63:0]  ras [0:7];
   logic [2:0]   ras_sp;
 
+  // ---- loop predictor ------------------------------------------------------
+  // A counted loop has a fixed trip count, and the tournament predictor gets the
+  // final iteration wrong every pass because it is the one iteration that is not
+  // taken. This table learns the trip count and predicts the exit directly.
+  //
+  // It only engages once a count has been learned, so a branch that is not a loop
+  // never overrides the tournament -- the existing behaviour is preserved for
+  // everything else, which is what keeps the regression meaningful.
+  localparam int LOOP_N = 16;
+  logic         loop_v    [0:LOOP_N-1];
+  logic [7:0]   loop_tag  [0:LOOP_N-1];
+  logic [7:0]   loop_trip [0:LOOP_N-1];
+  logic [7:0]   loop_iter [0:LOOP_N-1];
+
+  logic [3:0]  lidx;
+  logic        loop_hit;
+  logic        loop_pred_taken;
+
+  assign lidx     = lookup_pc[7:4];
+  assign loop_hit = loop_v[lidx] && (loop_tag[lidx] == lookup_pc[15:8]);
+
+  // taken while the iteration counter is short of the learned trip count,
+  // not-taken on the final iteration
+  assign loop_pred_taken = !(loop_hit && (loop_trip[lidx] != 8'd0) &&
+                             ((loop_iter[lidx] + 8'd1) >= loop_trip[lidx]));
+
   // ---- lookup ---------------------------------------------------------------
   logic [7:0]  idx;
   logic [7:0]  gidx;
@@ -67,6 +93,12 @@ module rv64_bpu (
     end else if (btb_hit && btb_ret[bidx]) begin
       pred_taken  = 1'b1;
       pred_target = ras[ras_sp];
+    end else if (loop_hit && btb_hit && (loop_trip[lidx] != 8'd0)) begin
+      // A learned loop count beats the tournament for the exit iteration -- but
+      // only with a valid BTB entry. Without the btb_hit guard the taken target
+      // came from a stale BTB line and sent the core to address 0.
+      pred_taken  = loop_pred_taken;
+      pred_target = loop_pred_taken ? btb_tgt[bidx] : (lookup_pc + 64'd4);
     end else if (btb_hit && choice) begin
       pred_taken  = 1'b1;
       pred_target = btb_tgt[bidx];
@@ -103,6 +135,12 @@ module rv64_bpu (
         btb_ret[i] <= 1'b0;
       end
       for (int i = 0; i < 8; i++) ras[i] <= 64'd0;
+      for (int i = 0; i < LOOP_N; i++) begin
+        loop_v[i]    <= 1'b0;
+        loop_tag[i]  <= 8'd0;
+        loop_trip[i] <= 8'd0;
+        loop_iter[i] <= 8'd0;
+      end
     end else begin
       // ---- return-address stack --------------------------------------------
       if (upd_valid && upd_is_call) begin
@@ -110,6 +148,31 @@ module rv64_bpu (
         ras_sp      <= ras_sp + 3'd1;
       end else if (upd_valid && upd_is_ret) begin
         ras_sp      <= ras_sp - 3'd1;
+      end
+
+      // ---- loop predictor --------------------------------------------------
+      // Taken: count the iteration and remember the longest run seen. Not taken:
+      // the loop just exited, so the trip count is the run length plus this final
+      // iteration, and the counter restarts.
+      if (upd_valid && upd_is_cond) begin
+        logic [3:0] li;
+        li = upd_pc[7:4];
+        if (!loop_v[li] || (loop_tag[li] != upd_pc[15:8])) begin
+          loop_v[li]    <= 1'b1;
+          loop_tag[li]  <= upd_pc[15:8];
+          loop_trip[li] <= 8'd0;
+          loop_iter[li] <= upd_taken ? 8'd1 : 8'd0;
+        end else if (upd_taken) begin
+          // Only COUNT while the branch keeps being taken. Learning the trip
+          // count here would let a branch that is never not-taken accumulate a
+          // count and then wrongly predict its own exit -- so the count is
+          // learned only from the exit below.
+          if (loop_iter[li] != 8'hFF) loop_iter[li] <= loop_iter[li] + 8'd1;
+        end else begin
+          // the exit iteration: the count is iter + 1
+          if (loop_iter[li] != 8'd0) loop_trip[li] <= loop_iter[li] + 8'd1;
+          loop_iter[li] <= 8'd0;
+        end
       end
 
       // ---- predictors ------------------------------------------------------
