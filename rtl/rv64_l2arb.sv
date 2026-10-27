@@ -68,6 +68,12 @@ module rv64_l2arb (
   logic       owner_q;        // 1 = A owns the in-flight transaction
   logic       busy_q;
   logic       issued_q;       // the L2 has accepted this transaction
+  // The requester drops its request as soon as it is accepted, so the payload has
+  // to be latched at grant time -- forwarding the live inputs sent a stale
+  // address to memory.
+  logic [63:0] addr_q, wdata_q;
+  logic [7:0]  wstrb_q;
+  logic        we_q;
   logic       last_q;         // who was granted last, for round-robin
   logic [31:0] ga_q, gb_q;
 
@@ -80,14 +86,10 @@ module rv64_l2arb (
   wire take_b = !busy_q && b_req_valid && (!a_req_valid ||  last_q);
 
   assign req_valid = busy_q ? !issued_q : (a_req_valid ? 1'b1 : b_req_valid);
-  assign req_addr  = busy_q ? (owner_q ? a_req_addr : b_req_addr)
-                            : (a_req_valid ? a_req_addr : b_req_addr);
-  assign req_we    = busy_q ? (owner_q ? a_req_we : b_req_we)
-                            : (a_req_valid ? a_req_we : b_req_we);
-  assign req_wstrb = busy_q ? (owner_q ? a_req_wstrb : b_req_wstrb)
-                            : (a_req_valid ? a_req_wstrb : b_req_wstrb);
-  assign req_wdata = busy_q ? (owner_q ? a_req_wdata : b_req_wdata)
-                            : (a_req_valid ? a_req_wdata : b_req_wdata);
+  assign req_addr  = busy_q ? addr_q  : (a_req_valid ? a_req_addr  : b_req_addr);
+  assign req_we    = busy_q ? we_q    : (a_req_valid ? a_req_we    : b_req_we);
+  assign req_wstrb = busy_q ? wstrb_q : (a_req_valid ? a_req_wstrb : b_req_wstrb);
+  assign req_wdata = busy_q ? wdata_q : (a_req_valid ? a_req_wdata : b_req_wdata);
 
   assign a_rsp_valid = rsp_valid && owner_q;
   assign a_rsp_rdata = rsp_rdata;
@@ -102,6 +104,10 @@ module rv64_l2arb (
       busy_q   <= 1'b0;
       issued_q <= 1'b0;
       last_q   <= 1'b0;
+      addr_q   <= 64'd0;
+      wdata_q  <= 64'd0;
+      wstrb_q  <= 8'd0;
+      we_q     <= 1'b0;
       ga_q    <= 32'd0;
       gb_q    <= 32'd0;
     end else begin
@@ -109,11 +115,19 @@ module rv64_l2arb (
         owner_q <= 1'b1;
         busy_q  <= 1'b1;
         last_q  <= 1'b1;
+        addr_q  <= a_req_addr;
+        we_q    <= a_req_we;
+        wstrb_q <= a_req_wstrb;
+        wdata_q <= a_req_wdata;
         ga_q    <= ga_q + 32'd1;
       end else if (take_b) begin
         owner_q <= 1'b0;
         busy_q  <= 1'b1;
         last_q  <= 1'b0;
+        addr_q  <= b_req_addr;
+        we_q    <= b_req_we;
+        wstrb_q <= b_req_wstrb;
+        wdata_q <= b_req_wdata;
         gb_q    <= gb_q + 32'd1;
       end
       // the request is issued once, when the L2 takes it
