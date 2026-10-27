@@ -296,12 +296,35 @@ exists; it is untested here.
 Stimulus model. It is now **parsed, lowered and solved** by Satya v0.25.0
 (thejas235689/satya, prebuilt x86_64 release, SHA-256 verified):
 
+The model now covers **every numeric testcase**, not one action:
+
 ```
-satya check pss/rv64_numeric.pss   -> OK, parsed and lowered (2 enums, 2 components, 7 actions)
-satya solve pss/rv64_numeric.pss --action posit_op   -> solved
-satya gen   pss/rv64_numeric.pss --backend uvm --action posit_op
-                                   -> 64 lines of UVM sequence, pss/generated/posit_op_seq.sv
+satya check pss/rv64_numeric.pss  -> OK, parsed and lowered
+satya solve pss/rv64_numeric.pss --action test --seed {1,2,3}
+                                  -> 43 steps, 0 warnings, identical across seeds
+satya gen   ... --backend uvm     -> 992 lines  pss/generated/numeric_sequences.sv
+satya gen   ... --backend json    -> 809 lines
+satya gen   ... --backend trace   -> 140 lines
 ```
+
+Coverage is split by what the solver can represent, and the split is documented
+in the model itself:
+
+* **Randomised** -- quire, posit and residue, over *ranges* (any bit pattern is a
+  legal encoding at that width, so a range is the right sweep).
+* **Directed** -- fixed-Q, logarithmic and binary32, one pinned boundary case per
+  action (the positive rail, exact cancellation, inf, qNaN, zero, the log rail),
+  because a wide operand *domain* exhausts the solver's memory.
+
+Running it also forced two more workarounds, both now documented in the model:
+
+* **`op` and `fmt` are pinned with equality, never a range.** Enum range
+  constraints are not enforced, so `op in [PADD..PDIV]` solved to `op=2` and left
+  the operation free -- the model would have tested nothing in particular while
+  looking like it did.
+* **Operands are drawn from ranges, not value lists.** A set returns its first
+  element on every seed (`x in [64, 127, 16384]` gives 64 every time), so a list
+  is not randomisation at all.
 
 So the model is a real, tool-accepted PSS model and the PSS -> UVM flow is
 demonstrated end to end, not merely written down.
@@ -329,7 +352,12 @@ defects in this repository.
    domains; 1.2 GB is above this sandbox's 1.5 GB address-space cap, so the run
    cannot complete here regardless.
 
-4. **The UVM backend emits PSS enum names as bare SystemVerilog identifiers**:
+4. **Set membership always returns the first element.** `rand int x; constraint
+   x in [0x40, 0x7F, 0x4000, 0x7FFF];` gives `x=64` on seeds 1-5. A *range*
+   randomises correctly, so the model uses ranges throughout. Reproducer:
+   `tests/repro/bug5_set_membership.pss`.
+
+5. **The UVM backend emits PSS enum names as bare SystemVerilog identifiers**:
    `op inside {[PADD:PDIV]};` in `pss/generated/posit_op_seq.sv`. That will not
    compile as SV unless a matching enum is declared, so the generated sequence is
    a starting point rather than drop-in code. **UVM now covers them.** `rv64_numeric_test` runs a numeric program through the
