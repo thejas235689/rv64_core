@@ -128,6 +128,18 @@ package rv64_pkg;
 
   // --------------------------------------------------------------------- CSRs
   localparam logic [11:0] CSR_MSTATUS    = 12'h300;
+  // ---- supervisor CSRs -----------------------------------------------------
+  localparam logic [11:0] CSR_SSTATUS    = 12'h100;
+  localparam logic [11:0] CSR_SIE        = 12'h104;
+  localparam logic [11:0] CSR_STVEC      = 12'h105;
+  localparam logic [11:0] CSR_SSCRATCH   = 12'h140;
+  localparam logic [11:0] CSR_SEPC       = 12'h141;
+  localparam logic [11:0] CSR_SCAUSE     = 12'h142;
+  localparam logic [11:0] CSR_STVAL      = 12'h143;
+  localparam logic [11:0] CSR_SIP        = 12'h144;
+  localparam logic [11:0] CSR_SATP       = 12'h180;
+  localparam logic [11:0] CSR_MEDELEG    = 12'h302;
+  localparam logic [11:0] CSR_MIDELEG    = 12'h303;
   localparam logic [11:0] CSR_MISA       = 12'h301;
   localparam logic [11:0] CSR_MIE        = 12'h304;
   localparam logic [11:0] CSR_MTVEC      = 12'h305;
@@ -188,6 +200,7 @@ package rv64_pkg;
     logic        is_jal;
     logic        is_jalr;
     logic        is_mret;
+    logic        is_sret;
     logic        is_wfi;
     logic        is_ecall;
     logic        is_ebreak;
@@ -206,6 +219,7 @@ package rv64_pkg;
     c = '0;
     c.alu_op   = ALU_ADD;
     c.imm_sel  = IMM_NONE;
+    c.is_sret  = 1'b0;
     c.a_sel    = A_RS1;
     c.b_sel    = B_RS2;
     c.wb_sel   = WB_ALU;

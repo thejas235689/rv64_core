@@ -36,7 +36,7 @@ to a private repository as-is.
 | Branch prediction | Gshare + bimodal BHT with a tournament chooser, BTB, 8-entry return-address stack, and a loop-count predictor for counted-loop exits |
 | Memory ops | Byte/halfword/word/doubleword loads and stores, sign/zero extension, byte strobes, misalignment traps |
 | Protection | 8 PMP entries, OFF/TOR/NA4/NAPOT matching, whole-access checks, M-mode lock semantics (unit-tested) |
-| System control | Machine CSRs, synchronous exceptions, illegal-instruction traps, `mret`, `wfi` |
+| System control | Machine CSRs, synchronous exceptions, illegal-instruction traps, `mret`, `wfi`; M/S/U privilege modes with `medeleg`/`mideleg` delegation and `sret` |
 | Interrupts | Software, timer and external interrupt inputs; four-source PLIC-lite with claim/complete (`rtl/rv64_plic_lite.sv`) |
 | Debug | External halt/resume, single-step, EBREAK debug entry, GPR read port |
 | Watchpoints | Memory-address comparator with hit reporting (not a precise debug entry) |
@@ -46,8 +46,8 @@ to a private repository as-is.
 | AI accelerator | INT8 4x4x4 matrix multiply-accumulate, INT32 accumulation, one cycle per product (`rtl/rv64_aiacc.sv`, CSR window `0x7E8`) |
 | Observability | Retirement PC/instruction, GPR writeback, trap cause/PC, interrupt flag, privilege, debug event, counters |
 
-**Not in this core:** instruction/data caches, out-of-order backend, S/U modes,
-Sv39, RVV, XRV512, and the research blocks (DNA, neuromorphic, photonic,
+**Not in this core:** instruction/data caches, out-of-order backend, Sv39, RVV,
+XRV512, and the research blocks (DNA, neuromorphic, photonic,
 interconnect), plus the platform pieces. The custom numeric ABI, Xcetask, QISA
 and the AI accelerator are implemented. `docs/ROADMAP.md` maps the full target
 feature list against what exists here, sizes what remains, and states which items

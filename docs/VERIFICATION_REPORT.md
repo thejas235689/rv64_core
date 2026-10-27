@@ -420,6 +420,48 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### S/U privilege modes
+
+The core was M-mode only, with `priv_o` hardwired to `2'b11` and PMP told it was
+always in M. It now has a real privilege state machine.
+
+Implemented: the 2-bit privilege register (M/S/U) reset into M; the S-mode CSR
+set (`sstatus`, `sie`, `stvec`, `sscratch`, `sepc`, `scause`, `stval`, `sip`);
+`mstatus` SPP/SPIE/SUM/MXR alongside MPP/MPIE/MIE; `medeleg`/`mideleg` trap
+delegation; `sret`; CSR privilege checking from the address bits [9:8]; PMP now
+sees the real privilege instead of a constant; and a delegated trap vectors
+through `stvec` rather than `mtvec`.
+
+**18 checks, 0 mismatches** in `tb/tb_privilege.sv`: reset into M, M CSRs readable
+at M, `mret` into S, an M-mode CSR correctly illegal at S while an S CSR is legal,
+a delegated trap writing `sepc`/`scause` and staying in S, `sret` returning to S
+with SPP=1 and to U with SPP=0, an undelegated trap from U entering M with MPP
+recording U, and an interrupt delegated by `mideleg`.
+
+The core regression stayed at **25/25** throughout, which is the point: M-mode
+behaviour had to be bit-identical after the change.
+
+Three defects, and one is a lesson about patching:
+
+* **`csr_valid` lost its driver.** The privilege check was supposed to become
+  `csr_valid = csr_impl && csr_perm_ok`, but the patch that added that line did
+  not match the file, so the output had no driver at all and floated at 0. Every
+  CSR access became an illegal-CSR trap: six core tests failed, two of them by
+  jumping to address 0. A `grep -c csr_valid` would have found it in one second;
+  the test run found it in one minute.
+* **A patch matched three times and corrupted the file.** Adding the reset values
+  matched `mstatus_mpp_q <= 2'b11` in the reset block, the trap branch and the
+  mret branch, duplicating fifteen lines of reset logic into both branches and
+  leaving the real transitions unwritten. The module still elaborated cleanly.
+* **My testbench wrote `medeleg` from S-mode**, which the new privilege check
+  correctly rejected -- the RTL was right and the test was wrong. Delegation has
+  to be configured in M before dropping to S.
+
+**Not implemented, and stated so:** `satp` reads as zero (no Sv39), `MPRV` is not
+honoured, `sstatus.SUM`/`MXR` are stored but not enforced in the LSU, and
+`sie`/`sip` are mirrors of the M-mode pending bits rather than an independent S
+interrupt file. Those belong with Sv39 and the cache work.
+
 ### Loop predictor
 
 The branch predictor was a 256-entry bimodal + gshare tournament with a choice

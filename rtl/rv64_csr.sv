@@ -26,6 +26,11 @@ module rv64_csr (
   input  logic [63:0] trap_pc,
   input  logic [63:0] trap_tval,
   input  logic        mret_valid,
+  input  logic        sret_valid,
+  // current privilege, so the trap and CSR-permission logic can see it
+  output logic [1:0]  priv_o,
+  output logic        trap_to_s_o,     // this trap is delegated to S-mode
+  output logic [63:0] stvec_o,
   output logic [63:0] mtvec_o,
   output logic [63:0] mepc_o,
 
@@ -61,14 +66,28 @@ module rv64_csr (
   logic [63:0] pmpaddr_q [0:7];
   logic [63:0] mcycle_q, minstret_q;
 
+  // ---- supervisor state ----------------------------------------------------
+  logic [1:0]  priv_q;                 // 3 = M, 1 = S, 0 = U
+  logic        sstatus_sie_q, sstatus_spie_q, sstatus_spp_q;
+  logic        mstatus_sum_q, mstatus_mxr_q;
+  logic [63:0] stvec_q, sepc_q, scause_q, stval_q, sscratch_q;
+  logic [63:0] medeleg_q, mideleg_q;
+  logic [2:0]  sie_q;                  // SSIE, STIE, SEIE
+
+  // A CSR's privilege level is encoded in address bits [9:8]: 11 = M, 01 = S,
+  // 00 = U. Access is legal when the current privilege is at least that.
+  wire [1:0] csr_priv_lvl = csr_addr[9:8];
+  wire       csr_perm_ok  = (csr_priv_lvl <= priv_q);
+
   logic [2:0]  irq_in;
 
   assign irq_in = {irq_ext, irq_timer, irq_soft};
 
   // ---- read path ------------------------------------------------------------
+  logic csr_impl;
   always_comb begin
     csr_rdata = 64'd0;
-    csr_valid = 1'b1;
+    csr_impl  = 1'b1;
     unique case (csr_addr)
       CSR_MSTATUS:    csr_rdata = {51'd0, mstatus_mpp_q, 3'd0, mstatus_mpie_q, 3'd0, mstatus_mie_q, 3'd0};
       CSR_MISA:       csr_rdata = {2'b10, 49'd0, 1'b1, 3'd0, 1'b1, 8'd0};  // RV64IM
@@ -90,15 +109,34 @@ module rv64_csr (
       CSR_MARCHID:    csr_rdata = 64'h5256_3634;   // "RV64"
       CSR_MIMPID:     csr_rdata = 64'h0000_0001;
       CSR_MHARTID:    csr_rdata = 64'd0;
+      // ---- supervisor ----
+      CSR_SSTATUS:    csr_rdata = {50'd0, mstatus_sum_q, mstatus_mxr_q, 8'd0,
+                                   sstatus_spp_q, 3'd0, sstatus_spie_q, 3'd0,
+                                   sstatus_sie_q, 3'd0};
+      CSR_SIE:        csr_rdata = {52'd0, sie_q[2], 3'd0, sie_q[1], 3'd0, sie_q[0], 3'd0};
+      CSR_STVEC:      csr_rdata = stvec_q;
+      CSR_SSCRATCH:   csr_rdata = sscratch_q;
+      CSR_SEPC:       csr_rdata = sepc_q;
+      CSR_SCAUSE:     csr_rdata = scause_q;
+      CSR_STVAL:      csr_rdata = stval_q;
+      CSR_SIP:        csr_rdata = {52'd0, mip_q[2], 3'd0, mip_q[1], 3'd0, mip_q[0], 3'd0};
+      CSR_SATP:       csr_rdata = 64'd0;          // no translation yet
+      CSR_MEDELEG:    csr_rdata = medeleg_q;
+      CSR_MIDELEG:    csr_rdata = mideleg_q;
       default: begin
         if (csr_addr >= CSR_PMPADDR0 && csr_addr <= (CSR_PMPADDR0 + 12'd7)) begin
           csr_rdata = pmpaddr_q[csr_addr[2:0]];
         end else begin
-          csr_valid = 1'b0;
+          csr_impl  = 1'b0;
           csr_rdata = 64'd0;
         end
       end
     endcase
+    // An implemented CSR is still illegal at too low a privilege: reading an
+    // M-mode CSR from S or U must trap, and the core uses csr_valid for exactly
+    // that. This assignment is the only driver of csr_valid -- without it the
+    // output floats at 0 and every CSR access becomes an illegal-CSR trap.
+    csr_valid = csr_impl && csr_perm_ok;
   end
 
   // ---- write value ----------------------------------------------------------
@@ -119,6 +157,17 @@ module rv64_csr (
                          ((csr_op == CSR_RS) && (csr_wdata != 64'd0)) ||
                          ((csr_op == CSR_RC) && (csr_wdata != 64'd0)));
 
+  // ---- trap delegation ------------------------------------------------------
+  // Exception causes are delegated by medeleg, interrupts by mideleg, indexed by
+  // the low four cause bits. A trap is never delegated away from M-mode.
+  logic        trap_delegated;
+  logic [3:0]  cause_idx;
+  assign cause_idx      = trap_cause[3:0];
+  assign trap_delegated = trap_cause[63] ? mideleg_q[cause_idx] : medeleg_q[cause_idx];
+  assign trap_to_s_o    = trap_valid && trap_delegated && (priv_q != 2'b11);
+  assign priv_o         = priv_q;
+  assign stvec_o        = stvec_q;
+
   // ---- interrupt aggregation ------------------------------------------------
   logic [2:0] irq_enabled;
   assign irq_enabled = mie_q & mip_q;
@@ -131,6 +180,20 @@ module rv64_csr (
       mstatus_mie_q  <= 1'b0;
       mstatus_mpie_q <= 1'b0;
       mstatus_mpp_q  <= 2'b11;
+      priv_q         <= 2'b11;      // reset into M-mode
+      sstatus_sie_q  <= 1'b0;
+      sstatus_spie_q <= 1'b0;
+      sstatus_spp_q  <= 1'b0;
+      mstatus_sum_q  <= 1'b0;
+      mstatus_mxr_q  <= 1'b0;
+      stvec_q        <= 64'd0;
+      sepc_q         <= 64'd0;
+      scause_q       <= 64'd0;
+      stval_q        <= 64'd0;
+      sscratch_q     <= 64'd0;
+      medeleg_q      <= 64'd0;
+      mideleg_q      <= 64'd0;
+      sie_q          <= 3'd0;
       mtvec_q        <= 64'd0;
       mepc_q         <= 64'd0;
       mcause_q       <= 64'd0;
@@ -154,25 +217,59 @@ module rv64_csr (
       mip_q <= irq_in;
 
       // ---- trap entry has priority over any CSR instruction in EX ----------
-      if (trap_valid) begin
+      // A trap delegated to S-mode writes S state and leaves M state alone;
+      // anything else enters M and records where it came from in MPP.
+      if (trap_valid && trap_to_s_o) begin
+        sepc_q         <= trap_pc;
+        scause_q       <= trap_cause;
+        stval_q        <= trap_tval;
+        sstatus_spie_q <= sstatus_sie_q;
+        sstatus_sie_q  <= 1'b0;
+        sstatus_spp_q  <= (priv_q == 2'b01);
+        priv_q         <= 2'b01;
+      end else if (trap_valid) begin
         mstatus_mpie_q <= mstatus_mie_q;
         mstatus_mie_q  <= 1'b0;
-        mstatus_mpp_q  <= 2'b11;         // only M-mode is implemented
+        mstatus_mpp_q  <= priv_q;
         mepc_q         <= trap_pc;
         mcause_q       <= trap_cause;
         mtval_q        <= trap_tval;
+        priv_q         <= 2'b11;
       end else if (mret_valid) begin
         mstatus_mie_q  <= mstatus_mpie_q;
         mstatus_mpie_q <= 1'b1;
-        mstatus_mpp_q  <= 2'b11;
+        priv_q         <= mstatus_mpp_q;
+        mstatus_mpp_q  <= 2'b00;
+      end else if (sret_valid) begin
+        sstatus_sie_q  <= sstatus_spie_q;
+        sstatus_spie_q <= 1'b1;
+        priv_q         <= sstatus_spp_q ? 2'b01 : 2'b00;
+        sstatus_spp_q  <= 1'b0;
       end else if (csr_do_write) begin
         unique case (csr_addr)
           CSR_MSTATUS: begin
             mstatus_mie_q  <= csr_wval[3];
             mstatus_mpie_q <= csr_wval[7];
             mstatus_mpp_q  <= csr_wval[12:11];
+            mstatus_sum_q  <= csr_wval[18];
+            mstatus_mxr_q  <= csr_wval[19];
           end
           CSR_MIE:        mie_q        <= {csr_wval[11], csr_wval[7], csr_wval[3]};
+          CSR_MEDELEG:    medeleg_q    <= csr_wval & 64'hFFFF_FFFF_FFFF_B3FF;
+          CSR_MIDELEG:    mideleg_q    <= csr_wval & 64'h0000_0000_0000_0AAA;
+          CSR_SSTATUS: begin
+            sstatus_sie_q  <= csr_wval[1];
+            sstatus_spie_q <= csr_wval[5];
+            sstatus_spp_q  <= csr_wval[8];
+            mstatus_sum_q  <= csr_wval[18];
+            mstatus_mxr_q  <= csr_wval[19];
+          end
+          CSR_SIE:        sie_q        <= {csr_wval[9], csr_wval[5], csr_wval[1]};
+          CSR_STVEC:      stvec_q      <= {csr_wval[63:2], 2'b00};
+          CSR_SSCRATCH:   sscratch_q   <= csr_wval;
+          CSR_SEPC:       sepc_q       <= {csr_wval[63:2], 2'b00};
+          CSR_SCAUSE:     scause_q     <= csr_wval;
+          CSR_STVAL:      stval_q      <= csr_wval;
           CSR_MTVEC:      mtvec_q      <= {csr_wval[63:2], 2'b00};   // direct mode only
           CSR_MCOUNTEREN: mcounteren_q <= csr_wval;
           CSR_MSCRATCH:   mscratch_q   <= csr_wval;

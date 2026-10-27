@@ -35,7 +35,7 @@ exists; **absent** = not in this repository.
 | Feature | Status | Note |
 | --- | --- | --- |
 | Out-of-order backend (rename, free list, issue queue, PRF, ROB) | **absent** | would be a separate backend behind the same ISA contract |
-| Supervisor/user modes | **absent** | M-mode only; `mstatus.MPP` is hardwired to 11 |
+| Supervisor/user modes | **done** | M/S/U privilege register, S CSRs, medeleg/mideleg delegation, mret/sret, CSR privilege checks, PMP sees the real privilege. Not implemented: MPRV, SUM/MXR enforcement, independent sie/sip |
 | Sv39 translation (TLB, PTW, faults, ASID) | **absent** | |
 | Atomics (LR/SC, AMOs) | **done** | `lr.w/d`, `sc.w/d` and all nine AMOs at both widths; reservation register in the LSU, read-modify-write state machine, decoded on opcode 0x2F; verified by a 23-check unit testbench and 26 in-CPU retirements against the ISS |
 | Fetch-fault metadata | **done** | instruction access fault with faulting address |
@@ -65,9 +65,10 @@ fabrics: **all absent** from this repository.
 
 ## Sizing what remains
 
-Seven of the fifteen pending items are implemented and verified (atomics, QISA,
-AI accelerator, CLINT, UART, DMI transport, predecode/fusion hints). An eighth is
-partial: the loop predictor is done, tagged history and the perceptron are not. The
+Eight of the fifteen pending items are implemented and verified (atomics, QISA,
+AI accelerator, CLINT, UART, DMI transport, predecode/fusion hints, S/U privilege
+modes). One is partial: the loop predictor is done, tagged history and the
+perceptron are not. The
 rest are ordered here by dependency and by how much of the existing core they
 disturb. Estimates are for the RTL alone, at this repository's verification
 standard -- a block is not done here until it has a self-checking test.
@@ -78,7 +79,7 @@ standard -- a block is not done here until it has a self-checking test.
 
 
 
-| S/U privilege modes | medium-large | privilege checks across CSR, trap, PMP and LSU |
+
 | Sv39 (TLB, PTW, faults) | large | full MMU plus page-table walker and fault plumbing |
 | L1 I-cache, L1 D-cache | large | each is a cache with fill, eviction, RRIP and coherence hooks |
 | L2/L3, adaptive cache, AMCCE | large | depends on the L1s |

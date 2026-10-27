@@ -388,6 +388,7 @@ module rv64_decoder (
             12'h000: ctrl.is_ecall  = 1'b1;
             12'h001: ctrl.is_ebreak = 1'b1;
             12'h302: ctrl.is_mret   = 1'b1;
+            12'h102: ctrl.is_sret   = 1'b1;
             12'h105: ctrl.is_wfi    = 1'b1;
             default: ctrl.illegal   = 1'b1;
           endcase

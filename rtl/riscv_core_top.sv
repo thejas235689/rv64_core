@@ -130,6 +130,7 @@ module riscv_core_top #(
   logic [1:0]  ex_mem_atomic_kind;
   logic [4:0]  ex_mem_amo_op;
   logic        ex_mem_is_mret;
+  logic        ex_mem_is_sret;
   logic        ex_mem_is_wfi;
   logic        ex_mem_is_ebreak;
   logic        ex_mem_is_ecall;
@@ -153,7 +154,10 @@ module riscv_core_top #(
   // ===========================================================================
   logic        trap_taken, trap_to_csr, mem_trap;
   logic        irq_take, wfi_irq_take, fetch_fault_take;
-  logic        redirect_ex, ebreak_commit, mret_commit, ex_advance;
+  logic        redirect_ex, ebreak_commit, mret_commit, sret_commit, ex_advance;
+  logic [1:0]  cur_priv;
+  logic        trap_to_s;
+  logic [63:0] csr_stvec;
   logic [63:0] redirect_pc_ex;
   logic [63:0] trap_cause_sel, trap_pc_sel, trap_tval_sel;
   logic [63:0] irq_cause;
@@ -651,6 +655,10 @@ module riscv_core_top #(
     .trap_pc        (trap_pc_sel),
     .trap_tval      (trap_tval_sel),
     .mret_valid     (mret_commit),
+    .sret_valid     (sret_commit),
+    .priv_o         (cur_priv),
+    .trap_to_s_o    (trap_to_s),
+    .stvec_o        (csr_stvec),
     .mtvec_o        (csr_mtvec),
     .mepc_o         (csr_mepc),
     .irq_soft       (irq_soft),
@@ -675,7 +683,7 @@ module riscv_core_top #(
     .addr     (f_req_addr),
     .is_write (1'b0),
     .is_exec  (1'b1),
-    .priv_m   (1'b1),
+    .priv_m   (cur_priv == 2'b11),
     .allow    (fetch_pmp_ok)
   );
 
@@ -685,7 +693,7 @@ module riscv_core_top #(
     .addr     (ex_mem_addr),
     .is_write (ex_mem_is_store),
     .is_exec  (1'b0),
-    .priv_m   (1'b1),
+    .priv_m   (cur_priv == 2'b11),
     .allow    (d_pmp_ok)
   );
 
@@ -757,6 +765,7 @@ module riscv_core_top #(
   end
 
   assign mret_commit = ex_mem_v && ex_mem_is_mret && !mem_trap;
+  assign sret_commit = ex_mem_v && ex_mem_is_sret && !mem_trap;
   assign ebreak_commit = ex_mem_v && ex_mem_is_ebreak && EBREAK_ENTERS_DEBUG && !mem_trap;
 
   assign bpu_upd_valid = ex_advance && id_ex_v && !trap_taken &&
@@ -805,7 +814,8 @@ module riscv_core_top #(
     f_redirect    = 1'b1;
     f_redirect_pc = pc_f + 64'd4;
     if (trap_taken) begin
-      f_redirect_pc = csr_mtvec;
+      // a trap delegated to S-mode vectors through stvec, not mtvec
+      f_redirect_pc = trap_to_s ? csr_stvec : csr_mtvec;
     end else if (mret_commit) begin
       f_redirect_pc = csr_mepc;
     end else if (redirect_ex) begin
@@ -918,6 +928,7 @@ module riscv_core_top #(
       ex_mem_amo_op     <= 5'd0;
       ex_mem_is_store   <= 1'b0;
       ex_mem_is_mret    <= 1'b0;
+      ex_mem_is_sret    <= 1'b0;
       ex_mem_is_wfi     <= 1'b0;
       ex_mem_is_ebreak  <= 1'b0;
       ex_mem_is_ecall   <= 1'b0;
@@ -954,6 +965,7 @@ module riscv_core_top #(
       ex_mem_atomic_kind<= id_ex_ctrl.atomic_kind;
       ex_mem_amo_op     <= id_ex_ctrl.amo_op;
       ex_mem_is_mret    <= id_ex_ctrl.is_mret;
+      ex_mem_is_sret    <= id_ex_ctrl.is_sret;
       ex_mem_is_wfi     <= id_ex_ctrl.is_wfi;
       ex_mem_is_ebreak  <= id_ex_ctrl.is_ebreak;
       ex_mem_is_ecall   <= id_ex_ctrl.is_ecall;
@@ -1045,7 +1057,7 @@ module riscv_core_top #(
   assign trap_cause_o  = trap_cause_sel;
   assign trap_pc_o     = trap_pc_sel;
   assign irq_taken_o   = irq_take || wfi_irq_take;
-  assign priv_o        = 2'b11;
+  assign priv_o        = cur_priv;
   assign debug_event_o = (ebreak_commit && EBREAK_ENTERS_DEBUG) || (halt_pending_q && !id_ex_v && !ex_mem_v && !lsu_busy);
   assign dbg_halted    = halted_q;
   assign mcycle_o      = csr_mcycle;
