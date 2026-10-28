@@ -54,10 +54,12 @@ module rv64_l2arb (
   input  logic        rsp_error,
 
   // ---- acceptance ----------------------------------------------------------
-  // A requester must not assume its request was taken: with a transaction in
-  // flight the arbiter cannot start another, and a cache that assumed otherwise
-  // dropped the request and hung.
-  output logic        req_ready,
+  // PER-PORT ready. A single shared "idle" ready is wrong: when two requesters
+  // ask at once only one is granted, but both would see ready, abandon their
+  // request and wait forever for a response that was never going to come. Each
+  // port is told whether IT will be taken this cycle.
+  output logic        a_req_ready,
+  output logic        b_req_ready,
 
   // ---- observability -------------------------------------------------------
   output logic        grant_a,        // current owner (1 = A)
@@ -77,7 +79,8 @@ module rv64_l2arb (
   logic       last_q;         // who was granted last, for round-robin
   logic [31:0] ga_q, gb_q;
 
-  assign req_ready = !busy_q;
+  assign a_req_ready = !busy_q && (!b_req_valid || !last_q);
+  assign b_req_ready = !busy_q && (!a_req_valid ||  last_q);
   assign grant_a = owner_q;
   assign busy    = busy_q;
 

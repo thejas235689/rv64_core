@@ -16,6 +16,7 @@ module tb_l2arb;
   logic [7:0]  b_req_wstrb;
 
   logic        req_valid, req_we, rsp_valid, rsp_error, grant_a, busy;
+  logic        a_req_ready, b_req_ready;
   logic [63:0] req_addr, req_wdata, rsp_rdata;
   logic [7:0]  req_wstrb;
   logic [31:0] ga_count, gb_count;
@@ -31,6 +32,7 @@ module tb_l2arb;
     .req_valid(req_valid), .req_addr(req_addr), .req_we(req_we),
     .req_wstrb(req_wstrb), .req_wdata(req_wdata),
     .rsp_valid(rsp_valid), .rsp_rdata(rsp_rdata), .rsp_error(rsp_error),
+    .a_req_ready(a_req_ready), .b_req_ready(b_req_ready),
     .grant_a(grant_a), .busy(busy),
     .grant_a_count(ga_count), .grant_b_count(gb_count)
   );
@@ -153,6 +155,30 @@ module tb_l2arb;
     end
     chk("both ports get grants under contention", (a_wins > 0 && b_wins > 0) ? 1 : 0, 1);
     chk("grants are evenly shared", a_wins, b_wins);
+
+    // ---- 4. simultaneous requests: exactly one port sees ready ----------
+    // This is the case that broke the vector port: a shared "idle" ready told
+    // BOTH ports their request was taken, so the loser abandoned it and waited
+    // for a response that never came.
+    // wait for the arbiter to be idle before testing contention
+    begin
+      int g; g = 0;
+      while (busy && g < 60) begin @(posedge clk); #1; g++; end
+    end
+    a_req_valid = 1; a_req_addr = 64'h3000;
+    b_req_valid = 1; b_req_addr = 64'h4000;
+    // sample COMBINATIONALLY, before the grant edge makes the arbiter busy
+    #1;
+    chk("exactly one port is ready under contention",
+        a_req_ready + b_req_ready, 1);
+    chk_bit("A is ready XOR B is ready", a_req_ready ^ b_req_ready, 1'b1);
+    @(posedge clk); #1;
+    a_req_valid = 0; b_req_valid = 0;
+    begin
+      int g; g = 0;
+      while (busy && g < 40) begin @(posedge clk); #1; g++; end
+    end
+    @(posedge clk); #1;
 
     $display("tb_l2arb: %0d checks, %0d mismatches (A grants=%0d B grants=%0d)",
              checks, errors, ga_count, gb_count);
