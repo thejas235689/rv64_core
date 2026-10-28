@@ -1871,3 +1871,47 @@ async def test_l2_in_path(dut):
     assert (l3_hits + l3_miss) > 0, "the L3 saw no traffic -- it is not behind the L2"
 
 
+
+
+@cocotb.test()
+async def test_vle_in_core(dut):
+    """vle8.v must actually read memory from a running program.
+
+    The vector unit has its own memory port, so this exercises the whole path: the
+    program stores bytes, drives the control window with real CSR instructions,
+    issues the load, and the test asserts the vector register. The ISS does not
+    model RVV, so the result is read from the DUT rather than from a GPR -- putting
+    it in a GPR would break the trace comparison.
+    """
+    L = []
+    L.extend(li64(5, 0x2400))
+    for i in range(8):
+        L.extend(li64(6, 0x11 + i))
+        L.append("sb x6, %d(x5)" % i)
+    L.extend(li64(5, 8));      L.append(csrw(0x781, 5))   # vl = 8
+    L.extend(li64(5, 0));      L.append(csrw(0x782, 5))   # vtype = e8
+    L.extend(li64(5, 0x2400)); L.append(csrw(0x78A, 5))   # element base
+    L.extend(li64(5, 0x02000087)); L.append(csrw(0x784, 5))  # vle8.v v1, (base)
+    L.extend(li64(5, 1));      L.append(csrw(0x780, 5))   # start
+    # the element walk runs after the start write returns, so give it time before
+    # the program ends -- an ecall immediately after start cuts it off mid-walk
+    L.extend(li64(7, 40))
+    L.append("addi x7, x7, -1")
+    L.append("bne x7, x0, -4")
+    L.append("ecall")
+
+    words, _ = assemble("\n".join(L))
+    iss = ISS()
+    iss.load_words(0, words)
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=40000, stop_on_ecall=True)
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "vle-in-core")
+
+    got = int(dut.u_core.u_rvv.u_vrf.regs[1].value)
+    dut._log.info(f"vle8.v in core: v1 = {got:#018x}")
+    assert got == 0x1817161514131211, f"vle8.v should have loaded 0x11..0x18, got {got:#x}"

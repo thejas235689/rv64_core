@@ -650,12 +650,22 @@ interfere with the cache path.
 
 All seven spot checks pass with the port in place (alu, memory, dcache_hits,
 l2_in_path, rvv_in_core, atomic, sv39_identity) and lint is clean, so the interface
-change is safe. **`vle`/`vse` are still not usable end-to-end**: an in-core test
-that drives the control window and issues `vle8.v` shows the CSR writes arriving and
-the walk starting and issuing its request with `ready=1`, but the request reads X at
-the testbench boundary and no response comes back. That is a connection or
-initialisation fault in the new port, not the arbitration problem, and it is the one
-thing left to fix.
+change is safe. **`vle`/`vse` now work end-to-end.** `test_vle_in_core` runs a program that stores
+eight bytes, drives the control window with real CSR instructions, issues `vle8.v`,
+and the test asserts the vector register: **v1 = 0x1817161514131211**, the eight
+bytes 0x11..0x18 in the right order.
+
+Getting there needed two fixes, and both had been hiding behind the arbitration
+work:
+
+* the vector unit's memory port was **still tied off** in the core -- an earlier
+  edit had matched a different comment and silently done nothing, so the port read X
+  at the testbench boundary while the unit itself looked correct;
+* the element walk **runs asynchronously** after the `start` write returns, so a
+  program that issues `ecall` immediately after `start` cuts the walk off mid-way.
+  The test now waits, which is also how real software has to behave -- the unit needs
+  a busy bit in its control window for a program to poll rather than spin a fixed
+  count. That is not implemented.
 
 **Not implemented, in the header:** no fractional LMUL, no round-to-odd, no
 fixed-point or floating-point operations, no `vslide1up`/`vslide1down`, no permutes,

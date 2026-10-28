@@ -559,11 +559,12 @@ module riscv_core_top #(
     .csr_we     (csr_we && rvv_csr_sel),
     .csr_addr   (id_ex_ctrl.csr_addr[3:0] - CSR_RVV_BASE[3:0]),
     .csr_wdata  (csr_wdata), .csr_rdata(rvv_csr_rdata),
-    // the vector unit's element memory port is not yet connected to the data bus:
-    // wiring it needs the same arbitration the L2 integration is still missing
-    .mem_req_valid(), .mem_req_addr(), .mem_req_we(), .mem_req_wstrb(),
-    .mem_req_wdata(), .mem_req_ready(1'b1), .mem_rsp_valid(1'b0),
-    .mem_rsp_rdata(64'd0), .mem_rsp_error(1'b0),
+    // the element memory port is the core's dedicated vector port
+    .mem_req_valid(v_req_valid), .mem_req_addr(v_req_addr),
+    .mem_req_we(v_req_we), .mem_req_wstrb(v_req_wstrb),
+    .mem_req_wdata(v_req_wdata), .mem_req_ready(v_req_ready),
+    .mem_rsp_valid(v_rsp_valid), .mem_rsp_rdata(v_rsp_data),
+    .mem_rsp_error(v_rsp_error),
     .insn_count (), .illegal()
   );
 
