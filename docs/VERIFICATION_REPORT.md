@@ -618,11 +618,23 @@ arithmetic and logical shifts differ, so a small shift cannot tell `vnsrl` from
 `vnsra`. A shift of 15 on the source element 0x8000 does: logically `1`, and
 arithmetically `-1` = `0xFF`.
 
-**Not implemented, in the header:** no fractional LMUL, no `vnclip` rounding or
-saturation, no fixed-point or floating-point operations, no slides or permutes, no
-`vstart` resumption (it is read but execution always starts at 0), and no chaining.
-Grouping is not applied to the reductions, widening or narrowing ops, which remain
-single-register. The
+**`vnclip` is implemented**, completing the narrowing family. It sign-extends the
+2*SEW source, applies the rounding mode from `vxrm` (0 round-to-nearest-up, 1
+round-to-nearest-even, 2 truncate), shifts, and saturates to the signed SEW range,
+setting the sticky `vxsat` flag when it clamps.
+
+**33 checks, 0 mismatches under xezim and Icarus.** The tests that matter are the
+rounding discriminator (`3 >> 1` gives 2 with rnu and 1 with truncation on the same
+input) and both saturation directions (`0x7FFF` clamps to 127, `0x8000` to -128,
+with `vxsat` set).
+
+One bug: the source was not sign-extended from its 2*SEW width before clipping, so
+`0x8000` read as +32768 and saturated to the *positive* bound instead of -128.
+
+**Not implemented, in the header:** no fractional LMUL, no round-to-odd, no
+fixed-point or floating-point operations, no slides or permutes, no `vstart`
+resumption (it is read but execution always starts at 0), and no chaining. Grouping
+is not applied to the reductions, widening or narrowing ops. The
 element memory port is **not connected to the data bus in the core** -- it is tied
 off, because wiring it needs the same arbitration the L2 integration is missing.
 

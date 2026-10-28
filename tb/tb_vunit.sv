@@ -296,8 +296,35 @@ module tb_vunit;
     get_vreg(5'd31, d);
     chk("vnsra sign-extends", d, 64'h0000_0000_0000_00FF);
 
-    // ---- 21. instruction counter ----------------------------------------
-    chk("insn counter", insn_count, 32'd29);
+    // ---- 21. vnclip rounding: rnu vs truncate on the same input --------
+    // source element 0 is 3; >>1 rounds to 2 (rnu) or truncates to 1 (rdn).
+    set_vreg(5'd29, 64'h0000_0000_0000_0003);
+    wr(4'd11, 64'd0);                            // vxrm = 0, round to nearest up
+    issue(enc_vi(6'b101110, 5'd29, 5'd1, 5'd5)); // vnclip.wi by 1
+    get_vreg(5'd5, d);
+    chk("vnclip rounds up", d, 64'h0000_0000_0000_0002);
+    wr(4'd11, 64'd2);                            // vxrm = 2, truncate
+    issue(enc_vi(6'b101110, 5'd29, 5'd1, 5'd5));
+    get_vreg(5'd5, d);
+    chk("vnclip truncates", d, 64'h0000_0000_0000_0001);
+
+    // ---- 22. vnclip saturation ----------------------------------------
+    // 0x7FFF does not fit in a signed byte, so it clamps to 127 and sets vxsat.
+    wr(4'd5, 64'd0);                             // clear vxsat
+    set_vreg(5'd29, 64'h0000_0000_0000_7FFF);
+    issue(enc_vi(6'b101110, 5'd29, 5'd0, 5'd5)); // vnclip.wi by 0
+    get_vreg(5'd5, d);
+    chk("vnclip saturates positive", d, 64'h0000_0000_0000_007F);
+    rd(4'd5, d);
+    chk("vnclip sets vxsat", d, 64'd1);
+    // and the negative side
+    set_vreg(5'd29, 64'h0000_0000_0000_8000);
+    issue(enc_vi(6'b101110, 5'd29, 5'd0, 5'd5));
+    get_vreg(5'd5, d);
+    chk("vnclip saturates negative", d, 64'h0000_0000_0000_0080);
+
+    // ---- 23. instruction counter ----------------------------------------
+    chk("insn counter", insn_count, 32'd33);
 
     $display("tb_vunit: %0d checks, %0d mismatches (insns=%0d)", checks, errors, insn_count);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

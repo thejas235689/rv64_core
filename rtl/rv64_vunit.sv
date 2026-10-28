@@ -63,6 +63,8 @@ module rv64_vunit (
   logic [7:0]  vtype_q;      // {vma, vta, vsew[2:0], vlmul[1:0]}
   logic [6:0]  vstart_q;
   logic        vxsat_q;
+  logic [1:0]  vxrm_q;        // rounding mode for vnclip
+  logic        sat_hit;       // vnclip saturated this operation
 
   logic [31:0] insn_count_q;
   logic        illegal_q;
@@ -203,7 +205,8 @@ module rv64_vunit (
   // ---- narrowing -----------------------------------------------------------
   // A narrowing op reads 2*SEW-wide source elements and writes SEW-wide results,
   // so one register holds TWICE as many results as the source holds elements.
-  wire narrow = (funct6 == 6'b101100) || (funct6 == 6'b101101);
+  wire narrow = (funct6 == 6'b101100) || (funct6 == 6'b101101) ||
+                (funct6 == 6'b101110);      // vnclip
 
   // extract result-element i of vs2 at 2*SEW width
   function automatic logic [63:0] get_elem_w(input logic [63:0] v, input logic [2:0] i,
@@ -372,8 +375,9 @@ module rv64_vunit (
   always_comb begin
     logic [63:0] a_e, b_e, r_e;
     logic [6:0]  w;
-    acc   = rdata3;                 // start from vd so the tail keeps its value
-    vd_we = 1'b0;
+    acc     = rdata3;               // start from vd so the tail keeps its value
+    vd_we   = 1'b0;
+    sat_hit = 1'b0;
     vd_addr = grp_d;          // advances with the register group
     if (load_we_q) begin
       // a completed vector load writes the accumulated register
@@ -422,7 +426,41 @@ module rv64_vunit (
         for (int i = 0; i < 8; i++) begin
           if ((i < vl_q) && (i < nelem_w) && (vm || mask_bit(i[2:0], sew_sel))) begin
             nx = get_elem_w(rdata2, i[2:0], sew_sel);
-            if (funct6 == 6'b101101) begin           // vnsra: sign-extend first
+            if (funct6 == 6'b101110) begin           // vnclip: round and saturate
+              logic signed [63:0] sv, shifted, lo, hi, rounded;
+              logic [63:0] half, sx;
+              // the source is SIGNED at 2*SEW: extend from that width before
+              // clipping, or 0x8000 reads as +32768 instead of -32768
+              unique case (sew_sel)
+                2'd0: sx = {{48{nx[15]}}, nx[15:0]};
+                2'd1: sx = {{32{nx[31]}}, nx[31:0]};
+                default: sx = nx;
+              endcase
+              sv   = sx;
+              half = (nsh == 64'd0) ? 64'd0 : (64'd1 << (nsh[5:0] - 6'd1));
+              // vxrm: 0 round-to-nearest-up, 1 round-to-nearest-even, 2 truncate
+              unique case (vxrm_q)
+                2'd0:    rounded = sv + half;
+                2'd1:    rounded = sv + half - 64'd1 + ((sv >> nsh[5:0]) & 64'd1);
+                default: rounded = sv;
+              endcase
+              shifted = (nsh == 64'd0) ? rounded : (rounded >>> nsh[5:0]);
+              unique case (sew_sel)
+                2'd0: begin lo = -64'sd128;               hi = 64'sd127;          end
+                2'd1: begin lo = -64'sd32768;             hi = 64'sd32767;        end
+                2'd2: begin lo = -64'sd2147483648;        hi = 64'sd2147483647;   end
+                default: begin lo = {1'b1, 63'd0};        hi = {1'b0, {63{1'b1}}}; end
+              endcase
+              if (shifted > hi) begin
+                nr = hi[63:0];
+                sat_hit = 1'b1;
+              end else if (shifted < lo) begin
+                nr = lo[63:0];
+                sat_hit = 1'b1;
+              end else begin
+                nr = shifted[63:0];
+              end
+            end else if (funct6 == 6'b101101) begin   // vnsra: sign-extend first
               unique case (sew_sel)
                 2'd0: nx = {{48{nx[15]}}, nx[15:0]};
                 2'd1: nx = {{32{nx[31]}}, nx[31:0]};
@@ -504,6 +542,7 @@ module rv64_vunit (
       4'd3: csr_rdata = {57'd0, vstart_q};
       4'd4: csr_rdata = {32'd0, insn_q};
       4'd5: csr_rdata = {63'd0, vxsat_q};
+      4'd11: csr_rdata = {62'd0, vxrm_q};
       4'd6: csr_rdata = cdata;
       4'd9: csr_rdata = xval_q;
       4'd10: csr_rdata = base_q;
@@ -520,6 +559,7 @@ module rv64_vunit (
       vtype_q     <= 8'd0;
       vstart_q    <= 7'd0;
       vxsat_q     <= 1'b0;
+      vxrm_q      <= 2'd0;
       insn_q      <= 32'd0;
       go_q        <= 1'b0;
       xval_q      <= 64'd0;
@@ -597,6 +637,8 @@ module rv64_vunit (
       else
         load_we_q <= 1'b0;
 
+      if (sat_hit) vxsat_q <= 1'b1;
+
       if (csr_we) begin
         unique case (csr_addr)
           4'd0: if (csr_wdata[0]) begin
@@ -619,6 +661,7 @@ module rv64_vunit (
           4'd3: vstart_q <= csr_wdata[6:0];
           4'd4: insn_q  <= csr_wdata[31:0];
           4'd5: vxsat_q <= csr_wdata[0];
+          4'd11: vxrm_q <= csr_wdata[1:0];
           4'd6: caddr_q <= csr_wdata[4:0];
           4'd9: xval_q  <= csr_wdata;
           4'd10: base_q <= csr_wdata;
