@@ -257,8 +257,28 @@ module tb_vunit;
     get_vreg(5'd27, d);
     chk("vwaddu.vv zero-extends", d, 64'h0002_0002_0002_0100);
 
-    // ---- 18. instruction counter ----------------------------------------
-    chk("insn counter", insn_count, 32'd23);
+    // ---- 18. vlmul=2: an op spanning two registers ---------------------
+    issue(enc_vset(11'h001));            // vsew=0, vlmul=1 -> LMUL 2
+    rd(4'd1, d);
+    chk("vsetvli LMUL=2 sets vl to 16", d, 16);
+    // v4..v5 and v6..v7 hold 1..16
+    set_vreg(5'd4, 64'h0807_0605_0403_0201);
+    set_vreg(5'd5, 64'h100f_0e0d_0c0b_0a09);
+    set_vreg(5'd6, 64'h0807_0605_0403_0201);
+    set_vreg(5'd7, 64'h100f_0e0d_0c0b_0a09);
+    issue(enc_vv(6'b000000, 5'd4, 5'd6, 5'd8));   // v8..v9 = v4..v5 + v6..v7
+    begin
+      int g; g = 0;
+      while (u_v.grp_walk_q && g < 40) begin @(posedge clk); #1; g++; end
+      @(posedge clk); #1;
+    end
+    get_vreg(5'd8, d);
+    chk("vlmul=2 low register", d, 64'h100E_0C0A_0806_0402);
+    get_vreg(5'd9, d);
+    chk("vlmul=2 high register", d, 64'h201E_1C1A_1816_1412);
+
+    // ---- 19. instruction counter ----------------------------------------
+    chk("insn counter", insn_count, 32'd25);
 
     $display("tb_vunit: %0d checks, %0d mismatches (insns=%0d)", checks, errors, insn_count);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

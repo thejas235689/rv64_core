@@ -74,6 +74,12 @@ module rv64_vunit (
   logic        is_store_q;
   logic [63:0] ld_acc;
   logic        load_we_q;       // this write comes from a load, not an ALU op
+  // ---- register grouping (vlmul) ------------------------------------------
+  // With LMUL=k a group v..v+k-1 holds k*VLEN bits. The unit processes one
+  // register per cycle, so a grouped op takes k cycles; element indices used for
+  // masking are GLOBAL across the group, not per register.
+  logic [3:0]  grp_q;           // which register of the group is being computed
+  logic        grp_walk_q, grp_commit_q;
 
 
   // ---- the instruction being executed -------------------------------------
@@ -90,6 +96,10 @@ module rv64_vunit (
 
   wire        vm       = insn_q[25];    // 1 = unmasked
   wire [1:0]  sew_sel = vtype_q[4:3];
+  // vlmul: 0=1, 1=2, 2=4, 3=8. Fractional values (5,6,7) are treated as 1.
+  wire [2:0]  lmul_sel = vtype_q[2:0];
+  wire [3:0]  lmul     = (lmul_sel == 3'd1) ? 4'd2 : (lmul_sel == 3'd2) ? 4'd4
+                       : (lmul_sel == 3'd3) ? 4'd8 : 4'd1;
   wire [6:0]  nelem   = (sew_sel == 2'd0) ? 7'd8 : (sew_sel == 2'd1) ? 7'd4
                       : (sew_sel == 2'd2) ? 7'd2 : 7'd1;
 
@@ -100,12 +110,18 @@ module rv64_vunit (
   logic [4:0]  vd_addr;
   logic [4:0]  caddr_q;
 
+  // during a grouped op the addresses advance with the group index
+  wire [4:0] grp_a = vs2_i + {1'b0, grp_q};
+  wire [4:0] grp_b = vs1_i + {1'b0, grp_q};
+  wire [4:0] grp_d = vd_i  + {1'b0, grp_q};
+
   rv64_vregfile u_vrf (
     .clk(clk), .rst_n(rst_n),
-    .raddr1(vs2_i), .rdata1(rdata2),      // vs2 is the first source
-    .raddr2(vs1_i), .rdata2(rdata1),      // vs1 is the second source
-    .raddr3(vd_i),  .rdata3(rdata3),      // destination, for the tail
-    .rdata_mask(rdata_mask),              // v0
+    .raddr1(grp_a), .rdata1(rdata2),      // vs2 is the first source
+    .raddr2(grp_b), .rdata2(rdata1),      // vs1 is the second source
+    .raddr3(grp_d), .rdata3(rdata3),      // destination, for the tail
+    .raddr_mask({1'b0, grp_q}),           // v0 advances with the group
+    .rdata_mask(rdata_mask),
     .waddr(vd_addr), .wdata(vd_new), .we(vd_we),
     .caddr(caddr_q), .cdata(cdata),
     .cwdata(csr_wdata), .cwe(csr_we && (csr_addr == 4'd7))
@@ -330,7 +346,7 @@ module rv64_vunit (
     logic [6:0]  w;
     acc   = rdata3;                 // start from vd so the tail keeps its value
     vd_we = 1'b0;
-    vd_addr = vd_i;
+    vd_addr = grp_d;          // advances with the register group
     if (load_we_q) begin
       // a completed vector load writes the accumulated register
       vd_we = 1'b1;
@@ -338,7 +354,7 @@ module rv64_vunit (
     end
     w = (sew_sel == 2'd0) ? 7'd8 : (sew_sel == 2'd1) ? 7'd16
       : (sew_sel == 2'd2) ? 7'd32 : 7'd64;
-    if (go_q && (opcode == 7'b1010111) && !load_we_q) begin
+    if ((go_q || grp_commit_q) && (opcode == 7'b1010111) && !load_we_q) begin
       if (funct3 == 3'b111) begin
         // vsetvli / vsetivli: vl and vtype come from the instruction
         acc   = 64'd0;
@@ -459,11 +475,35 @@ module rv64_vunit (
       is_store_q  <= 1'b0;
       ld_acc      <= 64'd0;
       load_we_q   <= 1'b0;
+      grp_q       <= 4'd0;
+      grp_walk_q  <= 1'b0;
+      grp_commit_q<= 1'b0;
       caddr_q     <= 5'd0;
       insn_count_q <= 32'd0;
       illegal_q   <= 1'b0;
     end else begin
       go_q <= 1'b0;
+
+      // ---- register-group walk (vlmul) ----------------------------------
+      // A grouped op takes `lmul` cycles, one register per cycle. Element indices
+      // for masking are per register because v0 is grouped too.
+      if (grp_walk_q) begin
+        if (grp_q + 4'd1 >= lmul) begin
+          grp_walk_q   <= 1'b0;
+          grp_commit_q <= 1'b1;
+          grp_q        <= 4'd0;
+        end else begin
+          grp_q        <= grp_q + 4'd1;
+          grp_commit_q <= 1'b1;
+        end
+      end else begin
+        grp_commit_q <= 1'b0;
+        if (go_q && (opcode == 7'b1010111) && (funct3 != 3'b111) &&
+            (funct3 != 3'b010) && !widen && (lmul > 4'd1)) begin
+          grp_q      <= 4'd0;
+          grp_walk_q <= 1'b1;
+        end
+      end
 
       // ---- vector load / store walk -------------------------------------
       if (go_q && ((opcode == 7'b0000111) || (opcode == 7'b0100111)) && !el_walk_q) begin
@@ -509,9 +549,13 @@ module rv64_vunit (
                   // vsetvli/vsetivli take effect here
                   if (opcode_of(insn_q) == 7'b1010111 && insn_q[14:12] == 3'b111) begin
                     vtype_q <= insn_q[27:20];
-                    vl_q    <= (insn_q[25:23] == 3'd0) ? 7'd8 :
-                               (insn_q[25:23] == 3'd1) ? 7'd4 :
-                               (insn_q[25:23] == 3'd2) ? 7'd2 : 7'd1;
+                    // VLMAX = LMUL * VLEN/SEW
+                    vl_q    <= (((insn_q[25:23] == 3'd0) ? 7'd8 :
+                                 (insn_q[25:23] == 3'd1) ? 7'd4 :
+                                 (insn_q[25:23] == 3'd2) ? 7'd2 : 7'd1)
+                                * ((insn_q[22:20] == 3'd1) ? 7'd2 :
+                                   (insn_q[22:20] == 3'd2) ? 7'd4 :
+                                   (insn_q[22:20] == 3'd3) ? 7'd8 : 7'd1));
                   end
                 end
           4'd1: vl_q    <= csr_wdata[6:0];

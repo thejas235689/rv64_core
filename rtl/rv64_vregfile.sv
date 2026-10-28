@@ -24,7 +24,8 @@ module rv64_vregfile (
   output logic [63:0] rdata2,
   input  logic [4:0]  raddr3,      // the destination, read so a tail is preserved
   output logic [63:0] rdata3,
-  output logic [63:0] rdata_mask,  // v0, the mask register
+  input  logic [4:0]  raddr_mask,  // v0 + group offset
+  output logic [63:0] rdata_mask,
 
   input  logic [4:0]  waddr,
   input  logic [63:0] wdata,
@@ -43,7 +44,7 @@ module rv64_vregfile (
   assign rdata1 = regs[raddr1];
   assign rdata2 = regs[raddr2];
   assign rdata3 = regs[raddr3];
-  assign rdata_mask = regs[5'd0];   // v0 is the mask by convention
+  assign rdata_mask = regs[raddr_mask];   // v0 + the group offset
   assign cdata  = regs[caddr];
 
   always_ff @(posedge clk or negedge rst_n) begin

@@ -596,9 +596,22 @@ reductions, `vle`/`vse`, and widening -- with a signed-vs-unsigned discriminator
 that the two variants must disagree on: `0xFF + 1` gives `0x0000` through
 `vwadd.vv` and `0x0100` through `vwaddu.vv`.
 
-**Not implemented, in the header:** no `vlmul` grouping, no narrowing, no
+**`vlmul` register grouping is implemented** for the arithmetic/bitwise ops.
+`vtype[2:0]` selects LMUL 1/2/4/8, `vsetvli` computes `VLMAX = LMUL * VLEN/SEW`, and
+a grouped op takes `LMUL` cycles -- one register per cycle -- with the register file
+addresses and the `v0` mask address both advancing with the group. Fractional LMUL
+(1/2, 1/4, 1/8) is treated as 1.
+
+**25 checks, 0 mismatches under xezim and Icarus**, now including an LMUL=2 add
+across two registers: `v8..v9 = v4..v5 + v6..v7` with sixteen elements, checked in
+both registers. Core tests re-run individually (rvv_in_core, alu, memory,
+l2_in_path) and lint is clean.
+
+**Not implemented, in the header:** no fractional LMUL, no narrowing, no
 fixed-point or floating-point operations, no slides or permutes, no `vstart`
-resumption (it is read but execution always starts at 0), and no chaining. The
+resumption (it is read but execution always starts at 0), and no chaining. Grouping
+is also not applied to the reductions or the widening ops, which remain single-
+register. The
 element memory port is **not connected to the data bus in the core** -- it is tied
 off, because wiring it needs the same arbitration the L2 integration is missing.
 
