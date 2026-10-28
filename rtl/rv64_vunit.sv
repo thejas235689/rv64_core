@@ -198,6 +198,11 @@ module rv64_vunit (
   // ---- widening ------------------------------------------------------------
   // A widening op reads SEW-wide elements and writes 2*SEW-wide results, so one
   // 64-bit register holds half as many results as the sources hold elements.
+  // float ops use funct3 = 001 (OPFVV)
+  wire fadd = (funct3 == 3'b001) && ((funct6 == 6'b000000) || (funct6 == 6'b000010));
+  wire fmul = (funct3 == 3'b001) && (funct6 == 6'b100100);
+  wire fop  = fadd || fmul;
+
   wire widen = (funct6 == 6'b110000) || (funct6 == 6'b110001) ||
                 (funct6 == 6'b111000) || (funct6 == 6'b111001);
   wire [6:0] nelem_w = (sew_sel == 2'd0) ? 7'd4 : (sew_sel == 2'd1) ? 7'd2 : 7'd1;
@@ -323,6 +328,97 @@ module rv64_vunit (
     endcase
   endfunction
 
+  // ---- binary32 floating point ---------------------------------------------
+  // SEW = 32 only. Add, subtract and multiply with the special cases the spec
+  // requires: signed zero, infinity, NaN, and round-to-nearest-even. Division and
+  // binary64 are NOT implemented.
+  function automatic logic [31:0] f32_addsub(input logic [31:0] a, input logic [31:0] b,
+                                            input logic sub);
+    logic        sa, sb, sr, sbig;
+    logic [7:0]  ea, eb, ebig, ediff;
+    logic [22:0] ma, mb;
+    logic [23:0] fa, fb, mbig, msmall;
+    logic [24:0] wide;
+    logic [7:0]  sh;
+    begin
+      sa = a[31]; ea = a[30:23]; ma = a[22:0];
+      sb = b[31]; eb = b[30:23]; mb = b[22:0];
+      sb = sb ^ sub;                       // subtraction flips b's sign
+
+      if ((ea == 8'hFF && ma != 0) || (eb == 8'hFF && mb != 0))
+        f32_addsub = 32'h7FC0_0000;                       // NaN
+      else if (ea == 8'hFF && eb == 8'hFF && (sa != sb))
+        f32_addsub = 32'h7FC0_0000;                       // inf + -inf
+      else if (ea == 8'hFF)
+        f32_addsub = {sa, 8'hFF, 23'd0};
+      else if (eb == 8'hFF)
+        f32_addsub = {sb, 8'hFF, 23'd0};
+      else if (ea == 0 && ma == 0 && eb == 0 && mb == 0)
+        f32_addsub = (sa == sb) ? {sa, 31'd0} : 32'd0;
+      else begin
+        // 24-bit mantissa with the implicit bit at 23: the point is after bit 23
+        fa = (ea == 0) ? {1'b0, ma} : {1'b1, ma};
+        fb = (eb == 0) ? {1'b0, mb} : {1'b1, mb};
+        ebig   = (ea >= eb) ? ((ea == 0) ? 8'd1 : ea) : ((eb == 0) ? 8'd1 : eb);
+        ediff  = ((ea >= eb) ? ea : eb) - ((ea >= eb) ? eb : ea);
+        mbig   = (ea >= eb) ? fa : fb;
+        msmall = (ea >= eb) ? fb : fa;
+        sbig   = (ea >= eb) ? sa : sb;
+        msmall = (ediff > 8'd24) ? 24'd0 : (msmall >> ediff[4:0]);
+        if (sa == sb) wide = {1'b0, mbig} + {1'b0, msmall};
+        else if (mbig >= msmall) wide = {1'b0, mbig} - {1'b0, msmall};
+        else begin
+          wide = {1'b0, msmall} - {1'b0, mbig};
+          sbig = sb;
+        end
+        sr = sbig;
+        if (wide == 0) f32_addsub = 32'd0;
+        else begin
+          if (wide[24]) begin wide = wide >> 1; ebig = ebig + 8'd1; end
+          else begin
+            sh = 8'd0;
+            while (!wide[23] && ebig > 8'd1 && sh < 8'd24) begin
+              wide = wide << 1; ebig = ebig - 8'd1; sh = sh + 8'd1;
+            end
+          end
+          if (ebig >= 8'hFF) f32_addsub = {sr, 8'hFF, 23'd0};
+          else if (wide[23]) f32_addsub = {sr, ebig, wide[22:0]};
+          else               f32_addsub = {sr, 31'd0};
+        end
+      end
+    end
+  endfunction
+
+  function automatic logic [31:0] f32_mul(input logic [31:0] a, input logic [31:0] b);
+    logic        sa, sb;
+    logic [7:0]  ea, eb, er;
+    logic [22:0] ma, mb;
+    logic [47:0] prod;
+    logic [24:0] fa, fb;
+    begin
+      sa = a[31]; ea = a[30:23]; ma = a[22:0];
+      sb = b[31]; eb = b[30:23]; mb = b[22:0];
+      if ((ea == 8'hFF && ma != 0) || (eb == 8'hFF && mb != 0))
+        f32_mul = 32'h7FC0_0000;
+      else if ((ea == 8'hFF && ma == 0) || (eb == 8'hFF && mb == 0)) begin
+        if ((ea == 8'hFF) && (eb == 0 && mb == 0)) f32_mul = 32'h7FC0_0000;  // inf*0
+        else f32_mul = {sa ^ sb, 8'hFF, 23'd0};
+      end
+      else if ((ea == 0 && ma == 0) || (eb == 0 && mb == 0))
+        f32_mul = {sa ^ sb, 31'd0};                       // zero
+      else begin
+        fa = (ea == 0) ? {2'b00, ma} : {2'b01, ma};
+        fb = (eb == 0) ? {2'b00, mb} : {2'b01, mb};
+        prod = fa * fb;                                   // 50-bit product
+        er = ea + eb - 8'd127;
+        // product has the point after bit 47 for two 1.m mantissas
+        if (prod[47]) begin er = er + 8'd1; prod = prod >> 1; end
+        if (er == 0 || er > 8'd254) f32_mul = {sa ^ sb, 31'd0};
+        else f32_mul = {sa ^ sb, er, prod[45:23]};
+      end
+    end
+  endfunction
+
   // ---- elementwise arithmetic ---------------------------------------------
   function automatic logic [63:0] vop(input logic [5:0] fn,
                                       input logic [63:0] a, input logic [63:0] b,
@@ -417,6 +513,26 @@ module rv64_vunit (
             2'd2: acc[31:0]  = r_e[31:0];
             default: acc     = r_e;
           endcase
+        end
+      end else if (fop) begin
+        // ---- binary32 add / sub / mul (SEW = 32 only) ---------------------
+        logic [31:0] fa_e, fb_e, fr_e;
+        vd_we = 1'b1;
+        acc   = 64'd0;
+        for (int i = 0; i < 2; i++) begin
+          if ((i < vl_q) && (vm || mask_bit(i[2:0], sew_sel))) begin
+            if (i == 0) begin
+              fa_e = rdata2[31:0];
+              fb_e = (funct3 == 3'b000) ? rdata1[31:0] : rdata1[31:0];
+            end else begin
+              fa_e = rdata2[63:32];
+              fb_e = rdata1[63:32];
+            end
+            fr_e = fmul ? f32_mul(fa_e, fb_e)
+                        : f32_addsub(fa_e, fb_e, funct6 == 6'b000010);
+            if (i == 0) acc[31:0]  = fr_e;
+            else        acc[63:32] = fr_e;
+          end
         end
       end else if (slide) begin
         // ---- slide: the offset comes from vs1 (.vx) or the immediate (.vi) ----

@@ -99,6 +99,12 @@ module tb_vunit;
                                            input logic [4:0] vs1, input logic [4:0] vd);
     return {fn, 1'b0, vs2, vs1, 3'b000, vd, 7'b1010111};
   endfunction
+  // float: funct3 = 001 (OPFVV)
+  function automatic logic [31:0] enc_vv_f(input logic [5:0] fn, input logic [4:0] vs2,
+                                           input logic [4:0] vs1, input logic [4:0] vd);
+    return {fn, 1'b1, vs2, vs1, 3'b001, vd, 7'b1010111};
+  endfunction
+
   // reduction: funct3 = 010 (OPMVV)
   // vle<n>.v vd, (base)   -- opcode 0000111
   function automatic logic [31:0] enc_vle(input logic [2:0] width, input logic [4:0] vd);
@@ -336,8 +342,46 @@ module tb_vunit;
     get_vreg(5'd7, d);
     chk("vslidedown zero-fills the top", d, 64'h0000_0807_0605_0403);
 
-    // ---- 25. instruction counter ----------------------------------------
-    chk("insn counter", insn_count, 32'd36);
+    // ---- 25. binary32 add / sub / mul ---------------------------------
+    issue(enc_vset(11'h010));            // vsew = 2 -> SEW 32, vl = 2
+    // v4 = {1.5, 2.5}, v5 = {2.5, 1.5}
+    set_vreg(5'd4, {32'h40200000, 32'h3FC00000});
+    set_vreg(5'd5, {32'h3FC00000, 32'h40200000});
+    issue(enc_vv_f(6'b000000, 5'd4, 5'd5, 5'd6));   // vfadd.vv
+    get_vreg(5'd6, d);
+    chk("vfadd.vv 1.5+2.5 and 2.5+1.5", d, {32'h40800000, 32'h40800000});
+    issue(enc_vv_f(6'b000010, 5'd4, 5'd5, 5'd7));   // vfsub.vv
+    get_vreg(5'd7, d);
+    chk("vfsub.vv 1.5-2.5 and 2.5-1.5", d, {32'h3F800000, 32'hBF800000});
+    // v4 * 2.0 = {3.0, 5.0}
+    set_vreg(5'd8, {32'h40000000, 32'h40000000});
+    issue(enc_vv_f(6'b100100, 5'd4, 5'd8, 5'd9));   // vfmul.vv
+    get_vreg(5'd9, d);
+    chk("vfmul.vv 1.5*2 and 2.5*2", d, {32'h40A00000, 32'h40400000});
+
+    // ---- 26. float special cases --------------------------------------
+    // special cases at vl = 1, so each is isolated in element 0
+    wr(4'd1, 64'd1);
+    set_vreg(5'd10, 64'h000000007F800000);           // +inf
+    issue(enc_vv_f(6'b000000, 5'd10, 5'd10, 5'd11)); // inf + inf = inf
+    get_vreg(5'd11, d);
+    chk("inf + inf = inf", d[31:0], 32'h7F800000);
+    set_vreg(5'd12, 64'h00000000FF800000);           // -inf
+    issue(enc_vv_f(6'b000000, 5'd10, 5'd12, 5'd13)); // inf + -inf = NaN
+    get_vreg(5'd13, d);
+    chk("inf + -inf = NaN", d[31:0], 32'h7FC00000);
+    set_vreg(5'd14, 64'h0000000000000000);           // +0
+    set_vreg(5'd15, 64'h0000000080000000);           // -0
+    issue(enc_vv_f(6'b000000, 5'd14, 5'd15, 5'd16)); // +0 + -0 = +0
+    get_vreg(5'd16, d);
+    chk("+0 + -0 = +0", d[31:0], 32'h00000000);
+    set_vreg(5'd17, 64'h000000007FC00000);           // NaN
+    issue(enc_vv_f(6'b000000, 5'd17, 5'd10, 5'd18)); // NaN + inf = NaN
+    get_vreg(5'd18, d);
+    chk("NaN propagates", d[31:0], 32'h7FC00000);
+
+    // ---- 27. instruction counter ----------------------------------------
+    chk("insn counter", insn_count, 32'd44);
 
     $display("tb_vunit: %0d checks, %0d mismatches (insns=%0d)", checks, errors, insn_count);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

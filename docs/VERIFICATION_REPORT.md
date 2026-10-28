@@ -670,10 +670,27 @@ work:
   cannot match a polling read of a custom status bit; the architectural effect it
   checks is the vector register.
 
-**Not implemented, in the header:** no fractional LMUL, no round-to-odd, no
-fixed-point or floating-point operations, no `vslide1up`/`vslide1down`, no permutes,
-no `vstart` resumption (it is read but execution always starts at 0), and no
-chaining. Grouping is not applied to the reductions, widening, narrowing or slides. The
+**binary32 floating point is implemented** for `vfadd`, `vfsub` and `vfmul` at
+SEW = 32 (funct3 = 001, OPFVV). Special cases handled: signed zero, infinity, NaN
+(quiet, propagating), and `inf + -inf` producing NaN.
+
+**42 checks, 0 mismatches under xezim and Icarus.** The float tests cover 1.5+2.5,
+2.5-1.5 (both signs), 1.5*2 and 2.5*2, then the special cases isolated at `vl = 1`:
+`inf + inf`, `inf + -inf`, `+0 + -0` and NaN propagation.
+
+Three bugs, and the first two were the same mistake twice:
+
+* the implicit mantissa bit was placed at bit 23 in a 25-bit field, so every result
+  came out a factor of two wrong; my first fix used `{2'b01, ma}`, which puts it at
+  bit 23 again. The working version uses a 24-bit mantissa with the point after
+  bit 23 and normalises to that position.
+* `sh[7:0]` indexed an `int` for the shift count, which the tools here do not
+  evaluate reliably; it is a vector now.
+
+**Not implemented, in the header:** no `vfdiv`, no binary64, no fused multiply-add,
+no rounding-mode control, no fractional LMUL, no round-to-odd, no
+`vslide1up`/`vslide1down`, no permutes, no `vstart` resumption, and no chaining.
+Grouping is not applied to the reductions, widening, narrowing, slides or float. The
 element memory port is **not connected to the data bus in the core** -- it is tied
 off, because wiring it needs the same arbitration the L2 integration is missing.
 
