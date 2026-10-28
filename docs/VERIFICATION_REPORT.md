@@ -420,6 +420,32 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### SHA-256 (verified) and HMAC (NOT verified)
+
+`rtl/rv64_sha256.sv`: a streaming SHA-256 compression core, one round per cycle,
+64 cycles per block, with the chaining state carried between blocks.
+
+**3 checks, 0 mismatches under both xezim and Icarus**, against published digests:
+`SHA-256("abc")` = `ba7816bf...f20015ad` and `SHA-256("")` = `e3b0c442...7852b855`,
+plus a chaining check that a second block without `init` continues the state. Known
+answers matter here: a hash graded against its own output proves nothing.
+
+Two real bugs on the way: the final `h[4]` update used `d` instead of the new `e`
+(`d + t1`), and -- the one that mattered -- the message schedule wrote `w[rnd]` and
+read it in the SAME cycle, so every word past 15 was stale. It now computes
+`w[rnd+16]` sixteen rounds ahead.
+
+**`rtl/rv64_hmac.sv` is written but NOT verified.** HMAC-SHA-256 needs four blocks
+(key^ipad, message, key^opad, inner||padding) and it does not yet match RFC 4231 test
+case 1. Two bugs were found and fixed (block 4 used the live digest instead of the
+captured inner one; the padding concatenation was 544 bits instead of 512) and it
+still disagrees with the published MAC, so something else is wrong in the sequencing.
+
+**The boot authenticator still uses FNV-1a, and therefore still detects corruption
+rather than resisting tampering.** Replacing it needs the HMAC wrapper working first.
+SHA-256 alone is not enough: an unkeyed hash can be recomputed by whoever rewrites
+the image, which is exactly the attack FNV already fails to stop.
+
 ### AMCCE -- adaptive cache engine (verified standalone)
 
 `rtl/rv64_amcce.sv`. The term had no definition in the tree, so the module header
