@@ -20,7 +20,10 @@
 // =============================================================================
 `default_nettype none
 
-module rv64_l2cache (
+module rv64_l2cache #(
+  parameter int NSET = 16,
+  parameter int NWAY = 4
+) (
   input  logic        clk,
   input  logic        rst_n,
 
@@ -51,31 +54,39 @@ module rv64_l2cache (
   output logic [31:0] miss_count,
   output logic [31:0] rrip_bump_count
 );
-  localparam int NSET = 16;
-  localparam int NWAY = 4;
+  // Geometry is a parameter so the same verified module serves both levels:
+  //   L2  16 sets x 4 ways = 2 KB
+  //   L3  64 sets x 8 ways = 16 KB
+  // The set index sits above the four beats of a 32-byte line, so the tag starts
+  // at bit (5 + SET_BITS).
   localparam int BEATS = 4;          // 32-byte lines
+  localparam int SET_BITS = (NSET == 128) ? 7 : (NSET == 64) ? 6
+                          : (NSET == 32) ? 5 : 4;
+  localparam int TAG_TOP  = 63;
+  localparam int TAG_LO   = 5 + SET_BITS;
+  localparam int TAG_BITS = TAG_TOP - TAG_LO + 1;
 
-  logic [54:0] tag_q   [0:NSET-1][0:NWAY-1];   // addr[63:9]
+  logic [TAG_BITS-1:0] tag_q [0:NSET-1][0:NWAY-1];
   // flattened to one dimension: a 3-D unpacked array read came back X under
   // xezim while the same code was correct under Icarus
   logic [63:0] data_q  [0:NSET*NWAY*BEATS-1];
   logic        valid_q [0:NSET-1][0:NWAY-1];
   logic [1:0]  rrpv_q  [0:NSET-1][0:NWAY-1];
 
-  wire [3:0] set    = req_addr[8:5];
+  wire [SET_BITS-1:0] set = req_addr[5 +: SET_BITS];
   wire [1:0] beat   = req_addr[4:3];
-  wire [54:0] tag   = req_addr[63:9];
+  wire [TAG_BITS-1:0] tag = req_addr[63:TAG_LO];
 
   // ---- lookup --------------------------------------------------------------
-  logic [1:0] hit_way;
+  logic [$clog2(NWAY)-1:0] hit_way;
   logic       hit;
   always_comb begin
     hit     = 1'b0;
-    hit_way = 2'd0;
+    hit_way = '0;
     for (int w = 0; w < NWAY; w++) begin
       if (!hit && valid_q[set][w] && (tag_q[set][w] == tag)) begin
         hit     = 1'b1;
-        hit_way = w[1:0];
+        hit_way = w[$clog2(NWAY)-1:0];
       end
     end
   end
@@ -85,7 +96,7 @@ module rv64_l2cache (
   logic [1:0] victim;
   logic       need_age;
   always_comb begin
-    victim   = 2'd0;
+    victim   = '0;
     need_age = 1'b0;
     begin
       logic found;
@@ -96,14 +107,14 @@ module rv64_l2cache (
       for (int w = 0; w < NWAY; w++) begin
         if (!found && !valid_q[set][w]) begin
           found  = 1'b1;
-          victim = w[1:0];
+          victim = w[$clog2(NWAY)-1:0];
         end
       end
       if (!found) begin
         for (int w = 0; w < NWAY; w++) begin
           if (!found && (rrpv_q[set][w] == 2'b11)) begin
             found  = 1'b1;
-            victim = w[1:0];
+            victim = w[$clog2(NWAY)-1:0];
           end
         end
       end
@@ -130,7 +141,7 @@ module rv64_l2cache (
   logic [1:0]  fill_beat;
   logic        fill_issued_q;      // one beat outstanding at a time
   logic        fill_err_q;         // ANY beat errored: the line is unusable
-  logic [1:0]  way_q;
+  logic [$clog2(NWAY)-1:0] way_q;
   logic [63:0] rdata_q;
   logic        err_q;
 
@@ -162,7 +173,7 @@ module rv64_l2cache (
       fill_beat  <= 2'd0;
       fill_issued_q <= 1'b0;
       fill_err_q <= 1'b0;
-      way_q      <= 2'd0;
+      way_q      <= '0;
       rdata_q    <= 64'd0;
       err_q      <= 1'b0;
       hit_count  <= 32'd0;
@@ -170,7 +181,7 @@ module rv64_l2cache (
       rrip_bump_count <= 32'd0;
       for (int s = 0; s < NSET; s++)
         for (int w = 0; w < NWAY; w++) begin
-          tag_q[s][w]   <= 55'd0;
+          tag_q[s][w]   <= {TAG_BITS{1'b0}};
           valid_q[s][w] <= 1'b0;
           rrpv_q[s][w]  <= 2'b11;
           for (int b = 0; b < BEATS; b++) data_q[(s*NWAY + w)*BEATS + b] <= 64'd0;
@@ -219,7 +230,7 @@ module rv64_l2cache (
           end else if (mem_rsp_valid) begin
             fill_issued_q <= 1'b0;
             if (mem_rsp_error) fill_err_q <= 1'b1;
-            else data_q[(addr_q[8:5]*NWAY + way_q)*BEATS + fill_beat] <= mem_rsp_rdata;
+            else data_q[(addr_q[5 +: SET_BITS]*NWAY + way_q)*BEATS + fill_beat] <= mem_rsp_rdata;
             if (fill_beat == addr_q[4:3]) rdata_q <= mem_rsp_rdata;
             // the response the requester wants is the beat it asked for, not
             // whichever beat happens to complete the line
@@ -229,9 +240,9 @@ module rv64_l2cache (
               // valid made a later access hit garbage.
               // an error on ANY beat makes the whole line unusable
               if (!mem_rsp_error && !fill_err_q) begin
-                tag_q[addr_q[8:5]][way_q]   <= addr_q[63:9];
-                valid_q[addr_q[8:5]][way_q] <= 1'b1;
-                rrpv_q[addr_q[8:5]][way_q]  <= 2'b11;   // distant on insert
+                tag_q[addr_q[5 +: SET_BITS]][way_q]   <= addr_q[63:TAG_LO];
+                valid_q[addr_q[5 +: SET_BITS]][way_q] <= 1'b1;
+                rrpv_q[addr_q[5 +: SET_BITS]][way_q]  <= 2'b11;   // distant on insert
               end
               err_q   <= mem_rsp_error || fill_err_q;
               lst     <= L_DONE;

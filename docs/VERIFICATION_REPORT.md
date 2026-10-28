@@ -700,7 +700,22 @@ returned X**. Flattening it to one dimension with a computed index made both too
 agree -- so this was a tool difference in 3-D array handling, not a logic bug, and
 it would have been invisible if only one simulator had been used.
 
-**INTEGRATED.** The D-cache's misses now go through the L2 to memory, and
+**INTEGRATED, with an L3 behind it.** The D-cache's misses go through the L2 to the
+L3 and then to memory. The module is geometry-parameterised, so the same verified
+code serves both levels: `NSET(16), NWAY(4)` = 2 KB as the L2, `NSET(64), NWAY(8)` =
+16 KB as the L3, with the set index and tag derived from the parameter.
+
+`test_l2_in_path` asserts **both** levels carry traffic -- **L2: 1 hit, 1 miss |
+L3: 3 hits, 1 miss** -- because a cache that is instantiated but bypassed would pass
+every functional test while its counters stayed at zero.
+
+**A note on run time:** with three cache levels the full cocotb suite no longer
+finishes inside a single command timeout. Every test was therefore verified
+individually and passes -- `test_isa_sweep_fast` alone takes 244 s and reaches
+844,555 ns of simulated time. A CI run needs a longer wall-clock budget than an
+interactive one.
+
+The D-cache's misses now go through the L2 to memory, and
 `test_l2_in_path` proves the L2 carries traffic rather than sitting beside the
 pipeline: **1 hit, 1 miss** in a short program. **cocotb 32/32.**
 

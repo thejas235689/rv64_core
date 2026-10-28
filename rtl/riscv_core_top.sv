@@ -199,17 +199,35 @@ module riscv_core_top #(
   logic [63:0] l2_bus_req_addr, l2_bus_req_wdata, l2_bus_rsp_rdata;
   logic [7:0]  l2_bus_req_wstrb;
   logic [31:0] l2_hits, l2_misses, l2_bumps;
+  // ---- L3: a larger last level behind the L2 ------------------------------
+  logic        l3_req_valid, l3_req_we, l3_rsp_valid, l3_rsp_error, l3_req_ready;
+  logic [63:0] l3_req_addr, l3_req_wdata, l3_rsp_rdata;
+  logic [7:0]  l3_req_wstrb;
+  logic [31:0] l3_hits, l3_misses, l3_bumps;
+
+  rv64_l2cache #(.NSET(64), .NWAY(8)) u_l3 (
+    .clk(clk), .rst_n(rst_n),
+    .req_valid(l3_req_valid), .req_addr(l3_req_addr), .req_we(l3_req_we),
+    .req_wstrb(l3_req_wstrb), .req_wdata(l3_req_wdata), .req_ready(l3_req_ready),
+    .rsp_valid(l3_rsp_valid), .rsp_rdata(l3_rsp_rdata), .rsp_error(l3_rsp_error),
+    .mem_req_valid(l2_bus_req_valid), .mem_req_addr(l2_bus_req_addr),
+    .mem_req_we(l2_bus_req_we), .mem_req_wstrb(l2_bus_req_wstrb),
+    .mem_req_wdata(l2_bus_req_wdata), .mem_req_ready(d_req_ready),
+    .mem_rsp_valid(l2_bus_rsp_valid), .mem_rsp_rdata(l2_bus_rsp_rdata),
+    .mem_rsp_error(l2_bus_rsp_error),
+    .hit_count(l3_hits), .miss_count(l3_misses), .rrip_bump_count(l3_bumps)
+  );
 
   rv64_l2cache u_l2 (
     .clk(clk), .rst_n(rst_n),
     .req_valid(l2_req_valid), .req_addr(l2_req_addr), .req_we(l2_req_we),
     .req_wstrb(l2_req_wstrb), .req_wdata(l2_req_wdata), .req_ready(l2_req_ready),
     .rsp_valid(l2_rsp_valid), .rsp_rdata(l2_rsp_rdata), .rsp_error(l2_rsp_error),
-    .mem_req_valid(l2_bus_req_valid), .mem_req_addr(l2_bus_req_addr),
-    .mem_req_we(l2_bus_req_we), .mem_req_wstrb(l2_bus_req_wstrb),
-    .mem_req_wdata(l2_bus_req_wdata), .mem_req_ready(d_req_ready),
-    .mem_rsp_valid(l2_bus_rsp_valid), .mem_rsp_rdata(l2_bus_rsp_rdata),
-    .mem_rsp_error(l2_bus_rsp_error),
+    .mem_req_valid(l3_req_valid), .mem_req_addr(l3_req_addr),
+    .mem_req_we(l3_req_we), .mem_req_wstrb(l3_req_wstrb),
+    .mem_req_wdata(l3_req_wdata), .mem_req_ready(l3_req_ready),
+    .mem_rsp_valid(l3_rsp_valid), .mem_rsp_rdata(l3_rsp_rdata),
+    .mem_rsp_error(l3_rsp_error),
     .hit_count(l2_hits), .miss_count(l2_misses), .rrip_bump_count(l2_bumps)
   );
   // ---- AMCCE: watch the D-cache and choose its mode -----------------------
