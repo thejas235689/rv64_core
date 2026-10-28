@@ -607,11 +607,22 @@ across two registers: `v8..v9 = v4..v5 + v6..v7` with sixteen elements, checked 
 both registers. Core tests re-run individually (rvv_in_core, alu, memory,
 l2_in_path) and lint is clean.
 
-**Not implemented, in the header:** no fractional LMUL, no narrowing, no
-fixed-point or floating-point operations, no slides or permutes, no `vstart`
-resumption (it is read but execution always starts at 0), and no chaining. Grouping
-is also not applied to the reductions or the widening ops, which remain single-
-register. The
+**Narrowing is implemented.** `vnsrl` and `vnsra` in the `.wi` and `.wv` forms read
+2*SEW-wide source elements and write SEW-wide results, so a register holds twice as
+many results as the source holds elements. The loop is bounded by the SOURCE's
+element count (VLEN/2*SEW), which is what stops it wrapping.
+
+**28 checks, 0 mismatches under xezim and Icarus.** The discriminating test needed
+two attempts to design: narrowing to 8 bits truncates away exactly the bits where
+arithmetic and logical shifts differ, so a small shift cannot tell `vnsrl` from
+`vnsra`. A shift of 15 on the source element 0x8000 does: logically `1`, and
+arithmetically `-1` = `0xFF`.
+
+**Not implemented, in the header:** no fractional LMUL, no `vnclip` rounding or
+saturation, no fixed-point or floating-point operations, no slides or permutes, no
+`vstart` resumption (it is read but execution always starts at 0), and no chaining.
+Grouping is not applied to the reductions, widening or narrowing ops, which remain
+single-register. The
 element memory port is **not connected to the data bus in the core** -- it is tied
 off, because wiring it needs the same arbitration the L2 integration is missing.
 

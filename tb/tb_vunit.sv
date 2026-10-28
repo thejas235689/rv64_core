@@ -277,8 +277,27 @@ module tb_vunit;
     get_vreg(5'd9, d);
     chk("vlmul=2 high register", d, 64'h201E_1C1A_1816_1412);
 
-    // ---- 19. instruction counter ----------------------------------------
-    chk("insn counter", insn_count, 32'd25);
+    // ---- 19. vnsrl.wi at e8: 16-bit sources, 8-bit results --------------
+    issue(enc_vset(11'h000));            // e8, LMUL 1, vl = 8
+    // v4 = 0x0807060504030201 -> source elements 0x0201,0x0403,0x0605,0x0807
+    issue(enc_vi(6'b101100, 5'd4, 5'd1, 5'd28));  // vnsrl.wi by 1
+    get_vreg(5'd28, d);
+    chk("vnsrl.wi by 1", d, 64'h0000_0000_0302_0100);
+
+    // ---- 20. arithmetic vs logical is the discriminator ----------------
+    // Narrowing keeps only the low byte, so a SMALL shift hides the difference
+    // between logical and arithmetic. Source element 0 is 0x8000 (-32768) and the
+    // shift is 15: logically 0x8000>>15 = 1, arithmetically -32768>>15 = -1 = 0xFF.
+    set_vreg(5'd29, 64'h0000_0000_0000_8000);
+    issue(enc_vi(6'b101100, 5'd29, 5'd15, 5'd30)); // vnsrl.wi
+    get_vreg(5'd30, d);
+    chk("vnsrl stays logical", d, 64'h0000_0000_0000_0001);
+    issue(enc_vi(6'b101101, 5'd29, 5'd15, 5'd31)); // vnsra.wi
+    get_vreg(5'd31, d);
+    chk("vnsra sign-extends", d, 64'h0000_0000_0000_00FF);
+
+    // ---- 21. instruction counter ----------------------------------------
+    chk("insn counter", insn_count, 32'd29);
 
     $display("tb_vunit: %0d checks, %0d mismatches (insns=%0d)", checks, errors, insn_count);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

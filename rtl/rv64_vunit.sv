@@ -200,6 +200,34 @@ module rv64_vunit (
                 (funct6 == 6'b111000) || (funct6 == 6'b111001);
   wire [6:0] nelem_w = (sew_sel == 2'd0) ? 7'd4 : (sew_sel == 2'd1) ? 7'd2 : 7'd1;
 
+  // ---- narrowing -----------------------------------------------------------
+  // A narrowing op reads 2*SEW-wide source elements and writes SEW-wide results,
+  // so one register holds TWICE as many results as the source holds elements.
+  wire narrow = (funct6 == 6'b101100) || (funct6 == 6'b101101);
+
+  // extract result-element i of vs2 at 2*SEW width
+  function automatic logic [63:0] get_elem_w(input logic [63:0] v, input logic [2:0] i,
+                                             input logic [1:0] sew);
+    logic [63:0] x;
+    begin
+      x = 64'd0;
+      unique case (sew)
+        2'd0: unique case (i[1:0])                  // source elements are 16 bits
+                2'd0: x = {48'd0, v[15:0]};
+                2'd1: x = {48'd0, v[31:16]};
+                2'd2: x = {48'd0, v[47:32]};
+                default: x = {48'd0, v[63:48]};
+              endcase
+        2'd1: begin                                  // sources are 32 bits
+                if (i[0] == 1'b0) x = {32'd0, v[31:0]};
+                else              x = {32'd0, v[63:32]};
+              end
+        default: x = v;                              // sources are 64 bits
+      endcase
+      get_elem_w = x;
+    end
+  endfunction
+
   // sign- or zero-extend one source element to 64 bits
   function automatic logic [63:0] ext_elem(input logic [63:0] v, input logic [2:0] i,
                                            input logic [1:0] sew, input logic sgn);
@@ -378,6 +406,34 @@ module rv64_vunit (
             2'd2: acc[31:0]  = r_e[31:0];
             default: acc     = r_e;
           endcase
+        end
+      end else if (narrow) begin
+        // ---- narrowing: 2*SEW sources, SEW results ------------------------
+        // The shift comes from vs1 element 0 for .wv, or from the immediate for
+        // .wi. Arithmetic narrowing sign-extends the source before shifting.
+        logic [63:0] nx, nsh, nr;
+        vd_we = 1'b1;
+        acc   = 64'd0;
+        nsh   = (funct3 == 3'b011) ? {{59{insn_q[19]}}, insn_q[19:15]}
+                                   : get_elem(rdata1, 3'd0, sew_sel);
+        // bounded by the SOURCE's element count: a 64-bit register holds only
+        // VLEN/(2*SEW) elements at twice the width, and going past that wrapped
+        // and rewrote the same results
+        for (int i = 0; i < 8; i++) begin
+          if ((i < vl_q) && (i < nelem_w) && (vm || mask_bit(i[2:0], sew_sel))) begin
+            nx = get_elem_w(rdata2, i[2:0], sew_sel);
+            if (funct6 == 6'b101101) begin           // vnsra: sign-extend first
+              unique case (sew_sel)
+                2'd0: nx = {{48{nx[15]}}, nx[15:0]};
+                2'd1: nx = {{32{nx[31]}}, nx[31:0]};
+                default: nx = nx;
+              endcase
+              nr = $signed(nx) >>> nsh[5:0];
+            end else begin
+              nr = nx >> nsh[5:0];                   // vnsrl
+            end
+            acc = set_elem(acc, i[2:0], sew_sel, nr);
+          end
         end
       end else if (widen) begin
         // ---- widening: SEW-wide sources, 2*SEW-wide results -----------------
