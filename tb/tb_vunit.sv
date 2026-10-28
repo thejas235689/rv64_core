@@ -323,8 +323,21 @@ module tb_vunit;
     get_vreg(5'd5, d);
     chk("vnclip saturates negative", d, 64'h0000_0000_0000_0080);
 
-    // ---- 23. instruction counter ----------------------------------------
-    chk("insn counter", insn_count, 32'd33);
+    // ---- 23. vslideup.vi by 2: low elements keep their old value --------
+    issue(enc_vset(11'h000));            // e8, vl = 8
+    // v4 holds bytes 1..8; vd starts at 0xAA so a wrongly-written low element shows
+    set_vreg(5'd6, 64'hAAAA_AAAA_AAAA_AAAA);
+    issue(enc_vi(6'b001110, 5'd4, 5'd2, 5'd6));   // vslideup.vi v6, v4, 2
+    get_vreg(5'd6, d);
+    chk("vslideup preserves the low elements", d, 64'h0605_0403_0201_AAAA);
+
+    // ---- 24. vslidedown.vi by 2: past the end becomes zero --------------
+    issue(enc_vi(6'b001111, 5'd4, 5'd2, 5'd7));   // vslidedown.vi v7, v4, 2
+    get_vreg(5'd7, d);
+    chk("vslidedown zero-fills the top", d, 64'h0000_0807_0605_0403);
+
+    // ---- 25. instruction counter ----------------------------------------
+    chk("insn counter", insn_count, 32'd36);
 
     $display("tb_vunit: %0d checks, %0d mismatches (insns=%0d)", checks, errors, insn_count);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

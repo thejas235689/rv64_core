@@ -205,6 +205,13 @@ module rv64_vunit (
   // ---- narrowing -----------------------------------------------------------
   // A narrowing op reads 2*SEW-wide source elements and writes SEW-wide results,
   // so one register holds TWICE as many results as the source holds elements.
+  // ---- slides --------------------------------------------------------------
+  // vslideup.vx/.vi   vd[i+off] = vs2[i]   elements below off keep their old value
+  // vslidedown.vx/.vi vd[i]     = vs2[i+off]   past the end they become zero
+  wire slide_up   = (funct6 == 6'b001110);
+  wire slide_down = (funct6 == 6'b001111);
+  wire slide      = (slide_up || slide_down) && ((funct3 == 3'b100) || (funct3 == 3'b011));
+
   wire narrow = (funct6 == 6'b101100) || (funct6 == 6'b101101) ||
                 (funct6 == 6'b101110);      // vnclip
 
@@ -410,6 +417,31 @@ module rv64_vunit (
             2'd2: acc[31:0]  = r_e[31:0];
             default: acc     = r_e;
           endcase
+        end
+      end else if (slide) begin
+        // ---- slide: the offset comes from vs1 (.vx) or the immediate (.vi) ----
+        logic [63:0] soff, se;
+        vd_we = 1'b1;
+        acc   = rdata3;               // slideup keeps the elements below the offset
+        soff  = (funct3 == 3'b011) ? {{59{insn_q[19]}}, insn_q[19:15]}
+                                   : get_elem(rdata1, 3'd0, sew_sel);
+        for (int i = 0; i < 8; i++) begin
+          if ((i < vl_q) && (i < nelem)) begin
+            if (slide_up) begin
+              // destination index is i + off; only write if it fits
+              if (({58'd0, i[2:0]} + soff) < nelem) begin
+                se = get_elem(rdata2, i[2:0], sew_sel);
+                acc = set_elem(acc, (i[2:0] + soff[2:0]), sew_sel, se);
+              end
+            end else begin
+              // source index is i + off; past the end the element is zero
+              if (({58'd0, i[2:0]} + soff) < nelem)
+                se = get_elem(rdata2, (i[2:0] + soff[2:0]), sew_sel);
+              else
+                se = 64'd0;
+              acc = set_elem(acc, i[2:0], sew_sel, se);
+            end
+          end
         end
       end else if (narrow) begin
         // ---- narrowing: 2*SEW sources, SEW results ------------------------

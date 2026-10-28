@@ -631,10 +631,20 @@ with `vxsat` set).
 One bug: the source was not sign-extended from its 2*SEW width before clipping, so
 `0x8000` read as +32768 and saturated to the *positive* bound instead of -128.
 
+**Slides are implemented.** `vslideup` and `vslidedown` in the `.vi` and `.vx` forms.
+`vslideup` moves `vs2[i]` to `vd[i+offset]` and leaves the elements below the offset
+untouched; `vslidedown` moves `vs2[i+offset]` down and zero-fills past the end. The
+offset comes from the immediate or from `vs1` element 0.
+
+**35 checks, 0 mismatches under xezim and Icarus.** The two tests check exactly the
+properties that distinguish a slide from a plain copy: `vslideup` starting from a
+destination of `0xAA` in every byte, so a wrongly-written low element is visible, and
+`vslidedown` zero-filling the top.
+
 **Not implemented, in the header:** no fractional LMUL, no round-to-odd, no
-fixed-point or floating-point operations, no slides or permutes, no `vstart`
-resumption (it is read but execution always starts at 0), and no chaining. Grouping
-is not applied to the reductions, widening or narrowing ops. The
+fixed-point or floating-point operations, no `vslide1up`/`vslide1down`, no permutes,
+no `vstart` resumption (it is read but execution always starts at 0), and no
+chaining. Grouping is not applied to the reductions, widening, narrowing or slides. The
 element memory port is **not connected to the data bus in the core** -- it is tied
 off, because wiring it needs the same arbitration the L2 integration is missing.
 
