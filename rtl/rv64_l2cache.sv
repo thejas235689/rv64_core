@@ -111,6 +111,17 @@ module rv64_l2cache (
     end
   end
 
+  // merge a store's bytes into a cached line
+  function automatic logic [63:0] merge(input logic [63:0] old, input logic [63:0] wd,
+                                        input logic [7:0] strb);
+    logic [63:0] r;
+    begin
+      r = old;
+      for (int b = 0; b < 8; b++) if (strb[b]) r[8*b +: 8] = wd[8*b +: 8];
+      return r;
+    end
+  endfunction
+
   typedef enum logic [2:0] {L_IDLE, L_FILL, L_WREQ, L_DONE} lstate_e;
   lstate_e     lst;
   logic [63:0] addr_q, wdata_q;
@@ -118,6 +129,7 @@ module rv64_l2cache (
   logic        we_q;
   logic [1:0]  fill_beat;
   logic        fill_issued_q;      // one beat outstanding at a time
+  logic        fill_err_q;         // ANY beat errored: the line is unusable
   logic [1:0]  way_q;
   logic [63:0] rdata_q;
   logic        err_q;
@@ -149,6 +161,7 @@ module rv64_l2cache (
       we_q       <= 1'b0;
       fill_beat  <= 2'd0;
       fill_issued_q <= 1'b0;
+      fill_err_q <= 1'b0;
       way_q      <= 2'd0;
       rdata_q    <= 64'd0;
       err_q      <= 1'b0;
@@ -171,7 +184,11 @@ module rv64_l2cache (
             wstrb_q <= req_wstrb;
             we_q    <= req_we;
             if (req_we) begin
-              // stores pass through; the L1 already updated its own copy
+              // Write-through alone left the cached line stale: a later read hit
+              // the old data. A write hit must also update the line.
+              if (hit)
+                data_q[(set*NWAY + hit_way)*BEATS + beat] <=
+                  merge(data_q[(set*NWAY + hit_way)*BEATS + beat], req_wdata, req_wstrb);
               lst <= L_WREQ;
             end else if (hit) begin
               rdata_q   <= data_q[(set*NWAY + hit_way)*BEATS + beat];
@@ -184,6 +201,7 @@ module rv64_l2cache (
               way_q      <= victim;
               fill_beat  <= 2'd0;
               fill_issued_q <= 1'b0;
+              fill_err_q <= 1'b0;
               if (need_age) begin
                 // age the whole set, then the next lookup finds a victim
                 for (int w = 0; w < NWAY; w++)
@@ -200,19 +218,22 @@ module rv64_l2cache (
             if (mem_req_ready) fill_issued_q <= 1'b1;
           end else if (mem_rsp_valid) begin
             fill_issued_q <= 1'b0;
-            if (!mem_rsp_error) begin
-              data_q[(addr_q[8:5]*NWAY + way_q)*BEATS + fill_beat] <= mem_rsp_rdata;
-            end
+            if (mem_rsp_error) fill_err_q <= 1'b1;
+            else data_q[(addr_q[8:5]*NWAY + way_q)*BEATS + fill_beat] <= mem_rsp_rdata;
             if (fill_beat == addr_q[4:3]) rdata_q <= mem_rsp_rdata;
             // the response the requester wants is the beat it asked for, not
             // whichever beat happens to complete the line
             if (fill_beat == addr_q[4:3]) rdata_q <= mem_rsp_rdata;
             if (fill_beat == 2'd3) begin
-              // line complete
-              tag_q[addr_q[8:5]][way_q]   <= addr_q[63:9];
-              valid_q[addr_q[8:5]][way_q] <= 1'b1;
-              rrpv_q[addr_q[8:5]][way_q]  <= 2'b11;   // distant on insert
-              err_q   <= mem_rsp_error;
+              // line complete. An ERRORED fill must not become valid: marking it
+              // valid made a later access hit garbage.
+              // an error on ANY beat makes the whole line unusable
+              if (!mem_rsp_error && !fill_err_q) begin
+                tag_q[addr_q[8:5]][way_q]   <= addr_q[63:9];
+                valid_q[addr_q[8:5]][way_q] <= 1'b1;
+                rrpv_q[addr_q[8:5]][way_q]  <= 2'b11;   // distant on insert
+              end
+              err_q   <= mem_rsp_error || fill_err_q;
               lst     <= L_DONE;
             end else begin
               fill_beat <= fill_beat + 2'd1;
@@ -221,11 +242,10 @@ module rv64_l2cache (
         end
 
         L_WREQ: begin
-          if (mem_req_ready) begin
-            rdata_q <= 64'd0;
-            err_q   <= 1'b0;
-            lst     <= L_DONE;
-          end
+          // A store is fire-and-forget on this bus: no response is generated,
+          // because a requester that is filling takes ANY response as its own
+          // data. Returning one here corrupted the next read.
+          if (mem_req_ready) lst <= L_IDLE;
         end
 
         L_DONE: lst <= L_IDLE;

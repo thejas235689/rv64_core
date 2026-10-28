@@ -191,6 +191,27 @@ module riscv_core_top #(
   logic [63:0] dc_req_addr, dc_req_wdata, dc_rsp_rdata;
   logic [7:0]  dc_req_wstrb;
   logic [31:0] dc_hits, dc_misses;
+  // ---- data-side L2: the D-cache's misses go through the L2 ----------------
+  logic        l2_req_valid, l2_req_we, l2_rsp_valid, l2_rsp_error, l2_req_ready;
+  logic [63:0] l2_req_addr, l2_req_wdata, l2_rsp_rdata;
+  logic [7:0]  l2_req_wstrb;
+  logic        l2_bus_req_valid, l2_bus_req_we, l2_bus_rsp_valid, l2_bus_rsp_error;
+  logic [63:0] l2_bus_req_addr, l2_bus_req_wdata, l2_bus_rsp_rdata;
+  logic [7:0]  l2_bus_req_wstrb;
+  logic [31:0] l2_hits, l2_misses, l2_bumps;
+
+  rv64_l2cache u_l2 (
+    .clk(clk), .rst_n(rst_n),
+    .req_valid(l2_req_valid), .req_addr(l2_req_addr), .req_we(l2_req_we),
+    .req_wstrb(l2_req_wstrb), .req_wdata(l2_req_wdata), .req_ready(l2_req_ready),
+    .rsp_valid(l2_rsp_valid), .rsp_rdata(l2_rsp_rdata), .rsp_error(l2_rsp_error),
+    .mem_req_valid(l2_bus_req_valid), .mem_req_addr(l2_bus_req_addr),
+    .mem_req_we(l2_bus_req_we), .mem_req_wstrb(l2_bus_req_wstrb),
+    .mem_req_wdata(l2_bus_req_wdata), .mem_req_ready(d_req_ready),
+    .mem_rsp_valid(l2_bus_rsp_valid), .mem_rsp_rdata(l2_bus_rsp_rdata),
+    .mem_rsp_error(l2_bus_rsp_error),
+    .hit_count(l2_hits), .miss_count(l2_misses), .rrip_bump_count(l2_bumps)
+  );
   // ---- AMCCE: watch the D-cache and choose its mode -----------------------
   logic        dc_acc_hit, dc_acc_miss, amcce_bypass;
   logic [1:0]  amcce_mode;
@@ -225,15 +246,15 @@ module riscv_core_top #(
     .rsp_valid      (dc_rsp_valid),
     .rsp_rdata      (dc_rsp_rdata),
     .rsp_error      (dc_rsp_error),
-    .bus_req_valid  (d_req_valid),
-    .bus_req_addr   (d_req_addr),
-    .bus_req_we     (d_req_we),
-    .bus_req_wstrb  (d_req_wstrb),
-    .bus_req_wdata  (d_req_wdata),
-    .bus_req_ready  (d_req_ready),
-    .bus_rsp_valid  (d_rsp_valid),
-    .bus_rsp_rdata  (d_rsp_rdata),
-    .bus_rsp_error  (d_rsp_error),
+    .bus_req_valid  (l2_req_valid),
+    .bus_req_addr   (l2_req_addr),
+    .bus_req_we     (l2_req_we),
+    .bus_req_wstrb  (l2_req_wstrb),
+    .bus_req_wdata  (l2_req_wdata),
+    .bus_req_ready  (l2_req_ready),
+    .bus_rsp_valid  (l2_rsp_valid),
+    .bus_rsp_rdata  (l2_rsp_rdata),
+    .bus_rsp_error  (l2_rsp_error),
     .bypass         (amcce_bypass),
     .acc_hit        (dc_acc_hit),
     .acc_miss       (dc_acc_miss),
@@ -1288,6 +1309,17 @@ module riscv_core_top #(
   assign rom_req_valid = BOOT_ROM ? ((bst == BS_READ && !boot_released)
                                      || (ic_fill_valid && fetch_pmp_ok && rom_sel))
                                   : 1'b0;
+
+
+  // ---- the L2 drives the external data port --------------------------------
+  assign d_req_valid      = l2_bus_req_valid;
+  assign d_req_addr       = l2_bus_req_addr;
+  assign d_req_we         = l2_bus_req_we;
+  assign d_req_wstrb      = l2_bus_req_wstrb;
+  assign d_req_wdata      = l2_bus_req_wdata;
+  assign l2_bus_rsp_valid = d_rsp_valid;
+  assign l2_bus_rsp_rdata = d_rsp_rdata;
+  assign l2_bus_rsp_error = d_rsp_error;
 
 endmodule
 `default_nettype wire

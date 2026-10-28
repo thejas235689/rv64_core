@@ -700,10 +700,32 @@ returned X**. Flattening it to one dimension with a computed index made both too
 agree -- so this was a tool difference in 3-D array handling, not a logic bug, and
 it would have been invisible if only one simulator had been used.
 
-**Not integrated**: the L1s still go straight to memory. There is no inclusion
-management, no write-back, no coherence and no prefetch. `rrip_ages` stayed 0 in the
-test because every insert starts distant, so a victim is always found without
-aging -- the aging path is present but not exercised.
+**INTEGRATED.** The D-cache's misses now go through the L2 to memory, and
+`test_l2_in_path` proves the L2 carries traffic rather than sitting beside the
+pipeline: **1 hit, 1 miss** in a short program. **cocotb 32/32.**
+
+Four bugs had to be fixed first, and the first three are why earlier attempts
+failed:
+
+* **The L2 never updated its cached line on a write hit.** It wrote through to
+  memory and left the line stale, so a later read hit old data -- every load in the
+  core returned 0. This was the real blocker across two failed integrations.
+* **The L2 answered stores.** This bus is fire-and-forget for writes; a requester
+  that is filling takes ANY response as its own data, so the stray write response
+  corrupted the next read. The write path now completes without a response.
+* **An errored fill marked the line valid**, so a later access hit garbage.
+* **Only the last beat's error was checked**, so an error on beat 0 of a four-beat
+  fill vanished -- an access fault silently became a successful load of zeros. Fill
+  errors now accumulate across all four beats.
+
+The standalone testbench needed the same contract change: its memory model answered
+stores and its access task waited for that answer, both of which the real bus does
+not do.
+
+Still not implemented: no inclusion management with the L1s, no write-back, no
+coherence, no prefetch, no L3. `rrip_ages` stays 0 because every insert starts
+distant, so a victim is always found without aging -- the aging path is present but
+not exercised.
 
 ### Write-through data cache (verified standalone, not integrated)
 

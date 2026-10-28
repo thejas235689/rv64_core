@@ -43,6 +43,8 @@ module tb_l2cache;
       pend_v <= 1'b0;
       if (mem_req_valid && mem_req_ready) begin
         if (mem_req_we) begin
+          // fire-and-forget, matching the core's bus: a response to a store would
+          // be consumed as the next read's data
           for (int b = 0; b < 8; b++)
             if (mem_req_wstrb[b]) mem[mem_req_addr[16:3]][8*b +: 8] <= mem_req_wdata[8*b +: 8];
         end else begin
@@ -77,13 +79,23 @@ module tb_l2cache;
       end
       req_valid = 1;
       @(posedge clk); #1; req_valid = 0;
-      begin
-        int guard; guard = 0;
-        while (!rsp_valid && guard < 120) begin @(posedge clk); #1; guard++; end
-        if (guard >= 120) begin errors++; $display("MISMATCH access never completed for %h", a); end
+      if (we) begin
+        // stores are fire-and-forget: accepted, no response
+        begin
+          int g; g = 0;
+          while (!req_ready && g < 120) begin @(posedge clk); #1; g++; end
+        end
+        rd = 64'd0;
+        @(posedge clk); #1;
+      end else begin
+        begin
+          int guard; guard = 0;
+          while (!rsp_valid && guard < 120) begin @(posedge clk); #1; guard++; end
+          if (guard >= 120) begin errors++; $display("MISMATCH access never completed for %h", a); end
+        end
+        #1; rd = rsp_rdata;
+        @(posedge clk); #1;
       end
-      #1; rd = rsp_rdata;
-      @(posedge clk); #1;
     end
   endtask
 

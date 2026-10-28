@@ -1828,3 +1828,41 @@ async def test_rvv_in_core(dut):
     got = int(dut.u_core.u_rvv.u_vrf.regs[3].value)
     dut._log.info(f"rvv: v3 = {got}")
     assert got == 123, f"RVV should have computed 100 + 23 = 123, got {got}"
+
+
+@cocotb.test()
+async def test_l2_in_path(dut):
+    """The L2 must actually be in the data path, not merely instantiated.
+
+    Every D-cache miss goes through the L2, so a program that touches memory must
+    make the L2 count misses. A build with the L2 wired but bypassed would pass
+    every functional test while the counters stayed at zero.
+    """
+    L = []
+    L.extend(li64(5, 0x4000))
+    L.extend(li64(6, 0x1234))
+    L.append("sd x6, 0(x5)")             # store through both caches
+    L.append("ld x7, 0(x5)")             # D-cache miss -> L2
+    L.append("ld x8, 8(x5)")             # another line
+    L.append("add x9, x7, x8")
+    L.append("ecall")
+
+    words, _ = assemble("\n".join(L))
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "l2-in-path")
+
+    core = dut.u_core
+    l2_hits = int(core.l2_hits.value)
+    l2_miss = int(core.l2_misses.value)
+    dut._log.info(f"l2: {l2_hits} hits, {l2_miss} misses")
+    assert (l2_hits + l2_miss) > 0, "the L2 saw no traffic -- it is not in the data path"
