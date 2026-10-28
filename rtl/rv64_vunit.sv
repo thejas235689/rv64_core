@@ -568,7 +568,9 @@ module rv64_vunit (
   always_comb begin
     csr_rdata = 64'd0;
     unique case (csr_addr)
-      4'd0: csr_rdata = {62'd0, go_q, 1'b0};
+      // bit 1 is BUSY: set while an element walk or a register-group walk is in
+      // flight, so software polls this instead of spinning a fixed count
+      4'd0: csr_rdata = {62'd0, (el_walk_q || grp_walk_q), go_q};
       4'd1: csr_rdata = {57'd0, vl_q};
       4'd2: csr_rdata = {56'd0, vtype_q};
       4'd3: csr_rdata = {57'd0, vstart_q};

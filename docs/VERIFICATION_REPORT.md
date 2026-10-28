@@ -663,9 +663,12 @@ work:
   at the testbench boundary while the unit itself looked correct;
 * the element walk **runs asynchronously** after the `start` write returns, so a
   program that issues `ecall` immediately after `start` cuts the walk off mid-way.
-  The test now waits, which is also how real software has to behave -- the unit needs
-  a busy bit in its control window for a program to poll rather than spin a fixed
-  count. That is not implemented.
+  The unit's control window now has a **BUSY bit** (bit 1) covering the element walk
+  and the register-group walk, and `test_vle_in_core` **polls it** instead of spinning
+  a fixed count -- which is how firmware has to use the unit. The test is not
+  trace-compared against the ISS, because the ISS models `0x780` as a plain CSR and
+  cannot match a polling read of a custom status bit; the architectural effect it
+  checks is the vector register.
 
 **Not implemented, in the header:** no fractional LMUL, no round-to-odd, no
 fixed-point or floating-point operations, no `vslide1up`/`vslide1down`, no permutes,
