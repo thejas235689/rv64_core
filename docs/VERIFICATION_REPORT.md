@@ -641,6 +641,22 @@ properties that distinguish a slide from a plain copy: `vslideup` starting from 
 destination of `0xAA` in every byte, so a wrongly-written low element is visible, and
 `vslidedown` zero-filling the top.
 
+**The core now has a dedicated vector memory port** (`v_req_*`/`v_rsp_*`), and the
+vector unit's element port drives it directly. This replaces the attempt to splice
+the vector unit onto the cache-fill arbiter, which failed across four sessions and
+kept changing failure mode rather than converging -- the sign of a design that does
+not fit rather than a bug to patch. A separate port has no arbitration and cannot
+interfere with the cache path.
+
+All seven spot checks pass with the port in place (alu, memory, dcache_hits,
+l2_in_path, rvv_in_core, atomic, sv39_identity) and lint is clean, so the interface
+change is safe. **`vle`/`vse` are still not usable end-to-end**: an in-core test
+that drives the control window and issues `vle8.v` shows the CSR writes arriving and
+the walk starting and issuing its request with `ready=1`, but the request reads X at
+the testbench boundary and no response comes back. That is a connection or
+initialisation fault in the new port, not the arbitration problem, and it is the one
+thing left to fix.
+
 **Not implemented, in the header:** no fractional LMUL, no round-to-odd, no
 fixed-point or floating-point operations, no `vslide1up`/`vslide1down`, no permutes,
 no `vstart` resumption (it is read but execution always starts at 0), and no

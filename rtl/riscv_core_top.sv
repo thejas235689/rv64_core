@@ -35,6 +35,21 @@ module riscv_core_top #(
   input  logic [63:0] if_rsp_data,
   input  logic        if_rsp_error,
 
+  // ---- vector memory interface ---------------------------------------------
+  // The vector unit gets its own port rather than sharing the data port. Splicing
+  // it onto the cache-fill arbiter kept changing the failure mode rather than
+  // fixing it, which is the sign of a design that does not fit; a separate port
+  // has no arbitration and cannot interfere with the cache path.
+  output logic        v_req_valid,
+  output logic [63:0] v_req_addr,
+  output logic        v_req_we,
+  output logic [63:0] v_req_wdata,
+  output logic [7:0]  v_req_wstrb,
+  input  logic        v_req_ready,
+  input  logic        v_rsp_valid,
+  input  logic [63:0] v_rsp_data,
+  input  logic        v_rsp_error,
+
   // ---- data interface -------------------------------------------------------
   output logic        d_req_valid,
   output logic [63:0] d_req_addr,

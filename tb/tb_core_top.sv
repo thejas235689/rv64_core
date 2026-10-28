@@ -43,6 +43,17 @@ module tb_core_top #(
   logic [63:0] if_rsp_data;
   logic        if_rsp_error;
 
+  // ---- vector interface -----------------------------------------------------
+  logic        v_req_valid;
+  logic [63:0] v_req_addr;
+  logic        v_req_we;
+  logic [63:0] v_req_wdata;
+  logic [7:0]  v_req_wstrb;
+  logic        v_req_ready;
+  logic        v_rsp_valid;
+  logic [63:0] v_rsp_data;
+  logic        v_rsp_error;
+
   // ---- data interface -------------------------------------------------------
   logic        d_req_valid;
   logic [63:0] d_req_addr;
@@ -118,6 +129,12 @@ module tb_core_top #(
       else              mem[host_addr[16:3]][31:0]  <= host_wdata[31:0];
     end
 
+    // vector port stores: fire-and-forget, same array
+    if (v_req_valid && v_req_ready && v_req_we) begin
+      for (int b = 0; b < 8; b++)
+        if (v_req_wstrb[b]) mem[v_req_addr[16:3]][8*b +: 8] <= v_req_wdata[8*b +: 8];
+    end
+
     // instruction response (one cycle after accept)
     if_rsp_valid <= if_req_valid && if_req_ready;
     if (if_req_valid && if_req_ready) begin
@@ -125,7 +142,7 @@ module tb_core_top #(
       if_rsp_error <= err_hit(if_req_addr);
     end
 
-    // data response (loads only) and byte-strobed writes
+  // data response (loads only) and byte-strobed writes
     d_rsp_valid <= d_req_valid && d_req_ready && !d_req_we;
     if (d_req_valid && d_req_ready) begin
       d_rsp_rdata <= mem_rd(d_req_addr);
@@ -151,6 +168,15 @@ module tb_core_top #(
     .if_rsp_valid   (if_rsp_valid),
     .if_rsp_data    (if_rsp_data),
     .if_rsp_error   (if_rsp_error),
+    .v_req_valid    (v_req_valid),
+    .v_req_addr     (v_req_addr),
+    .v_req_we       (v_req_we),
+    .v_req_wdata    (v_req_wdata),
+    .v_req_wstrb    (v_req_wstrb),
+    .v_req_ready    (v_req_ready),
+    .v_rsp_valid    (v_rsp_valid),
+    .v_rsp_data     (v_rsp_data),
+    .v_rsp_error    (v_rsp_error),
     .d_req_valid    (d_req_valid),
     .d_req_addr     (d_req_addr),
     .d_req_we       (d_req_we),
@@ -195,6 +221,26 @@ module tb_core_top #(
     .task_done_result   (task_done_result),
     .task_irq_o         (task_irq)
   );
+
+
+  // vector port: same memory array, one cycle, no backpressure. Stores are
+  // fire-and-forget exactly as on the data port.
+  assign v_req_ready = 1'b1;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      v_rsp_valid <= 1'b0;
+      v_rsp_data  <= 64'd0;
+      v_rsp_error <= 1'b0;
+    end else begin
+      v_rsp_valid <= v_req_valid && v_req_ready && !v_req_we;
+      if (v_req_valid && v_req_ready) begin
+        v_rsp_data  <= mem_rd(v_req_addr);
+        v_rsp_error <= err_hit(v_req_addr);
+      end
+    end
+  end
+
 
 endmodule
 `default_nettype wire

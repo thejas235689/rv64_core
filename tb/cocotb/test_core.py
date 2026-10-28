@@ -1869,3 +1869,5 @@ async def test_l2_in_path(dut):
     dut._log.info(f"l2: {l2_hits} hits, {l2_miss} misses | l3: {l3_hits} hits, {l3_miss} misses")
     assert (l2_hits + l2_miss) > 0, "the L2 saw no traffic -- it is not in the data path"
     assert (l3_hits + l3_miss) > 0, "the L3 saw no traffic -- it is not behind the L2"
+
+
