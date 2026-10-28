@@ -130,8 +130,14 @@ module rv64_l2arb (
         wdata_q <= b_req_wdata;
         gb_q    <= gb_q + 32'd1;
       end
-      // the request is issued once, when the L2 takes it
-      if (busy_q && !issued_q && l2_req_ready) issued_q <= 1'b1;
+      // The request is issued once, when the memory takes it. A WRITE is
+      // fire-and-forget on this bus -- no response is coming -- so the
+      // transaction ends at issue. Waiting for a response deadlocked on the
+      // first store.
+      if (busy_q && !issued_q && l2_req_ready) begin
+        if (we_q) busy_q <= 1'b0;
+        else      issued_q <= 1'b1;
+      end
       // the transaction ends when its response returns
       if (rsp_valid) begin
         busy_q   <= 1'b0;
