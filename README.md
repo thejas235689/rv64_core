@@ -1,4 +1,4 @@
-# rv64_core — RV64IM machine-mode core with a self-checking verification environment
+# rv64_core — RV64IM core with caches, Sv39, RVV and keyed boot authentication
 
 A synthesizable 64-bit RISC-V core and the cocotb verification environment that
 proves it correct, delivered as a project tree you can build, simulate and push
@@ -26,85 +26,90 @@ to a private repository as-is.
 
 ## 2. What is implemented
 
+39 RTL files, 8,882 lines. Everything below is instantiated in `riscv_core_top`
+unless the row says otherwise.
+
 | Area | Scope in this core |
 | --- | --- |
 | Integer execution | Full RV64I: arithmetic, logic, shifts, comparisons, branches, jumps, word ops |
 | Multiply/divide | `mul/mulh/mulhsu/mulhu/div/divu/rem/remu`, multi-cycle, spec-exact special cases |
 | Bit manipulation | Zba, Zbb, Zbc, Zbs, Zicond, Zihintpause |
-| Register state | 32×64 register file, `x0` write-suppressed |
-| Front end | Fetch buffering, request/response tracking, single outstanding request; predecode tags cross-checked against the decoder; fusion hints (hints only, no fused datapath) |
-| Branch prediction | Gshare + bimodal BHT with a tournament chooser, BTB, 8-entry return-address stack, a loop-count predictor, tagged history and a perceptron |
-| Memory ops | Byte/halfword/word/doubleword loads and stores, sign/zero extension, byte strobes, misalignment traps |
-| Protection | 8 PMP entries, OFF/TOR/NA4/NAPOT matching, whole-access checks, M-mode lock semantics (unit-tested) |
-| System control | Machine CSRs, synchronous exceptions, illegal-instruction traps, `mret`, `wfi`; M/S/U privilege modes with `medeleg`/`mideleg` delegation and `sret` |
-| Interrupts | Software, timer and external interrupt inputs; four-source PLIC-lite with claim/complete (`rtl/rv64_plic_lite.sv`) |
-| Debug | External halt/resume, single-step, EBREAK debug entry, GPR read port |
-| Watchpoints | Memory-address comparator with hit reporting (not a precise debug entry) |
-| Atomics (A) | `lr.w/d`, `sc.w/d`, all nine AMOs in `.w` and `.d`, read-modify-write in the LSU with a reservation register |
-| Platform blocks | CLINT (mtime/mtimecmp timer IRQ, MSIP) and a UART (8N1, TX+RX, loopback-verified) as standalone blocks with CSR ports; a JTAG TAP + DMI transport (halt/resume/step, DMSTATUS reads) — all verified |
-| QISA | 8-entry qubit model: X/Y/Z/H/CNOT/measure, phase and superposition tracking, seeded LFSR collapse (`rtl/rv64_qisa.sv`, CSR window `0x7E0`) |
-| AI accelerator | INT8 4x4x4 matrix multiply-accumulate, INT32 accumulation, one cycle per product (`rtl/rv64_aiacc.sv`, CSR window `0x7E8`) |
+| Atomics (A) | `lr.w/d`, `sc.w/d`, all nine AMOs in `.w` and `.d`, RMW in the LSU with a reservation register |
+| Privilege | M/S/U with `medeleg`/`mideleg` delegation, `sret`, S-mode CSR set |
+| Virtual memory | **Sv39**: 16-entry TLB + 3-level walker in the LSU, permission and fault rules, MPRV gating, real `satp` (MODE 0 or 8 only) |
+| Front end | Fetch buffering, single outstanding request; predecode tags cross-checked against the decoder; fusion hints (hints only, no fused datapath) |
+| Branch prediction | Gshare + bimodal with a tournament chooser, BTB, 8-entry RAS, loop-count predictor, tagged history and a perceptron |
+| Caches | 64-line direct-mapped **I-cache** in the fetch path; write-through **D-cache** in the load/store path; a **2 KB L2** (16 sets x 4 ways) and a **16 KB L3** (64 sets x 8 ways) behind it, both the same geometry-parameterised module with RRIP replacement |
+| Adaptive cache control | **AMCCE** watches the D-cache's hit/miss stream and switches it to BYPASS under a streaming scan, with hysteresis |
+| Memory ops | Byte/halfword/word/doubleword, sign/zero extension, byte strobes, misalignment traps |
+| Protection | 8 PMP entries, OFF/TOR/NA4/NAPOT, whole-access checks, M-mode lock semantics |
+| System control | Machine CSRs, synchronous exceptions, illegal-instruction traps, `mret`, `wfi` |
+| Interrupts | Software, timer and external inputs; a four-source PLIC-lite with claim/complete |
+| Debug | External halt/resume, single-step, EBREAK debug entry, GPR read port, watchpoint comparator |
+| Boot | 2 KB **boot ROM** at the reset vector, and **HMAC-SHA-256** image authentication that releases the core only on an exact keyed MAC. Behind `parameter BOOT_ROM` (default 0) because the ROM owns 0x0-0x7FF, where test programs load |
+| Crypto | `rv64_sha256` (streaming compression, one round/cycle, chaining) and `rv64_hmac` (HMAC-SHA-256 over one 512-bit block) |
+| Custom numeric ABI | RNS, LNS, IEEE binary32 and **posit** (`<8,1>`, `<16,1>`, `<32,1>`), own register bank, `nerr`/`ncfg`/`nflags` CSRs (window `0x7C0`) |
+| QISA | 8-entry qubit model: X/Y/Z/H/CNOT/measure, seeded LFSR collapse (`0x7E0`) |
+| AI accelerator | INT8 4x4x4 MAC, INT32 accumulation (`0x7E8`) |
+| XRV512 | 32 x 512-bit bank, eight 64-bit lanes, 11 elementwise ops, lane port (`0x7F0`) |
+| RVV subset | 32 x 64-bit vector file: `vsetvli`/`vsetivli` with VLMAX, add/sub/and/or/xor/min/max and `vmv` in `.vv/.vx/.vi`, SEW 8-64, tail-preserving `vl`, **masking**, **reductions**, **widening**, **narrowing with `vnclip`**, **`vlmul` 1-8**, **slides**, **`vle`/`vse`** and binary32 **`vfadd`/`vfsub`/`vfmul`** (`0x780`, own memory port) |
+| Xcetask | Task descriptor engine (window `0x7D0`) |
 | Observability | Retirement PC/instruction, GPR writeback, trap cause/PC, interrupt flag, privilege, debug event, counters |
 
-**Not in this core:** cache coherence, out-of-order backend, and the research blocks (DNA, neuromorphic, photonic,
-interconnect), plus the platform pieces. The custom numeric ABI, Xcetask, QISA
-and the AI accelerator are implemented. `docs/ROADMAP.md` maps the full target
-feature list against what exists here, sizes what remains, and states which items
-are verified and which are only designed.
+**Not in this core:** cache coherence, cache inclusion or write-back, prefetch, an
+out-of-order backend, and the four research blocks (DNA, neuromorphic, photonic,
+interconnect). CLINT, UART, DMI and the L2 arbiter exist as verified standalone
+blocks but are **not** instantiated. `docs/ROADMAP.md` maps the target feature list
+against what exists.
 
 ## 3. Tree
 
 ```
 rv64_core/
-├── rtl/                         synthesizable SystemVerilog (12 modules)
+├── rtl/                         39 synthesizable SystemVerilog modules
+│   ├── riscv_core_top.sv        the core: pipeline, bus ports, boot, CSR windows
 │   ├── rv64_pkg.sv              types, opcodes, CSR addresses, trap causes
 │   ├── rv64_alu.sv              RV64I + Zba/Zbb/Zbc/Zbs/Zicond ALU
 │   ├── rv64_mdu.sv              multiply / divide unit
-│   ├── rv64_regfile.sv          32×64 register file
+│   ├── rv64_regfile.sv          32x64 register file
 │   ├── rv64_decoder.sv          instruction decode
 │   ├── rv64_pmp.sv              8-entry physical memory protection
-│   ├── rv64_csr.sv              machine-mode CSR file
-│   ├── rv64_lsu.sv              load/store sequencer + data interface
-│   ├── rv64_bpu.sv              tournament branch predictor, BTB, RAS
+│   ├── rv64_csr.sv              machine/S-mode CSR file, privilege, traps
+│   ├── rv64_mmu.sv              Sv39 walker + TLB (inside the LSU)
+│   ├── rv64_lsu.sv              load/store sequencer, atomics, translation phase
+│   ├── rv64_bpu.sv              tournament predictor, BTB, RAS, loop, perceptron
+│   ├── rv64_predecode.sv        predecode tags and fusion hints
 │   ├── rv64_fetch.sv            fetch buffer + instruction interface
-│   ├── rv64_plic_lite.sv        4-source interrupt controller
-│   ├── rv64_num_pkg.sv          custom numeric ABI: opcodes, cfg/flag layout
-│   ├── rv64_numfile.sv          32 x 64-bit numeric register bank
-│   ├── rv64_num_unit.sv         numeric datapath: fixed-Q, quire, adaptive, error
-│   ├── rv64_num_csr.sv          ncfg / nflags / nerr CSRs
-│   ├── rv64_xcetask.sv          bounded task slots: lifecycle, timeout, completion IRQ
-│   └── riscv_core_top.sv        pipeline top level
-├── tb/
-│   ├── tb_core_top.sv           core harness: memory, host load, backpressure, error injection
-│   ├── tb_plic_top.sv           PLIC-lite harness
-│   ├── tb_pmp_top.sv            PMP matcher harness
-│   ├── tb_num_top.sv            numeric unit testbench (vector-driven)
-│   ├── tb_xcetask_top.sv        Xcetask directed lifecycle testbench
-│   ├── tb_uvm_top.sv            UVM testbench top level
-│   ├── uvm/                     UVM environment: interface, agent, monitors,
-│   │                            scoreboard, coverage, sequences, tests
-│   └── cocotb/
-│       ├── test_core.py         core regression (20 tests)
-│       ├── test_plic.py         PLIC-lite regression (2 tests)
-│       ├── test_pmp_unit.py     PMP matcher unit tests (5 tests)
-│       ├── rv64_asm.py          assembler used to build test programs
-│       └── rv64_iss.py          independent golden-model ISS
-├── sim/
-│   ├── run.py                   build + run without make
-│   ├── Makefile                 same flow via cocotb's Makefile.sim
-│   ├── gen_num_vectors.py       numeric reference model + unit vectors
-│   ├── gen_uvm_vectors.py       golden vectors for the UVM scoreboard, from the ISS
-│   ├── run_uvm.sh               UVM regression (needs a UVM-capable simulator)
-│   ├── synth.sh                 sv2v + Yosys generic synthesis flow
-│   └── synth.ys                 Yosys script: structural checks, stats, path depth
-├── docs/
-│   ├── PROJECT_PLAN.md          phases, exit criteria, status, risks
-│   ├── ARCHITECTURE_FEATURE_CONTRACT.md
-│   ├── TESTPLAN.md
-│   ├── VERIFICATION_REPORT.md
-│   ├── ROADMAP.md
-│   └── GITHUB_SETUP.md
-└── .github/workflows/ci.yml
+│   ├── rv64_icache.sv           instruction cache
+│   ├── rv64_dcache.sv           write-through data cache
+│   ├── rv64_l2cache.sv          geometry-parameterised cache: L2 and L3
+│   ├── rv64_l2arb.sv            two-port arbiter (verified, not instantiated)
+│   ├── rv64_amcce.sv            adaptive cache mode engine
+│   ├── rv64_bootrom.sv          boot ROM at the reset vector
+│   ├── rv64_bootauth.sv         FNV-1a authenticator (superseded)
+│   ├── rv64_bootauth_hmac.sv    keyed boot authentication
+│   ├── rv64_sha256.sv           SHA-256 compression core
+│   ├── rv64_hmac.sv             HMAC-SHA-256
+│   ├── rv64_num_pkg.sv          numeric ABI constants
+│   ├── rv64_num_wide.sv         RNS / LNS / binary32 / posit datapath
+│   ├── rv64_numfile.sv          numeric register bank
+│   ├── rv64_num_unit.sv         numeric unit
+│   ├── rv64_num_csr.sv          numeric CSRs
+│   ├── rv64_qisa.sv             qubit model
+│   ├── rv64_aiacc.sv            INT8 matrix accelerator
+│   ├── rv64_xrv512_file.sv      32x512 register bank
+│   ├── rv64_xrv512.sv           XRV512 lane unit
+│   ├── rv64_vregfile.sv         32x64 vector register file
+│   ├── rv64_vunit.sv            RVV executor
+│   ├── rv64_xcetask.sv          task descriptor engine
+│   ├── rv64_plic_lite.sv        4-source interrupt controller (standalone)
+│   ├── rv64_clint.sv            timer / software interrupts (standalone)
+│   ├── rv64_uart.sv             8N1 UART (standalone)
+│   └── rv64_dmi.sv              JTAG TAP + DMI (standalone)
+├── tb/                          28 SystemVerilog testbenches + the cocotb suite
+├── sim/                         run.py, lint.sh, UVM runner, vector generators
+├── docs/                        verification report, roadmap, design notes
+└── README.md
 ```
 
 ## 4. Running it
@@ -146,52 +151,41 @@ verilator --lint-only -Wall -Wno-fatal --timing -sv rtl/*.sv --top-module riscv_
 
 ## 5. Verification status
 
-Verified by simulation on Icarus Verilog 14.0 with cocotb 2.1.0:
+**33 cocotb tests, 28 SystemVerilog testbenches, two simulators (Icarus 14.0 and
+xezim 0.11.3), plus Verilator 5.053 and slang for lint.** Every retirement is
+compared against an independent Python golden model (pc, instruction, destination
+register, write data), and random programs are checked byte-exact against data
+memory.
 
-* **20/20 core tests pass**, comparing every retirement against an independent
-  Python golden model (pc, instruction, destination register, write data), plus
-  a byte-exact comparison of the data memory after each random program.
-* **5/5 PMP matcher unit tests pass** (TOR, NA4, NAPOT boundaries, permission
-  bits, M-mode lock rule, entry priority).
-* **2/2 PLIC-lite tests pass.**
-* **The ISA sweep passes against the core**: `test_isa_sweep_fast` runs the same
-  4445-instruction program through the cocotb harness and matches the golden
-  model for 24,861 retirements with zero mismatches. The UVM wrapper for that
-  program is still unverified — the vectors load correctly and the comparison was
-  ruled out: reverting to `!==` restored the illegal sweep, confirming `!==` is
-  correct and `!=` is the operator that misbehaves here. What blocks the ISA
-  wrapper is throughput -- the driver delivers ~3250 simulated cycles per retired
-  instruction, so a 4444-retirement run needs ~14M cycles and cannot finish in
-  one call. A reduced-size variant of the same sweep (`rv64_isa_small_test`,
-  780 retirements) **passes** through the UVM wrapper, so the wrapper itself is
-  proven; only the full 4444-retirement run is out of reach at this driver
-  speed. Fixing the driver is the next item.
-* **9 UVM tests: 8 pass, 1 is throughput-blocked.** `rv64_illegal_test` (120 unimplemented
-  encodings, each expected to trap) passes and in doing so found two real
-  defects: MRET/EBREAK let the younger instruction advance into MEM and execute
-  on the wrong path, and OP-IMM-32 accepted funct3=7 as `srliw`. Both are fixed.
-  `rv64_isa_test` (the 4445-instruction sweep) still fails from retirement 1000
-  with pc mismatches whose two values print identically; not root-caused. See
-  `docs/VERIFICATION_REPORT.md`.
-* **5/5 of the earlier UVM tests pass** under xezim 0.11.3: a class-based environment with a
-  memory agent (driver owns the memory model, backpressure and error injection),
-  an observability monitor, a scoreboard comparing the full retirement and trap
-  streams against golden vectors from the same Python ISS, and functional
-  coverage. That is 32 tests across four suites.
-* 56,698 randomly generated instructions matched the golden model across five
-  seeds, in addition to the directed suites.
-* The regression found and fixed 14 real RTL bugs (see
-  `docs/VERIFICATION_REPORT.md`), which is the main evidence that the checks
-  actually fire.
+A caveat on how these are run: with three cache levels the full cocotb suite no
+longer finishes inside one command timeout, so the tests are verified
+**individually** rather than in a single green run. A CI run needs a longer
+wall-clock budget than an interactive one.
 
-Verilator 5.053 lint is clean apart from benign unused-signal notes, and
-xezim 0.11.3 parses and elaborates all 12 RTL files with zero errors and zero
-warnings.
+| Suite | Result |
+| --- | --- |
+| Core ISA, hazards, traps, CSR, memory, control | pass, ISS trace-compared |
+| PMP matcher | 5/5 |
+| PLIC-lite | 2/2 |
+| `test_isa_sweep_fast` | 24,861 retirements matched, zero mismatches |
+| `test_sv39_identity` | passes with translation active (identity megapage + MPRV) |
+| `test_icache_hits` / `test_dcache_hits` | pass, asserting the caches actually hit |
+| `test_l2_in_path` | L2 1 hit/1 miss, L3 3 hits/1 miss -- both levels carry traffic |
+| `test_amcce_bypass` | 128-miss scan flips the D-cache to BYPASS |
+| `test_rvv_in_core` / `test_xrv512_in_core` | vector results asserted from executed instructions |
+| `test_vle_in_core` | `vle8.v` loads 8 bytes from a program, polling the unit's BUSY bit |
+| `test_numeric_sweep` | 299 retirements matched against the numeric ABI model |
 
-Full detail, coverage table and the list of what is *not* verified:
-`docs/VERIFICATION_REPORT.md`.
+**Standalone block testbenches** (Icarus and xezim unless noted): `tb_vunit` 42
+checks, `tb_sha256` 5, `tb_hmac` 1 (RFC 4231), `tb_bootauth_hmac` 6, `tb_bootseq` 6,
+`tb_fetch_cache` 26, `tb_mmu` 22, `tb_icache` 18, `tb_xrv512` 18, `tb_amcce` 18,
+`tb_l2cache` 14, `tb_dcache` 12, `tb_l2arb` 10, plus the platform blocks.
 
-## 6. Custom numeric ABI (in progress)
+The regression has found and fixed **40+ real RTL defects** across the project,
+which is the main evidence the checks actually fire. Full detail, coverage table
+and the list of what is *not* verified: `docs/VERIFICATION_REPORT.md`.
+
+## 6. Custom numeric ABI
 
 A separate numeric side to the machine: its own 32 x 64-bit register bank
 (`rv64_numfile.sv`), its own arithmetic datapath (`rv64_num_unit.sv`) and its own
@@ -250,7 +244,7 @@ RNS with {3,5,7}/{3,5,7,11}/{3,5,7,11,13}. Verified by 15364 vector checks and b
 `rv64_numeric_test` through the UVM environment. See
 `docs/VERIFICATION_REPORT.md`.
 
-## 7. Xcetask (in progress)
+## 7. Xcetask
 
 Bounded custom task slots (`rv64_xcetask.sv`) — four by default. Each slot moves
 IDLE -> ACTIVE -> DONE on completion, or IDLE -> ACTIVE -> TIMEOUT on expiry, with
