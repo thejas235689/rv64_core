@@ -59,7 +59,7 @@ unless the row says otherwise.
 
 **`rv64_rvc_expand`** converts the RV64C compressed encodings to their 32-bit
 equivalents (verified, 13 checks, but **not yet instantiated** — wiring it in needs
-variable-length fetch, which the pipeline does not have).
+variable-length fetch, which the pipeline does not have; `docs/RVC_FETCH_DESIGN.md` records exactly what that rework needs).
 
 **Not in this core:** cache coherence, cache inclusion or write-back, prefetch, an
 out-of-order backend, and the four research blocks (DNA, neuromorphic, photonic,
