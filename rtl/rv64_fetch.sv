@@ -61,7 +61,7 @@ module rv64_fetch (
 
   logic        nxt_v;
   logic [63:0] nxt_addr, nxt_data;
-  logic [63:0] win;
+  logic [127:0] win;   // both beats: 64 is not enough, it truncated nxt_data away
   logic [31:0] insn_raw;
   logic        straddle;
 

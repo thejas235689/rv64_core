@@ -2020,3 +2020,30 @@ async def test_rvc_in_core(dut):
     got = h.trace[-1][4] if h.trace else None
     assert len(seen) >= 3, f"fetch presented only {seen}"
     assert got == 8, f"expected x5 = 8, got {got}"
+
+    # ---- the straddle case: a 32-bit instruction starting at offset 6 ----
+    # Three compressed instructions put the next 32-bit one at beat offset 6, so its
+    # upper halfword lives in the second beat.
+    src = "\n".join([
+        ".hword 0x429d",      # c.li x5, 7   at pc 0
+        ".hword 0x429d",      # c.li x5, 7   at pc 2
+        ".hword 0x429d",      # c.li x5, 7   at pc 4
+        "addi x5, x5, 1",     # at pc 6 -- straddles the 8-byte beat
+        "ecall",              # at pc 10
+    ])
+    words2, _ = assemble(src)
+    h2 = Harness(dut)
+    await h2.startup()
+    h2.clear()
+    await h2.load(words2)
+    await h2.reset()
+    await h2.run(max_cycles=20000, stop_on_ecall=True)
+    x5 = None
+    for t in h2.trace:
+        if t[3] == 5:
+            try:
+                x5 = int(t[4])
+            except (ValueError, TypeError):
+                pass
+    dut._log.info(f"straddle: {len(h2.trace)} retirements, x5 = {x5}")
+    assert x5 == 8, f"straddled instruction did not run: x5 = {x5}"
