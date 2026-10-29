@@ -39,7 +39,7 @@ module tb_hmac;
     msg = 512'd0;
     msg[511:448] = 64'h48692054_68657265;
     msg[447:440] = 8'h80;
-    msg[63:0]    = 64'd64;
+    msg[63:0]    = 64'd576;   // 64-byte key block + 8-byte message
 
     @(posedge clk); #1;
     start = 1'b1;

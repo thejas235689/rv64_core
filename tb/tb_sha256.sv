@@ -74,11 +74,13 @@ module tb_sha256;
           256'he3b0c442_98fc1c14_9afbf4c8_996fb924_27ae41e4_649b934c_a495991b_7852b855);
     end
 
-    // ---- one block of 64 'a': isolates block 1 from the chaining --------
+    // ---- sha256(64 x 'a'): one data block, padding in the second -------
     begin
       logic [511:0] b;
       b = {64{8'h61}};
       hash_block(b, 1'b1);
+      b = {8'h80, 440'd0, 64'd512};      // 0x80, zeros, bit length 512
+      hash_block(b, 1'b0);
       chk("sha256(64 x 'a')", digest,
           256'hffe054fe_7ae0cb6d_c65c3af9_b61d5209_f439851d_b43d0ba5_997337df_154668eb);
     end
@@ -89,6 +91,8 @@ module tb_sha256;
       logic [511:0] b;
       b = {64{8'h61}};
       hash_block(b, 1'b1);
+      hash_block(b, 1'b0);
+      b = {8'h80, 440'd0, 64'd1024};
       hash_block(b, 1'b0);
       chk("sha256(128 x 'a')", digest,
           256'h6836cf13_bac400e9_105071cd_6af47084_dfacad4e_5e302c94_bfed24e0_13afb73e);

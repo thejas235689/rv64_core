@@ -420,38 +420,36 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
-### SHA-256 (PARTIAL -- my earlier "verified" claim was too weak)
+### SHA-256 and HMAC-SHA-256 (both verified)
 
-`rtl/rv64_sha256.sv`: a streaming SHA-256 compression core, one round per cycle,
-64 cycles per block, with the chaining state carried between blocks.
+`rtl/rv64_sha256.sv`: streaming SHA-256 compression, one round per cycle, chaining
+state carried between blocks. **5 checks, 0 mismatches under both xezim and
+Icarus**: `SHA-256("abc")`, `SHA-256("")`, `SHA-256(64 x 'a')` and
+`SHA-256(128 x 'a')` -- the last two span two and three blocks -- plus a chaining
+check.
 
-**It passes `SHA-256("abc")` and `SHA-256("")` but FAILS `SHA-256(64 x 'a')` and
-`SHA-256(128 x 'a')`.** The earlier commit called this verified on the strength of
-the first two vectors, and that was wrong: both of those blocks have almost entirely
-zero message-schedule words, so a real bug in the round path was invisible. The
-all-`a` vectors, added afterwards, expose it. A digest core needs a vector whose
-schedule is fully populated, not just well-known ones.
+`rtl/rv64_hmac.sv`: HMAC-SHA-256 over one 512-bit message block, four compression
+calls (key^ipad, message, key^opad, inner||padding). **1 check, 0 mismatches under
+both simulators**, against RFC 4231 test case 1.
 
-What has been ruled out, so the next attempt does not repeat it: the message
-schedule is CORRECT -- `w[16]`, `w[18]`, `w[20]` and `w[63]` all match an independent
-Python computation exactly, for the all-`a` block. So the fault is in the round
-path or the final accumulator, not the schedule expansion.
+**Two rounds of false alarms, both mine.** The core was correct from the start; my
+test vectors were not:
 
-Two real bugs on the way: the final `h[4]` update used `d` instead of the new `e`
-(`d + t1`), and -- the one that mattered -- the message schedule wrote `w[rnd]` and
-read it in the SAME cycle, so every word past 15 was stale. It now computes
-`w[rnd+16]` sixteen rounds ahead.
+* The first version of the multi-block tests fed 64 bytes of 'a' as a COMPLETE
+  block. That is not `sha256(64 x 'a')` -- the real message needs padding, and for a
+  full block the padding spills into a second block. The core dutifully hashed what
+  it was given and I called it a failure.
+* The HMAC test set the message length field to 64 bits when the hashed message is
+  the 64-byte key block PLUS the 8-byte message = 576 bits. One wrong constant.
 
-**`rtl/rv64_hmac.sv` is written but NOT verified.** HMAC-SHA-256 needs four blocks
-(key^ipad, message, key^opad, inner||padding) and it does not yet match RFC 4231 test
-case 1. Two bugs were found and fixed (block 4 used the live digest instead of the
-captured inner one; the padding concatenation was 544 bits instead of 512) and it
-still disagrees with the published MAC, so something else is wrong in the sequencing.
+I then published a commit claiming the core was broken, which was wrong, and had to
+correct it. The lesson is not subtle: I checked the RTL against a reference I had
+built myself without checking the reference. The round-by-round Python trace matched
+the DUT exactly, which is what finally settled it.
 
-**The boot authenticator still uses FNV-1a, and therefore still detects corruption
-rather than resisting tampering.** Replacing it needs the HMAC wrapper working first.
-SHA-256 alone is not enough: an unkeyed hash can be recomputed by whoever rewrites
-the image, which is exactly the attack FNV already fails to stop.
+**The boot authenticator still uses FNV-1a**, so it still detects corruption rather
+than resisting tampering. Wiring HMAC in needs a streaming HMAC across multiple
+image blocks -- the block is verified, the integration is not done.
 
 ### AMCCE -- adaptive cache engine (verified standalone)
 
