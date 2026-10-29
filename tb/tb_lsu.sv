@@ -81,6 +81,25 @@ module tb_lsu;
   endtask
 
   // drive one access and wait for done
+  task automatic amo(input logic [63:0] a, input logic [2:0] sz,
+                     input logic [4:0] op, input logic [63:0] wd);
+    begin
+      @(posedge clk); #1;
+      req_addr = a; req_size = sz; req_uns = 1'b0; req_we = 1'b0; req_wdata = wd;
+      req_start = 1'b1; req_atomic = AT_AMO; req_amo_op = op;
+      @(posedge clk); #1;
+      req_start = 1'b0;
+      begin
+        int g; g = 0;
+        while (!busy && g < 20) begin @(posedge clk); #1; g++; end
+        g = 0;
+        while (!done && g < 60) begin @(posedge clk); #1; g++; end
+        if (g >= 60) begin errors++; $display("MISMATCH amo never completed for %h", a); end
+      end
+      @(posedge clk); #1;
+    end
+  endtask
+
   task automatic access(input logic [63:0] a, input logic [2:0] sz,
                         input logic uns, input logic we, input logic [63:0] wd);
     begin
@@ -149,6 +168,27 @@ module tb_lsu;
     chk("misaligned sw leaves 0x207", {56'd0, mem[32'h207]}, 64'h07);
     access(64'h203, MSZ_W, 1'b1, 1'b0, 64'd0);
     chk("read back misaligned sw", load_data, 64'h000000DEADBEEF);
+
+    // ---- 4. Zabha: byte and halfword AMOs -------------------------------
+    // The neighbouring bytes must survive: an AMO that clobbers them is the
+    // classic sub-word atomics bug.
+    for (int i = 0; i < 8; i++) mem[32'h300 + i] = 8'hA0 + i[7:0];
+    amo(64'h303, MSZ_B, 5'b00000, 64'h0000_0000_0000_0005);   // amoadd.b
+    chk("amoadd.b result byte", {56'd0, mem[32'h303]}, 64'hA8);   // 0xA3 + 5
+    chk("amoadd.b leaves 0x302", {56'd0, mem[32'h302]}, 64'hA2);
+    chk("amoadd.b leaves 0x304", {56'd0, mem[32'h304]}, 64'hA4);
+
+    for (int i = 0; i < 8; i++) mem[32'h340 + i] = 8'h10 + i[7:0];
+    amo(64'h342, MSZ_H, 5'b00001, 64'h0000_0000_0000_BEEF);   // amoswap.h
+    chk("amoswap.h low byte", {56'd0, mem[32'h342]}, 64'hEF);
+    chk("amoswap.h high byte", {56'd0, mem[32'h343]}, 64'hBE);
+    chk("amoswap.h leaves 0x341", {56'd0, mem[32'h341]}, 64'h11);
+    chk("amoswap.h leaves 0x344", {56'd0, mem[32'h344]}, 64'h14);
+
+    // amomax.b with a signed comparison: -1 must win over 1
+    mem[32'h380] = 8'hFF;
+    amo(64'h380, MSZ_B, 5'b10100, 64'h0000_0000_0000_0001);   // amomax.b
+    chk("amomax.b signed", {56'd0, mem[32'h380]}, 64'h01);
 
     $display("tb_lsu: %0d checks, %0d mismatches (beats=%0d)", checks, errors, beats);
     $display(errors == 0 ? "RESULT: PASS" : "RESULT: FAIL");

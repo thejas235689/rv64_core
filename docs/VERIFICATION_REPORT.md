@@ -437,6 +437,20 @@ zeroed word for word, the line is dropped, and the word after the block is untou
 -- a block-zero that runs one beat too far is a memory-corruption bug, so the
 overrun check matters as much as the fill.
 
+**Zabha is implemented.** Byte and halfword AMOs run at the access width and the
+result is inserted back at the addressed byte. `tb_lsu` **22 checks, 0 mismatches
+under both simulators**, including that the neighbouring bytes survive an `amoadd.b`
+and an `amoswap.h`, and that `amomax.b` compares signed.
+
+Two bugs, both invisible to the existing atomic tests because those only ever used
+aligned `.w`/`.d`:
+
+* the AMO merged into `data_q`, which is the load value already shifted down by the
+  byte offset -- so a byte AMO wrote to byte 0 of the beat instead of the addressed
+  byte;
+* and the merge masked at byte 0 regardless of the offset, so even with the raw beat
+  the result landed in the wrong place.
+
 **Zawrs is implemented.** `wrs.nto` (0x00D) and `wrs.sto` (0x01D) decode and retire
 immediately. They wait for an event on a reservation set, and the specification allows
 them to complete at once -- which a single-hart core with no other agent to wake it

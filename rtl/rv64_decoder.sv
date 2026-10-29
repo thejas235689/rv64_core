@@ -157,6 +157,9 @@ module rv64_decoder (
         ctrl.imm_sel   = IMM_NONE;
         ctrl.b_sel     = B_IMM;                    // b = 0, so addr = rs1
         unique case (funct3)
+          // Zabha: byte and halfword AMOs
+          3'b000:  ctrl.mem_size = MSZ_B;
+          3'b001:  ctrl.mem_size = MSZ_H;
           3'b010:  ctrl.mem_size = MSZ_W;
           3'b011:  ctrl.mem_size = MSZ_D;
           default: ctrl.illegal = 1'b1;

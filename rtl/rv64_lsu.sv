@@ -81,15 +81,40 @@ module rv64_lsu (
   function automatic logic [63:0] amo_calc(input logic [4:0]  op,
                                            input logic [63:0] old_v,
                                            input logic [63:0] src,
-                                           input logic        is_w);
+                                           input logic [2:0]  size,
+                                           input logic [2:0]  off);
     logic [63:0]        o, sx;
     logic signed [63:0] os, ss;
     logic [63:0]        r;
     begin
-      o  = is_w ? {32'd0, old_v[31:0]} : old_v;
-      sx = is_w ? {32'd0, src[31:0]}   : src;
-      os = is_w ? $signed({{32{old_v[31]}}, old_v[31:0]}) : $signed(old_v);
-      ss = is_w ? $signed({{32{src[31]}}, src[31:0]})     : $signed(src);
+      // Zabha: the operation is performed at the access width, and the result is
+      // inserted back into the beat so the neighbouring bytes are untouched.
+      unique case (size)
+        MSZ_B: begin
+          o  = {56'd0, old_v[off*8 +: 8]};
+          sx = {56'd0, src[7:0]};
+          os = $signed({{56{old_v[off*8+7]}}, old_v[off*8 +: 8]});
+          ss = $signed({{56{src[7]}}, src[7:0]});
+        end
+        MSZ_H: begin
+          o  = {48'd0, old_v[off*8 +: 16]};
+          sx = {48'd0, src[15:0]};
+          os = $signed({{48{old_v[off*8+15]}}, old_v[off*8 +: 16]});
+          ss = $signed({{48{src[15]}}, src[15:0]});
+        end
+        MSZ_W: begin
+          o  = {32'd0, old_v[31:0]};
+          sx = {32'd0, src[31:0]};
+          os = $signed({{32{old_v[31]}}, old_v[31:0]});
+          ss = $signed({{32{src[31]}}, src[31:0]});
+        end
+        default: begin
+          o  = old_v;
+          sx = src;
+          os = $signed(old_v);
+          ss = $signed(src);
+        end
+      endcase
       unique case (op)
         5'b00001: r = sx;                                  // AMOSWAP
         5'b00000: r = o + sx;                              // AMOADD
@@ -102,11 +127,21 @@ module rv64_lsu (
         5'b11100: r = (o > sx) ? o : sx;                    // AMOMAXU
         default:  r = sx;
       endcase
-      return is_w ? {32'd0, r[31:0]} : r;
+      // Insert the result at the addressed byte, leaving its neighbours alone.
+      // Masking at byte 0 instead wrote every byte AMO to offset 0 of the beat.
+      unique case (size)
+        MSZ_B:   return (old_v & ~(64'h0000_0000_0000_00FF << (off*8)))
+                      | (({56'd0, r[7:0]} << (off*8)));
+        MSZ_H:   return (old_v & ~(64'h0000_0000_0000_FFFF << (off*8)))
+                      | (({48'd0, r[15:0]} << (off*8)));
+        MSZ_W:   return (old_v & ~(64'h0000_0000_FFFF_FFFF << (off*8)))
+                      | (({32'd0, r[31:0]} << (off*8)));
+        default: return r;
+      endcase
     end
   endfunction
 
-  wire amo_is_w = (size_q == MSZ_W);
+  wire [2:0] amo_size = size_q;
 
   // ---- Sv39 translation ----------------------------------------------------
   // The walker's PTE reads share this unit's memory port: while it is walking it
@@ -348,7 +383,8 @@ module rv64_lsu (
             end else if (atomic_q == AT_AMO) begin
               // old value to rd, computed value to memory
               data_lat <= data_q;
-              amo_new  <= amo_calc(amo_op_q, data_q, wdata_q, amo_is_w);
+              amo_new  <= amo_calc(amo_op_q, mem_rsp_rdata, wdata_q, amo_size,
+                                   addr_q[2:0]);
               we_q     <= 1'b1;
               state    <= S_WREQ;
             end else begin
