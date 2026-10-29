@@ -447,9 +447,24 @@ correct it. The lesson is not subtle: I checked the RTL against a reference I ha
 built myself without checking the reference. The round-by-round Python trace matched
 the DUT exactly, which is what finally settled it.
 
-**The boot authenticator still uses FNV-1a**, so it still detects corruption rather
-than resisting tampering. Wiring HMAC in needs a streaming HMAC across multiple
-image blocks -- the block is verified, the integration is not done.
+### Keyed boot authentication (verified standalone, NOT in the core)
+
+`rtl/rv64_bootauth_hmac.sv`: authenticates a 512-bit image with HMAC-SHA-256 under a
+secret key and asserts `boot_ok` only on an exact MAC match. **6 checks, 0
+mismatches under both xezim and Icarus**, and the third case is the one that matters:
+the RIGHT MAC under the WRONG key is rejected. That is the difference between
+corruption detection and tamper resistance -- an attacker who rewrites the image can
+recompute a plain hash, but cannot forge a MAC without the key.
+
+**The core still uses FNV-1a.** I wired the keyed authenticator into the boot FSM and
+it did not release: the MAC the hardware computed disagreed with the one I expected,
+and I ran out of budget to find out why. The last thing found was the same class of
+error as earlier -- the padding length field must be the TOTAL hashed message (64-byte
+key block + 64-byte image = 1024 bits), not the image's own length -- and fixing that
+did not make it match, so something else in the image assembly differs too.
+
+So the boot path is unchanged and still detects corruption rather than resisting
+tampering. The block is ready; the integration is the remaining work.
 
 ### AMCCE -- adaptive cache engine (verified standalone)
 
