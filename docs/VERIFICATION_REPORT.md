@@ -428,9 +428,16 @@ memory already holds every byte. The D-cache gains a `mgmt_valid`/`mgmt_addr` po
 driven from the MEM stage. `tb_dcache` **14 checks, 0 mismatches under both xezim
 and Icarus**, including "after cbo.inval the line misses" and the refill.
 
-**Zicboz is NOT implemented.** `cbo.zero` (rs2=4) stays an illegal instruction rather
-than silently doing nothing -- a block-zero needs a path that writes eight beats of
-zeros, which does not exist. Same for `Zicbop` prefetch hints (funct3=110).
+**Zicboz is implemented.** `cbo.zero` (rs2=4) runs a `D_ZERO` state in the D-cache
+that issues eight write beats of zeros on the bus port and then invalidates any
+cached copy of the block, so a later load refills from memory.
+
+`tb_dcache` **18 checks, 0 mismatches under both xezim and Icarus**: the block is
+zeroed word for word, the line is dropped, and the word after the block is untouched
+-- a block-zero that runs one beat too far is a memory-corruption bug, so the
+overrun check matters as much as the fill.
+
+**Zicbop prefetch hints (funct3=110) are not decoded** and still trap.
 
 ### Zicclsm -- misaligned loads and stores work in hardware
 

@@ -56,6 +56,7 @@ module rv64_dcache (
   // cache is write-through: memory already holds every byte, so there is nothing
   // to write back.
   input  logic        mgmt_valid,
+  input  logic        mgmt_zero,      // 1 = cbo.zero, 0 = cbo.inval
   input  logic [63:0] mgmt_addr,
   output logic        mgmt_done,
 
@@ -80,14 +81,19 @@ module rv64_dcache (
   wire [5:0]  idx       = req_addr[8:3];
   wire [5:0]  midx      = mgmt_addr[8:3];
   wire [54:0] mtag      = mgmt_addr[63:9];
-  assign mgmt_done = mgmt_valid;   // the invalidate completes in the cycle it is asked
+  // Zicboz: a block zero is eight write beats of zeros, issued from the bus port
+  logic [63:0] zero_addr_q;
+  logic [2:0]  zero_beat_q;
+  logic        mgmt_done_q;
+
+  assign mgmt_done = mgmt_done_q || (mgmt_valid && !mgmt_zero);
   wire [54:0] tag       = req_addr[63:9];
   wire        hit       = valid_q[idx] && (tag_q[idx] == tag);
 
   // No D_WRESP: this bus answers loads only. A store is accepted and forgotten,
   // which is what the LSU already assumes -- waiting for a write response
   // deadlocked the core the first time this cache was wired in.
-  typedef enum logic [2:0] {D_IDLE, D_FILL, D_WREQ, D_DONE} dstate_e;
+  typedef enum logic [2:0] {D_IDLE, D_FILL, D_WREQ, D_DONE, D_ZERO} dstate_e;
   dstate_e     dst;
   logic [63:0] addr_q, wdata_q;
   logic [7:0]  wstrb_q;
@@ -97,13 +103,14 @@ module rv64_dcache (
   logic        bypass_q;
   logic        hit_pulse_q, miss_pulse_q;
 
+
   assign req_ready = (dst == D_IDLE);
 
-  assign bus_req_valid = (dst == D_FILL) || (dst == D_WREQ);
-  assign bus_req_addr  = {addr_q[63:3], 3'b000};
-  assign bus_req_we    = we_q;
-  assign bus_req_wstrb = (dst == D_WREQ) ? wstrb_q : 8'h00;
-  assign bus_req_wdata = wdata_q;
+  assign bus_req_valid = (dst == D_FILL) || (dst == D_WREQ) || (dst == D_ZERO);
+  assign bus_req_addr  = (dst == D_ZERO) ? zero_addr_q : {addr_q[63:3], 3'b000};
+  assign bus_req_we    = (dst == D_ZERO) ? 1'b1 : we_q;
+  assign bus_req_wstrb = (dst == D_ZERO) ? 8'hFF : ((dst == D_WREQ) ? wstrb_q : 8'h00);
+  assign bus_req_wdata = (dst == D_ZERO) ? 64'd0 : wdata_q;
 
   assign acc_hit   = hit_pulse_q;
   assign acc_miss  = miss_pulse_q;
@@ -141,13 +148,36 @@ module rv64_dcache (
         data_q[i]  <= 64'd0;
         valid_q[i] <= 1'b0;
       end
-    end else if (mgmt_valid) begin
-      // one block, one cycle: cbo.inval
-      if (tag_q[midx] == mtag) valid_q[midx] <= 1'b0;
     end else begin
+      mgmt_done_q <= 1'b0;
+      // cbo.inval completes in the cycle it is asked
+      if (mgmt_valid && !mgmt_zero) begin
+        if (tag_q[midx] == mtag) valid_q[midx] <= 1'b0;
+      end
+      // cbo.zero: start the eight-beat fill with zeros
+      if (mgmt_valid && mgmt_zero && (dst == D_IDLE)) begin
+        zero_addr_q <= {mgmt_addr[63:3], 3'b000};
+        zero_beat_q <= 3'd0;
+        dst         <= D_ZERO;
+      end
       hit_pulse_q  <= 1'b0;
       miss_pulse_q <= 1'b0;
       case (dst)
+        D_ZERO: begin
+          if (bus_req_ready) begin
+            if (zero_beat_q == 3'd7) begin
+              // the whole block is zeros in memory now, so any cached copy is stale
+              if (tag_q[zero_addr_q[8:3]] == zero_addr_q[63:9])
+                valid_q[zero_addr_q[8:3]] <= 1'b0;
+              mgmt_done_q <= 1'b1;
+              dst         <= D_IDLE;
+            end else begin
+              zero_beat_q <= zero_beat_q + 3'd1;
+              zero_addr_q <= zero_addr_q + 64'd8;
+            end
+          end
+        end
+
         D_IDLE: begin
           if (req_valid) begin
             addr_q  <= req_addr;

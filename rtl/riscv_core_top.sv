@@ -296,7 +296,9 @@ module riscv_core_top #(
     // effective address. clean and flush are no-ops because the cache is
     // write-through -- memory already holds every byte.
     .mgmt_valid     (ex_mem_v && (ex_mem_insn[6:0] == 7'b0001111) &&
-                     (ex_mem_insn[14:12] == 3'b010) && (ex_mem_insn[24:20] == 5'd0)),
+                     (ex_mem_insn[14:12] == 3'b010) &&
+                     ((ex_mem_insn[24:20] == 5'd0) || (ex_mem_insn[24:20] == 5'd4))),
+    .mgmt_zero      (ex_mem_insn[24:20] == 5'd4),   // cbo.zero vs cbo.inval
     .mgmt_addr      (ex_mem_addr),
     .bypass         (amcce_bypass),
     .acc_hit        (dc_acc_hit),

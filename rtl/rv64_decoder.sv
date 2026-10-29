@@ -379,10 +379,10 @@ module rv64_decoder (
         // model is strongly ordered for a single hart.
         ctrl.is_fence = 1'b1;
         if (funct3 > 3'b001) begin
-          // Zicbom: cbo.inval (rs2=0), cbo.clean (1), cbo.flush (2) on a cache
-          // block address. cbo.zero (rs2=4) is Zicboz and is NOT implemented, so
-          // it stays illegal rather than silently doing nothing.
-          if ((funct3 == 3'b010) && (rs2f <= 5'd2)) begin
+          // Zicbom: cbo.inval (rs2=0), cbo.clean (1), cbo.flush (2).
+          // Zicboz: cbo.zero (rs2=4), which the D-cache implements as eight
+          // write beats of zeros.
+          if ((funct3 == 3'b010) && ((rs2f <= 5'd2) || (rs2f == 5'd4))) begin
             ctrl.is_cbo   = 1'b1;
             ctrl.is_fence = 1'b0;
           end else begin

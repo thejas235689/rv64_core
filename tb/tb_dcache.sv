@@ -9,6 +9,7 @@ module tb_dcache;
   always #5 clk = ~clk;
 
   logic        mgmt_valid = 1'b0;
+  logic        mgmt_zero = 1'b0;
   logic [63:0] mgmt_addr = 64'd0;
   logic        mgmt_done;
   logic        req_valid, req_we, req_ready, rsp_valid, rsp_error;
@@ -29,7 +30,8 @@ module tb_dcache;
     .bus_req_wstrb(bus_req_wstrb), .bus_req_wdata(bus_req_wdata),
     .bus_req_ready(bus_req_ready), .bus_rsp_valid(bus_rsp_valid),
     .bus_rsp_rdata(bus_rsp_rdata), .bus_rsp_error(bus_rsp_error),
-    .mgmt_valid(mgmt_valid), .mgmt_addr(mgmt_addr), .mgmt_done(mgmt_done),
+    .mgmt_valid(mgmt_valid), .mgmt_zero(mgmt_zero),
+    .mgmt_addr(mgmt_addr), .mgmt_done(mgmt_done),
     .bypass(1'b0), .acc_hit(), .acc_miss(),
     .hit_count(hits), .miss_count(misses)
   );
@@ -115,6 +117,21 @@ module tb_dcache;
     acc(64'h0000, 1'b0, 8'h00, 64'd0, d);
     chk("after cbo.inval the line misses", misses, 32'd2);
     chk("after cbo.inval the data refills", d, 1);
+
+    // ---- 2c. Zicboz: cbo.zero writes a whole block of zeros --------------
+    // Put known data in a block, zero it, and check memory byte for byte.
+    for (int i = 0; i < 9; i++) mem[32'h400/8 + i] = 64'hFFFF_FFFF_FFFF_FFFF;
+    @(posedge clk); #1; mgmt_addr = 64'h400; mgmt_zero = 1'b1; mgmt_valid = 1'b1;
+    @(posedge clk); #1; mgmt_valid = 1'b0; mgmt_zero = 1'b0;
+    begin
+      int g; g = 0;
+      while (!mgmt_done && g < 40) begin @(posedge clk); #1; g++; end
+      if (g >= 40) begin errors++; $display("MISMATCH cbo.zero never completed"); end
+    end
+    chk("cbo.zero word 0", mem[32'h400/8 + 0], 64'd0);
+    chk("cbo.zero word 3", mem[32'h400/8 + 3], 64'd0);
+    chk("cbo.zero word 7", mem[32'h400/8 + 7], 64'd0);
+    chk("cbo.zero did not overrun", mem[32'h400/8 + 8], 64'hFFFF_FFFF_FFFF_FFFF);
 
     // ---- 3. write hit: line updated AND memory written -------------------
     acc(64'h0000, 1'b1, 8'hFF, 64'hDEAD_BEEF_0000_0001, d);
