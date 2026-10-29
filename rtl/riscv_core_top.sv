@@ -120,6 +120,7 @@ module riscv_core_top #(
   // IF/ID
   logic        if_id_v;
   logic [63:0] if_id_pc;
+  logic        if_id_rvc;
   logic [31:0] if_id_insn;
   logic        if_id_ptaken;
   logic [63:0] if_id_ptarget;
@@ -127,6 +128,7 @@ module riscv_core_top #(
   // ID/EX
   logic        id_ex_v;
   logic [63:0] id_ex_pc;
+  logic        id_ex_rvc;
   logic [31:0] id_ex_insn;
   logic [63:0] id_ex_imm;
   ctrl_t       id_ex_ctrl;
@@ -140,6 +142,7 @@ module riscv_core_top #(
   // EX/MEM
   logic        ex_mem_v;
   logic [63:0] ex_mem_pc;
+  logic        ex_mem_rvc;
   logic [31:0] ex_mem_insn;
   logic [4:0]  ex_mem_rd;
   logic        ex_mem_reg_we;
@@ -200,6 +203,7 @@ module riscv_core_top #(
   logic        f_insn_valid;
   logic [63:0] f_insn_pc;
   logic [31:0] f_insn;
+  logic [1:0]  f_insn_len;
   logic        f_fault_valid;
   logic [63:0] f_fault_pc;
   logic        f_req_valid;
@@ -361,6 +365,7 @@ module riscv_core_top #(
   logic        step_wait_q;
   logic        wfi_active_q;
   logic [63:0] wfi_pc_q;
+  logic        wfi_rvc_q;
 
   logic        fetch_stopped;
 
@@ -384,6 +389,7 @@ module riscv_core_top #(
     .insn_valid  (f_insn_valid),
     .insn_pc     (f_insn_pc),
     .insn        (f_insn),
+    .insn_len    (f_insn_len),
     .fault_valid (f_fault_valid),
     .fault_pc    (f_fault_pc),
     .tag_is_control   (f_tag_control),
@@ -770,7 +776,7 @@ module riscv_core_top #(
     unique case (id_ex_ctrl.wb_sel)
       WB_MEM:  ex_wb_val = 64'd0;             // filled from the load result in MEM
       WB_CSR:  ex_wb_val = csr_rdata;
-      WB_PC4:  ex_wb_val = id_ex_pc + 64'd4;
+      WB_PC4:  ex_wb_val = id_ex_pc + (id_ex_rvc ? 64'd2 : 64'd4);
       default: ex_wb_val = ex_alu_out;
     endcase
   end
@@ -937,7 +943,7 @@ module riscv_core_top #(
       trap_tval_sel  = 64'd0;
     end else if (wfi_irq_take) begin
       trap_cause_sel = irq_cause;
-      trap_pc_sel    = wfi_pc_q + 64'd4;
+      trap_pc_sel    = wfi_pc_q + (wfi_rvc_q ? 64'd2 : 64'd4);
       trap_tval_sel  = 64'd0;
     end else begin
       trap_cause_sel = CAUSE_INST_ACCESS;
@@ -959,7 +965,8 @@ module riscv_core_top #(
   // resolves NOT taken must resume at pc+4 -- its branch target is the wrong
   // path in that case.
   always_comb begin
-    if (id_ex_ctrl.is_branch && !branch_taken) redirect_pc_ex = id_ex_pc + 64'd4;
+    if (id_ex_ctrl.is_branch && !branch_taken)
+      redirect_pc_ex = id_ex_pc + (id_ex_rvc ? 64'd2 : 64'd4);
     else                                       redirect_pc_ex = ex_target;
   end
 
@@ -1043,6 +1050,7 @@ module riscv_core_top #(
       pc_f          <= RESET_PC;
       if_id_v       <= 1'b0;
       if_id_pc      <= 64'd0;
+      if_id_rvc     <= 1'b0;
       if_id_insn    <= 32'd0;
       if_id_ptaken  <= 1'b0;
       if_id_ptarget <= 64'd0;
@@ -1050,7 +1058,8 @@ module riscv_core_top #(
       if (f_redirect) begin
         pc_f <= f_redirect_pc;
       end else if (f_consume) begin
-        pc_f <= f_pred_taken ? f_pred_target : (f_insn_pc + 64'd4);
+        pc_f <= f_pred_taken ? f_pred_target
+                             : (f_insn_pc + ((f_insn_len == 2'd2) ? 64'd2 : 64'd4));
       end
 
       if (flush_front) begin
@@ -1058,6 +1067,7 @@ module riscv_core_top #(
       end else if (f_consume) begin
         if_id_v       <= 1'b1;
         if_id_pc      <= f_insn_pc;
+        if_id_rvc     <= (f_insn_len == 2'd2);
         if_id_insn    <= f_insn;
         if_id_ptaken  <= f_pred_taken;
         if_id_ptarget <= f_pred_target;
@@ -1090,6 +1100,7 @@ module riscv_core_top #(
     end else if (if_id_v) begin
       id_ex_v        <= 1'b1;
       id_ex_pc       <= if_id_pc;
+      id_ex_rvc      <= if_id_rvc;
       id_ex_insn     <= if_id_insn;
       id_ex_imm      <= dec_imm;
       id_ex_ctrl     <= dec_ctrl;
@@ -1212,6 +1223,7 @@ module riscv_core_top #(
       step_wait_q    <= 1'b0;
       wfi_active_q   <= 1'b0;
       wfi_pc_q       <= 64'd0;
+      wfi_rvc_q      <= 1'b0;
     end else begin
       // ---- halt request / ebreak entry ------------------------------------
       if ((dbg_halt_req || ebreak_commit) && !halted_q) halt_pending_q <= 1'b1;
@@ -1241,6 +1253,7 @@ module riscv_core_top #(
       if (ex_mem_v && ex_mem_is_wfi && !mem_trap) begin
         wfi_active_q <= 1'b1;
         wfi_pc_q     <= ex_mem_pc;
+        wfi_rvc_q    <= ex_mem_rvc;
       end else if (wfi_active_q && csr_irq_pending) begin
         wfi_active_q <= 1'b0;
       end

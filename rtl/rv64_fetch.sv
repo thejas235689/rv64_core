@@ -31,6 +31,7 @@ module rv64_fetch (
   output logic        insn_valid,
   output logic [63:0] insn_pc,
   output logic [31:0] insn,
+  output logic [1:0]  insn_len,
   output logic        fault_valid,
   output logic [63:0] fault_pc,
 
@@ -58,8 +59,22 @@ module rv64_fetch (
   logic [31:0] prev_insn_q;
   logic        prev_valid_q;
 
+  logic        nxt_v;
+  logic [63:0] nxt_addr, nxt_data;
+  logic [63:0] win;
+  logic [31:0] insn_raw;
+  logic        straddle;
+
+  assign win      = {nxt_data, beat_data};
+  assign insn_raw = win[{pc_i[2:1], 4'b0000} +: 32];
+  assign straddle = (pc_i[2:0] == 3'd6) && (insn_raw[1:0] == 2'b11);
+
   logic [31:0] cur_insn;
-  assign cur_insn = pc_i[2] ? beat_data[63:32] : beat_data[31:0];
+  logic        rvc_illegal;
+  rv64_rvc_expand u_rvc (
+    .cin(insn_raw[15:0]), .cout(cur_insn), .illegal(rvc_illegal), .is_ebreak()
+  );
+  wire is_rvc = (insn_raw[1:0] != 2'b11);
 
   rv64_predecode u_pre (
     .insn           (cur_insn),
@@ -83,12 +98,15 @@ module rv64_fetch (
   assign need    = !beat_v || (beat_addr != aligned);
 
   // single outstanding request: never issue while one is in flight
-  assign req_valid = need && !pause && !fault_q && !out_pending;
-  assign req_addr  = aligned;
+  wire need_nxt = (pc_i[2:0] == 3'd6) && (!nxt_v || (nxt_addr != (aligned + 64'd8)));
+  assign req_valid = (need || need_nxt) && !pause && !fault_q && !out_pending;
+  assign req_addr  = need ? aligned : (aligned + 64'd8);
 
-  assign insn_valid = beat_v && (beat_addr == aligned) && !fault_q;
+  assign insn_valid = beat_v && (beat_addr == aligned) && !fault_q &&
+                      (!straddle || nxt_v);
   assign insn_pc    = pc_i;
-  assign insn       = cur_insn;
+  assign insn       = is_rvc ? cur_insn : insn_raw;
+  assign insn_len   = is_rvc ? 2'd2 : 2'd4;
 
   assign fault_valid = fault_q;
   assign fault_pc    = fault_addr_q;
@@ -104,20 +122,24 @@ module rv64_fetch (
       fault_addr_q <= 64'd0;
       prev_insn_q  <= 32'd0;
       prev_valid_q <= 1'b0;
+      nxt_v        <= 1'b0;
+      nxt_addr     <= 64'd0;
+      nxt_data     <= 64'd0;
     end else if (redirect) begin
       beat_v       <= 1'b0;
+      nxt_v        <= 1'b0;
       out_pending  <= 1'b0;
       fault_q      <= 1'b0;
     end else begin
       // remember what was consumed, for the next pair's fusion hint
       if (consume && insn_valid) begin
-        prev_insn_q  <= cur_insn;
+        prev_insn_q  <= is_rvc ? cur_insn : insn_raw;
         prev_valid_q <= 1'b1;
       end
       // issue tracking
       if (req_valid && req_ready) begin
         out_pending <= 1'b1;
-        out_addr    <= aligned;
+        out_addr    <= need ? aligned : (aligned + 64'd8);
       end
 
       // response: accept only if it still matches the address we want
@@ -128,9 +150,11 @@ module rv64_fetch (
           fault_addr_q <= aligned;
           beat_v       <= 1'b0;
         end else if (!rsp_error) begin
-          beat_v    <= 1'b1;
-          beat_addr <= out_addr;
-          beat_data <= rsp_data;
+          if (out_addr == aligned) begin
+            beat_v <= 1'b1; beat_addr <= out_addr; beat_data <= rsp_data;
+          end else begin
+            nxt_v <= 1'b1; nxt_addr <= out_addr; nxt_data <= rsp_data;
+          end
         end
       end
     end

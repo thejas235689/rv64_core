@@ -57,9 +57,11 @@ unless the row says otherwise.
 | Xcetask | Task descriptor engine (window `0x7D0`) |
 | Observability | Retirement PC/instruction, GPR writeback, trap cause/PC, interrupt flag, privilege, debug event, counters |
 
-**`rv64_rvc_expand`** converts the RV64C compressed encodings to their 32-bit
-equivalents (verified, 13 checks, but **not yet instantiated** — wiring it in needs
-variable-length fetch, which the pipeline does not have; `docs/RVC_FETCH_DESIGN.md` records exactly what that rework needs).
+**C (compressed) is implemented.** `rv64_rvc_expand` converts the RV64C encodings to
+their 32-bit equivalents, and the fetch presents a 128-bit window over two beats so a
+32-bit instruction straddling a beat boundary is visible. `pc` advances by the
+instruction's own length (2 or 4) in the primary path, the not-taken branch redirect,
+the `auipc`/`jal` link value and the `wfi` resume. `misa` advertises C (bit 2).
 
 **Not in this core:** cache coherence, cache inclusion or write-back, prefetch, an
 out-of-order backend, and the four research blocks (DNA, neuromorphic, photonic,

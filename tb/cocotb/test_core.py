@@ -1950,7 +1950,7 @@ async def test_misa_bits(dut):
     # actually returned; reading the register file hierarchically did not work
     got = h.trace[0][4]
     dut._log.info(f"misa = {got:#x}")
-    assert got == 0x8000000000141101, f"misa should be 0x8000000000141101, got {got:#x}"
+    assert got == 0x8000000000141105, f"misa should be 0x8000000000141105, got {got:#x}"
 
 
 @cocotb.test()
@@ -1992,3 +1992,31 @@ async def test_cache_ops(dut):
     assert 2 not in traps, f"a cache op raised illegal instruction: {traps}"
     # the effect of cbo.zero on memory is checked byte for byte in tb_dcache; here
     # the point is that all five instructions execute instead of trapping.
+
+
+@cocotb.test()
+async def test_rvc_in_core(dut):
+    """Compressed instructions must execute and advance pc by 2."""
+    words = [0x0285429D, 0x00000073]   # c.li x5,7 ; c.addi x5,1 ; ecall
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+
+    seen = []
+    async def watch():
+        while True:
+            await RisingEdge(dut.clk)
+            if int(dut.u_core.f_insn_valid.value) == 1:
+                seen.append((int(dut.u_core.f_insn_pc.value),
+                             int(dut.u_core.f_insn.value),
+                             int(dut.u_core.f_insn_len.value)))
+
+    cocotb.start_soon(watch())
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+    dut._log.info(f"fetch presented: {[(hex(p), hex(i), l) for p, i, l in seen]}")
+    dut._log.info(f"trace = {h.trace}")
+    got = h.trace[-1][4] if h.trace else None
+    assert len(seen) >= 3, f"fetch presented only {seen}"
+    assert got == 8, f"expected x5 = 8, got {got}"
