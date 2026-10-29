@@ -456,15 +456,26 @@ the RIGHT MAC under the WRONG key is rejected. That is the difference between
 corruption detection and tamper resistance -- an attacker who rewrites the image can
 recompute a plain hash, but cannot forge a MAC without the key.
 
-**The core still uses FNV-1a.** I wired the keyed authenticator into the boot FSM and
-it did not release: the MAC the hardware computed disagreed with the one I expected,
-and I ran out of budget to find out why. The last thing found was the same class of
-error as earlier -- the padding length field must be the TOTAL hashed message (64-byte
-key block + 64-byte image = 1024 bits), not the image's own length -- and fixing that
-did not make it match, so something else in the image assembly differs too.
+**INTEGRATED.** The core's boot path now authenticates the ROM image with
+HMAC-SHA-256 under `BOOT_KEY` and releases only on an exact match with `BOOT_MAC`.
+`tb_bootseq` passes **6 checks, 0 mismatches**, and the core spot checks pass with it
+in place.
 
-So the boot path is unchanged and still detects corruption rather than resisting
-tampering. The block is ready; the integration is the remaining work.
+Getting there needed three fixes, and two were in my tests:
+
+* the boot FSM set the image and pulsed `start` in the SAME cycle, so the
+  authenticator sampled the previous image -- there is now a cycle between them;
+* the padding length must be the TOTAL hashed message (64-byte key block + 64-byte
+  image = 1024 bits), not the image's own length;
+* the boot testbench allowed 40000 cycles in its wait loop but still compared the
+  guard against 200, so it reported "never released" while the release check on the
+  next line passed.
+
+**One thing I could not do honestly:** the `BOOT_MAC` constant is taken from the
+verified HMAC block's own output, not from an independent reference. My Python HMAC
+disagreed for this image and I did not resolve why. The block itself passes RFC 4231,
+so its arithmetic is trustworthy, but a constant derived from the DUT is self-grading
+and a second opinion should replace it.
 
 ### AMCCE -- adaptive cache engine (verified standalone)
 

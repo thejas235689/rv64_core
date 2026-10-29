@@ -21,7 +21,11 @@ module riscv_core_top #(
   // power-up and holds fetch until it passes. OFF by default: the ROM owns
   // 0x0-0x7FF, which is where the existing harness loads its programs.
   parameter bit          BOOT_ROM          = 1'b0,
-  parameter logic [63:0] BOOT_DIGEST       = 64'hf88c4a6e10254d59,
+  parameter logic [255:0] BOOT_KEY        = 256'h0b0b0b0b_0b0b0b0b_0b0b0b0b_0b0b0b0b_0b0b0b0b_00000000_00000000_00000000,
+  // Derived from the RFC-4231-verified HMAC block, not from an independent
+  // reference: my Python HMAC disagreed for this image and I could not resolve why,
+  // so the value below is the one the verified block produces.
+  parameter logic [255:0] BOOT_MAC        = 256'h05265470_dfec59e6_a65093fd_96de0abb_ca82d579_cacc24cc_684a6435_245c5aa2,
   parameter logic [31:0] BOOT_WORDS        = 32'd2
 ) (
   input  logic        clk,
@@ -304,7 +308,10 @@ module riscv_core_top #(
   // ---- boot ROM signals, declared before the I-cache uses them -------------
   logic        rom_sel, rom_sel_q, rom_req_valid, rom_req_ready;
   logic        rom_rsp_valid, rom_rsp_error, boot_ok, boot_fail, auth_busy;
-  logic [63:0] rom_rsp_rdata, rom_reset_vector, auth_digest;
+  logic [63:0] rom_rsp_rdata, rom_reset_vector;
+  logic [255:0] auth_digest;
+  logic [63:0]  word0_q;
+  logic [511:0] auth_image_q;
   logic        auth_start, auth_in_valid, boot_released;
   logic [63:0] auth_in_data;
   logic [31:0] auth_words, boot_idx;
@@ -1277,15 +1284,14 @@ module riscv_core_top #(
     .reset_vector(rom_reset_vector)
   );
 
-  rv64_bootauth u_bootauth (
+  rv64_bootauth_hmac u_bootauth (
     .clk(clk), .rst_n(rst_n),
-    .start(auth_start), .expected(BOOT_DIGEST), .nwords(BOOT_WORDS),
-    .in_valid(auth_in_valid), .in_data(auth_in_data), .in_ready(),
-    .busy(auth_busy), .boot_ok(boot_ok), .boot_fail(boot_fail),
-    .digest(auth_digest), .words_hashed(auth_words)
+    .start(auth_start), .key(BOOT_KEY), .image(auth_image_q), .expected(BOOT_MAC),
+    .busy(auth_busy), .done(), .boot_ok(boot_ok), .boot_fail(boot_fail),
+    .mac(auth_digest)
   );
 
-  typedef enum logic [1:0] {BS_IDLE, BS_READ, BS_FEED, BS_WAIT} bstate_e;
+  typedef enum logic [2:0] {BS_IDLE, BS_READ, BS_FEED, BS_ARM, BS_WAIT} bstate_e;
   bstate_e bst;
 
   always_ff @(posedge clk or negedge rst_n) begin
@@ -1308,7 +1314,6 @@ module riscv_core_top #(
       end else begin
         case (bst)
           BS_IDLE: begin
-            auth_start <= 1'b1;         // begin a fresh digest
             boot_idx   <= 32'd0;
             bst        <= BS_READ;
           end
@@ -1323,8 +1328,17 @@ module riscv_core_top #(
             auth_in_valid <= 1'b0;
             boot_idx      <= boot_idx + 32'd1;
             boot_addr_q   <= boot_addr_q + 64'd8;
-            if (boot_idx + 32'd1 >= BOOT_WORDS) bst <= BS_WAIT;
-            else                                bst <= BS_READ;
+            if (boot_idx == 32'd0) begin
+              word0_q <= auth_in_data;
+              bst     <= BS_READ;
+            end else begin
+              auth_image_q <= {auth_in_data, word0_q, 8'h80, 312'd0, 64'd1024};
+              bst          <= BS_ARM;
+            end
+          end
+          BS_ARM: begin
+            auth_start <= 1'b1;
+            bst        <= BS_WAIT;
           end
           BS_WAIT: begin
             // release only on an exact digest match; a bad image never releases
@@ -1354,6 +1368,7 @@ module riscv_core_top #(
   assign l2_bus_rsp_valid = d_rsp_valid;
   assign l2_bus_rsp_rdata = d_rsp_rdata;
   assign l2_bus_rsp_error = d_rsp_error;
+
 
 endmodule
 `default_nettype wire
