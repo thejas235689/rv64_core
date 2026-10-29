@@ -57,6 +57,10 @@ unless the row says otherwise.
 | Xcetask | Task descriptor engine (window `0x7D0`) |
 | Observability | Retirement PC/instruction, GPR writeback, trap cause/PC, interrupt flag, privilege, debug event, counters |
 
+**`rv64_rvc_expand`** converts the RV64C compressed encodings to their 32-bit
+equivalents (verified, 13 checks, but **not yet instantiated** — wiring it in needs
+variable-length fetch, which the pipeline does not have).
+
 **Not in this core:** cache coherence, cache inclusion or write-back, prefetch, an
 out-of-order backend, and the four research blocks (DNA, neuromorphic, photonic,
 interconnect). CLINT, UART, DMI and the L2 arbiter exist as verified standalone
