@@ -1970,8 +1970,10 @@ async def test_cache_ops(dut):
     L.append(".word 0x0012a00f")   # cbo.clean (x5)
     L.append(".word 0x0022a00f")   # cbo.flush (x5)
     L.append(".word 0x0042a00f")   # cbo.zero  (x5)
-    # prefetch hints
-    L.append(".word 0x0002a00f")   # placeholder keeps the count stable
+    # Zicbop prefetch hint and Zawrs wait-on-reservation
+    L.append(".word 0x0000200f")   # prefetch.i (x5)
+    L.append(".word 0x00d00073")   # wrs.nto
+    L.append(".word 0x01d00073")   # wrs.sto
     L.append("ecall")
 
     words, _ = assemble("\n".join(L))

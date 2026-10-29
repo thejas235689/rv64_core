@@ -437,6 +437,11 @@ zeroed word for word, the line is dropped, and the word after the block is untou
 -- a block-zero that runs one beat too far is a memory-corruption bug, so the
 overrun check matters as much as the fill.
 
+**Zawrs is implemented.** `wrs.nto` (0x00D) and `wrs.sto` (0x01D) decode and retire
+immediately. They wait for an event on a reservation set, and the specification allows
+them to complete at once -- which a single-hart core with no other agent to wake it
+must do. Retiring them as no-ops is correct behaviour here, not a stub.
+
 **Zicbop is implemented.** `prefetch.i/r/w` (funct3=110) decode and retire as
 ordering hints, which the specification explicitly permits -- an implementation may
 ignore them entirely. `test_cache_ops` runs all five cache instructions from a

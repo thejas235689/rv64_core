@@ -405,6 +405,12 @@ module rv64_decoder (
             12'h302: ctrl.is_mret   = 1'b1;
             12'h102: ctrl.is_sret   = 1'b1;
             12'h105: ctrl.is_wfi    = 1'b1;
+            // Zawrs: wrs.nto (0x00D) and wrs.sto (0x01D). These wait for an event
+            // on a reservation set, but the specification allows them to complete
+            // immediately, which is what a single-hart core with no other agent to
+            // wake it must do -- retiring them as no-ops is correct, not a stub.
+            12'h00D,
+            12'h01D: ctrl.is_fence  = 1'b1;
             default: ctrl.illegal   = 1'b1;
           endcase
         end else begin
