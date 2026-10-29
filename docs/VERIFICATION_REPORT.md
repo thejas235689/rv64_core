@@ -573,12 +573,28 @@ is `05265470...`. I searched the plausible padding conventions (image length fie
 1024, 512, 128, 64 or 0 against an outer length of 768, 512 or 0) and none reproduces
 the RTL's value, so this is not a convention mismatch that a comment could explain away.
 
-What that means: **boot authentication is verified only against a value the design
-itself produced.** `tb_bootseq` passing proves the path is self-consistent, not that the
-MAC is the correct HMAC of the image. One of the two implementations is wrong for this
-input and I have not yet determined which. Until that is resolved the boot gate should
-be treated as untested, and the `BOOT_ROM` parameter is 0 by default so nothing relies
-on it today.
+**Resolved: the RTL's HMAC is wrong for this input.** My first reference was itself
+buggy -- it built the RFC 4231 message block as 72 bytes instead of 64, so it failed its
+own published vector while the compression function it sat on was correct. I validated
+the compression function against `sha256("abc")` and stopped there, which was not enough:
+the HMAC construction on top of it was never checked.
+
+With the reference corrected it now reproduces RFC 4231 case 1 exactly,
+`b0344c61...2e32cff7`, and against the boot image it gives:
+
+| | inner digest | MAC |
+| --- | --- | --- |
+| reference (validated) | `87ec73ce...9191c30d` | `45f57827...d18628bf` |
+| RTL | `0401b551...db4bbdb8` | `05265470...245c5aa2` |
+
+They differ at the *inner* digest, so the fault is in the first two compression calls --
+the key^ipad block or the image block -- not in the outer padding. `tb_hmac` passing RFC
+4231 means the block is right for a message block carrying 8 data bytes; the boot image
+carries a full 64-byte block with an embedded length, and that is where it diverges.
+
+So: **boot authentication does not compute the correct MAC**, and the only reason
+`tb_bootseq` passes is that `BOOT_MAC` was copied from the same wrong computation. The
+boot gate is untested. `BOOT_ROM` is 0 by default, so nothing relies on it today.
 
 ### AMCCE -- adaptive cache engine (verified standalone)
 
