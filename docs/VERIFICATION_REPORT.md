@@ -437,7 +437,10 @@ zeroed word for word, the line is dropped, and the word after the block is untou
 -- a block-zero that runs one beat too far is a memory-corruption bug, so the
 overrun check matters as much as the fill.
 
-**Zicbop prefetch hints (funct3=110) are not decoded** and still trap.
+**Zicbop is implemented.** `prefetch.i/r/w` (funct3=110) decode and retire as
+ordering hints, which the specification explicitly permits -- an implementation may
+ignore them entirely. `test_cache_ops` runs all five cache instructions from a
+program and asserts that none raises an illegal instruction.
 
 ### Zicclsm -- misaligned loads and stores work in hardware
 

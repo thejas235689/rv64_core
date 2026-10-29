@@ -385,6 +385,11 @@ module rv64_decoder (
           if ((funct3 == 3'b010) && ((rs2f <= 5'd2) || (rs2f == 5'd4))) begin
             ctrl.is_cbo   = 1'b1;
             ctrl.is_fence = 1'b0;
+          end else if (funct3 == 3'b110) begin
+            // Zicbop: prefetch.i / prefetch.r / prefetch.w. These are hints, so
+            // retiring as an ordering no-op is architecturally correct -- the spec
+            // allows an implementation to ignore them entirely.
+            ctrl.is_fence = 1'b1;
           end else begin
             ctrl.illegal = 1'b1;
           end

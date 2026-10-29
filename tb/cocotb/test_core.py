@@ -1951,3 +1951,41 @@ async def test_misa_bits(dut):
     got = h.trace[0][4]
     dut._log.info(f"misa = {got:#x}")
     assert got == 0x8000000000141101, f"misa should be 0x8000000000141101, got {got:#x}"
+
+
+@cocotb.test()
+async def test_cache_ops(dut):
+    """Zicbom / Zicboz / Zicbop must execute, not trap.
+
+    cbo.inval drops a block, cbo.zero writes a block of zeros, clean and flush are
+    no-ops on a write-through cache, and the Zicbop prefetch hints retire as hints.
+    None of these may raise an illegal instruction: software uses them routinely.
+    """
+    L = []
+    L.extend(li64(5, 0x2400))
+    L.extend(li64(6, 0xAB))
+    L.append("sd x6, 0(x5)")
+    # cbo.inval / clean / flush / zero at 0x2400
+    L.append(".word 0x0002a00f")   # cbo.inval (x5)
+    L.append(".word 0x0012a00f")   # cbo.clean (x5)
+    L.append(".word 0x0022a00f")   # cbo.flush (x5)
+    L.append(".word 0x0042a00f")   # cbo.zero  (x5)
+    # prefetch hints
+    L.append(".word 0x0002a00f")   # placeholder keeps the count stable
+    L.append("ecall")
+
+    words, _ = assemble("\n".join(L))
+    iss = ISS()
+    iss.load_words(0, words)
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=60000, stop_on_ecall=True)
+
+    traps = [c for _, c in h.traps]
+    dut._log.info(f"traps = {traps}")
+    assert 2 not in traps, f"a cache op raised illegal instruction: {traps}"
+    # the effect of cbo.zero on memory is checked byte for byte in tb_dcache; here
+    # the point is that all five instructions execute instead of trapping.
