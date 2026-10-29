@@ -420,6 +420,23 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Zifencei -- fence.i now invalidates the instruction cache
+
+`fence.i` was decoded but did nothing: the I-cache had no invalidate port, so a
+store into instruction memory was invisible to fetch and self-modifying code
+executed stale instructions. The cache now has an `invalidate` input that clears
+every valid bit and returns the state machine to idle in one cycle, driven from the
+retiring `fence.i` in the core.
+
+`tb_icache` **19 checks, 0 mismatches under both xezim and Icarus**, including
+"after invalidate the line misses" and the refill.
+
+Two bugs, and the first was mine: the testbench drove an `invalidate` signal but
+never connected it to the DUT, so the port floated at X and the branch never fired --
+the same class of miss as the tied-off vector memory port earlier. The RTL bug was
+that clearing the valid bits was not enough; without returning the state machine to
+idle, a pending response is still served from the cleared line.
+
 ### SHA-256 and HMAC-SHA-256 (both verified)
 
 `rtl/rv64_sha256.sv`: streaming SHA-256 compression, one round per cycle, chaining

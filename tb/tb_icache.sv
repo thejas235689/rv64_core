@@ -4,6 +4,7 @@ module tb_icache;
   logic clk = 1'b0, rst_n = 1'b0;
   always #5 clk = ~clk;
 
+  logic        invalidate = 1'b0;
   logic        req_valid;
   logic [63:0] req_addr;
   logic        req_ready, resp_valid, resp_miss;
@@ -15,6 +16,7 @@ module tb_icache;
 
   rv64_icache u_cache (
     .clk(clk), .rst_n(rst_n),
+    .invalidate(invalidate),
     .req_valid(req_valid), .req_addr(req_addr), .req_ready(req_ready),
     .resp_valid(resp_valid), .resp_data(resp_data), .resp_miss(resp_miss),
     .fill_valid(fill_valid), .fill_addr(fill_addr), .fill_ready(fill_ready),
@@ -87,6 +89,13 @@ module tb_icache;
     chk("warm access data", d, expected_data(64'h100));
     chk("hit counter after hit", hit_count, 32'd1);
     chk("miss counter after hit", miss_count, 32'd1);
+
+    // ---- 2b. Zifencei ----------------------------------------------------
+    @(posedge clk); #1; invalidate = 1'b1;
+    @(posedge clk); #1; invalidate = 1'b0;
+    @(posedge clk); #1;
+    fetch(64'h0000_0000_0000_0100, d, m);
+    chk("after invalidate the line misses", m, 1'b1);
 
     // ---- 3. a different line misses --------------------------------------
     fetch(64'h0000_0000_0000_0200, d, m);

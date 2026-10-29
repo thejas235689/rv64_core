@@ -42,6 +42,7 @@ unless the row says otherwise.
 | Caches | 64-line direct-mapped **I-cache** in the fetch path; write-through **D-cache** in the load/store path; a **2 KB L2** (16 sets x 4 ways) and a **16 KB L3** (64 sets x 8 ways) behind it, both the same geometry-parameterised module with RRIP replacement |
 | Adaptive cache control | **AMCCE** watches the D-cache's hit/miss stream and switches it to BYPASS under a streaming scan, with hysteresis |
 | Memory ops | Byte/halfword/word/doubleword, sign/zero extension, byte strobes, misalignment traps |
+| **Zifencei** | `fence.i` invalidates the whole instruction cache, so self-modifying code is visible to fetch |
 | Protection | 8 PMP entries, OFF/TOR/NA4/NAPOT, whole-access checks, M-mode lock semantics |
 | System control | Machine CSRs, synchronous exceptions, illegal-instruction traps, `mret`, `wfi` |
 | Interrupts | Software, timer and external inputs; a four-source PLIC-lite with claim/complete |

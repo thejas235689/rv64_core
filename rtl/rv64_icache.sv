@@ -39,6 +39,10 @@ module rv64_icache (
   input  logic [63:0] fill_rsp_data,
   input  logic        fill_rsp_error,
 
+  // ---- invalidate ----------------------------------------------------------
+  // Zifencei: fence.i must make stores to instruction memory visible to fetch.
+  input  logic        invalidate,
+
   // ---- counters ------------------------------------------------------------
   output logic [31:0] hit_count,
   output logic [31:0] miss_count
@@ -84,6 +88,13 @@ module rv64_icache (
         data_q[i]  <= 64'd0;
         valid_q[i] <= 1'b0;
       end
+    end else if (invalidate) begin
+      // one cycle, every line, and back to idle: a pending response would
+      // otherwise still be served from the cleared line
+      for (int i = 0; i < NLINES; i++) valid_q[i] <= 1'b0;
+      cst    <= C_IDLE;
+      miss_q <= 1'b0;
+      err_q  <= 1'b0;
     end else begin
       case (cst)
         C_IDLE: begin
