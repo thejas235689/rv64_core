@@ -192,43 +192,51 @@ def encode(mn, ops, labels=None, here=0):
 
 
 def assemble(src):
-    """Assemble a multi-line string.  Returns (list_of_words, labels)."""
-    lines = []
+    """Assemble a multi-line string.  Returns (list_of_words, labels).
+
+    The stream is built byte-accurately so `.hword` can emit a compressed
+    instruction and the next instruction lands at pc+2, which is what a straddle
+    test needs.  Everything is packed into 32-bit words at the end.
+    """
     labels = {}
-    pc = 0
+    stream = bytearray()
+    pending = []          # (mnemonic, operands, byte offset)
+
     for raw in src.splitlines():
         line = raw.split("#")[0].strip()
         if not line:
             continue
         while line.endswith(":"):
-            labels[line[:-1]] = pc
+            labels[line[:-1]] = len(stream)
             line = ""
         if not line:
             continue
-        # label followed by an instruction on the same line
         if ":" in line and not line.startswith("."):
             head, rest = line.split(":", 1)
-            labels[head.strip()] = pc
+            labels[head.strip()] = len(stream)
             line = rest.strip()
             if not line:
                 continue
         if line.startswith(".word"):
             for w in line.split()[1:]:
-                lines.append(("__word", [w]))
-                pc += 4
+                stream += (int(w, 0) & 0xFFFFFFFF).to_bytes(4, "little")
             continue
-        lines.append((line.split()[0], line.split()[1:]))
-        pc += 4
+        if line.startswith(".hword"):
+            for h in line.split()[1:]:
+                stream += (int(h, 0) & 0xFFFF).to_bytes(2, "little")
+            continue
+        pending.append((line.split()[0], line.split()[1:], len(stream)))
+        stream += b"\x00\x00\x00\x00"   # placeholder, encoded below
 
-    words = []
-    for idx, (mn, ops) in enumerate(lines):
-        here = idx * 4
-        if mn == "__word":
-            words.append(int(ops[0], 0) & 0xFFFFFFFF)
-            continue
-        # split comma-separated operands
+    # encode the real instructions into their reserved slots
+    for mn, ops, off in pending:
         flat = []
         for o in ops:
-            flat.extend([p.strip() for p in o.split(",") if p.strip()])
-        words.append(encode(mn, flat, labels, here) & 0xFFFFFFFF)
+            flat.extend([q.strip() for q in o.split(",") if q.strip()])
+        w = encode(mn, flat, labels, off) & 0xFFFFFFFF
+        stream[off:off + 4] = w.to_bytes(4, "little")
+
+    while len(stream) % 4:
+        stream += b"\x00"
+    words = [int.from_bytes(stream[i:i + 4], "little") for i in range(0, len(stream), 4)]
     return words, labels
