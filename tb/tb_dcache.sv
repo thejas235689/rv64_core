@@ -8,6 +8,9 @@ module tb_dcache;
   logic clk = 1'b0, rst_n = 1'b0;
   always #5 clk = ~clk;
 
+  logic        mgmt_valid = 1'b0;
+  logic [63:0] mgmt_addr = 64'd0;
+  logic        mgmt_done;
   logic        req_valid, req_we, req_ready, rsp_valid, rsp_error;
   logic [63:0] req_addr, req_wdata, rsp_rdata;
   logic [7:0]  req_wstrb;
@@ -26,6 +29,7 @@ module tb_dcache;
     .bus_req_wstrb(bus_req_wstrb), .bus_req_wdata(bus_req_wdata),
     .bus_req_ready(bus_req_ready), .bus_rsp_valid(bus_rsp_valid),
     .bus_rsp_rdata(bus_rsp_rdata), .bus_rsp_error(bus_rsp_error),
+    .mgmt_valid(mgmt_valid), .mgmt_addr(mgmt_addr), .mgmt_done(mgmt_done),
     .bypass(1'b0), .acc_hit(), .acc_miss(),
     .hit_count(hits), .miss_count(misses)
   );
@@ -102,6 +106,15 @@ module tb_dcache;
     acc(64'h0000, 1'b0, 8'h00, 64'd0, d);
     chk("read hit data", d, 1);
     chk("read hit counter", hits, 32'd1);
+
+    // ---- 2b. Zicbom: cbo.inval drops the block ---------------------------
+    // Without this, a DMA or another agent that writes memory leaves the cache
+    // serving stale bytes forever.
+    @(posedge clk); #1; mgmt_addr = 64'h0000; mgmt_valid = 1'b1;
+    @(posedge clk); #1; mgmt_valid = 1'b0;
+    acc(64'h0000, 1'b0, 8'h00, 64'd0, d);
+    chk("after cbo.inval the line misses", misses, 32'd2);
+    chk("after cbo.inval the data refills", d, 1);
 
     // ---- 3. write hit: line updated AND memory written -------------------
     acc(64'h0000, 1'b1, 8'hFF, 64'hDEAD_BEEF_0000_0001, d);

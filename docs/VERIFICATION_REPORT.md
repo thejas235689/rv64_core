@@ -420,6 +420,18 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Zicbom -- cache block management
+
+`cbo.inval` (rs2=0) now drops the addressed block in the D-cache; `cbo.clean` and
+`cbo.flush` decode and are genuine no-ops, because the cache is write-through and
+memory already holds every byte. The D-cache gains a `mgmt_valid`/`mgmt_addr` port,
+driven from the MEM stage. `tb_dcache` **14 checks, 0 mismatches under both xezim
+and Icarus**, including "after cbo.inval the line misses" and the refill.
+
+**Zicboz is NOT implemented.** `cbo.zero` (rs2=4) stays an illegal instruction rather
+than silently doing nothing -- a block-zero needs a path that writes eight beats of
+zeros, which does not exist. Same for `Zicbop` prefetch hints (funct3=110).
+
 ### Zicclsm -- misaligned loads and stores work in hardware
 
 Misaligned accesses used to trap. They are now split across the 8-byte beat

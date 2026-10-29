@@ -51,6 +51,14 @@ module rv64_dcache (
   input  logic [63:0] bus_rsp_rdata,
   input  logic        bus_rsp_error,
 
+  // ---- management (Zicbom) -------------------------------------------------
+  // cbo.inval drops a block. cbo.clean and cbo.flush are no-ops here because the
+  // cache is write-through: memory already holds every byte, so there is nothing
+  // to write back.
+  input  logic        mgmt_valid,
+  input  logic [63:0] mgmt_addr,
+  output logic        mgmt_done,
+
   // ---- policy input --------------------------------------------------------
   input  logic        bypass,         // from AMCCE: do not allocate
 
@@ -70,6 +78,9 @@ module rv64_dcache (
 
   wire [63:0] line_addr = {req_addr[63:3], 3'b000};
   wire [5:0]  idx       = req_addr[8:3];
+  wire [5:0]  midx      = mgmt_addr[8:3];
+  wire [54:0] mtag      = mgmt_addr[63:9];
+  assign mgmt_done = mgmt_valid;   // the invalidate completes in the cycle it is asked
   wire [54:0] tag       = req_addr[63:9];
   wire        hit       = valid_q[idx] && (tag_q[idx] == tag);
 
@@ -130,6 +141,9 @@ module rv64_dcache (
         data_q[i]  <= 64'd0;
         valid_q[i] <= 1'b0;
       end
+    end else if (mgmt_valid) begin
+      // one block, one cycle: cbo.inval
+      if (tag_q[midx] == mtag) valid_q[midx] <= 1'b0;
     end else begin
       hit_pulse_q  <= 1'b0;
       miss_pulse_q <= 1'b0;

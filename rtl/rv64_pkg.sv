@@ -211,6 +211,7 @@ package rv64_pkg;
     logic        is_ecall;
     logic        is_ebreak;
     logic        is_fence;
+    logic        is_cbo;        // Zicbom: cbo.inval / cbo.clean / cbo.flush
     logic        is_csr;
     logic        is_mdu;
     logic        csr_imm;

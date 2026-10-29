@@ -292,6 +292,12 @@ module riscv_core_top #(
     .bus_rsp_valid  (l2_rsp_valid),
     .bus_rsp_rdata  (l2_rsp_rdata),
     .bus_rsp_error  (l2_rsp_error),
+    // Zicbom: cbo.inval in the MEM stage drops the block. The address is rs1's
+    // effective address. clean and flush are no-ops because the cache is
+    // write-through -- memory already holds every byte.
+    .mgmt_valid     (ex_mem_v && (ex_mem_insn[6:0] == 7'b0001111) &&
+                     (ex_mem_insn[14:12] == 3'b010) && (ex_mem_insn[24:20] == 5'd0)),
+    .mgmt_addr      (ex_mem_addr),
     .bypass         (amcce_bypass),
     .acc_hit        (dc_acc_hit),
     .acc_miss       (dc_acc_miss),
