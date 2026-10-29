@@ -67,7 +67,8 @@ the `auipc`/`jal` link value and the `wfi` resume. `misa` advertises C (bit 2).
 out-of-order backend, and the four research blocks (DNA, neuromorphic, photonic,
 interconnect). CLINT, UART, DMI and the L2 arbiter exist as verified standalone
 blocks but are **not** instantiated. `docs/ROADMAP.md` maps the target feature list
-against what exists.
+against what exists, and `docs/COMPLETION_PLAN.md` sets out the phased path to a
+complete, verified implementation with effort estimates and exit criteria.
 
 ## 3. Tree
 
