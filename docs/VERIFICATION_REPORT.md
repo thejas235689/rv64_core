@@ -420,15 +420,22 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
-### SHA-256 (verified) and HMAC (NOT verified)
+### SHA-256 (PARTIAL -- my earlier "verified" claim was too weak)
 
 `rtl/rv64_sha256.sv`: a streaming SHA-256 compression core, one round per cycle,
 64 cycles per block, with the chaining state carried between blocks.
 
-**3 checks, 0 mismatches under both xezim and Icarus**, against published digests:
-`SHA-256("abc")` = `ba7816bf...f20015ad` and `SHA-256("")` = `e3b0c442...7852b855`,
-plus a chaining check that a second block without `init` continues the state. Known
-answers matter here: a hash graded against its own output proves nothing.
+**It passes `SHA-256("abc")` and `SHA-256("")` but FAILS `SHA-256(64 x 'a')` and
+`SHA-256(128 x 'a')`.** The earlier commit called this verified on the strength of
+the first two vectors, and that was wrong: both of those blocks have almost entirely
+zero message-schedule words, so a real bug in the round path was invisible. The
+all-`a` vectors, added afterwards, expose it. A digest core needs a vector whose
+schedule is fully populated, not just well-known ones.
+
+What has been ruled out, so the next attempt does not repeat it: the message
+schedule is CORRECT -- `w[16]`, `w[18]`, `w[20]` and `w[63]` all match an independent
+Python computation exactly, for the all-`a` block. So the fault is in the round
+path or the final accumulator, not the schedule expansion.
 
 Two real bugs on the way: the final `h[4]` update used `d` instead of the new `e`
 (`d + t1`), and -- the one that mattered -- the message schedule wrote `w[rnd]` and

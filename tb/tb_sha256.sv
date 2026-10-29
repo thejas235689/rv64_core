@@ -36,6 +36,9 @@ module tb_sha256;
       start = 1'b0; init = 1'b0;
       begin
         int g; g = 0;
+        // a stale done from the previous block would end this wait immediately
+        while (done && g < 200) begin @(posedge clk); #1; g++; end
+        g = 0;
         while (!done && g < 200) begin @(posedge clk); #1; g++; end
         if (g >= 200) begin errors++; $display("MISMATCH hash never finished"); end
       end
@@ -69,6 +72,26 @@ module tb_sha256;
       hash_block(b, 1'b1);
       chk("sha256(\"\")", digest,
           256'he3b0c442_98fc1c14_9afbf4c8_996fb924_27ae41e4_649b934c_a495991b_7852b855);
+    end
+
+    // ---- one block of 64 'a': isolates block 1 from the chaining --------
+    begin
+      logic [511:0] b;
+      b = {64{8'h61}};
+      hash_block(b, 1'b1);
+      chk("sha256(64 x 'a')", digest,
+          256'hffe054fe_7ae0cb6d_c65c3af9_b61d5209_f439851d_b43d0ba5_997337df_154668eb);
+    end
+
+    // ---- two-block chaining: 128 bytes of 'a' --------------------------
+    // HMAC depends entirely on chaining, so it needs its own known answer.
+    begin
+      logic [511:0] b;
+      b = {64{8'h61}};
+      hash_block(b, 1'b1);
+      hash_block(b, 1'b0);
+      chk("sha256(128 x 'a')", digest,
+          256'h6836cf13_bac400e9_105071cd_6af47084_dfacad4e_5e302c94_bfed24e0_13afb73e);
     end
 
     // ---- chaining: two blocks without init continue the state ----------
