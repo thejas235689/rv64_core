@@ -559,6 +559,129 @@ Getting there needed three fixes, and two were in my tests:
   guard against 200, so it reported "never released" while the release check on the
   next line passed.
 
+**`BOOT_MAC` is correct, and the HMAC path is verified against an independent
+reference.**
+
+Getting to that answer took three wrong ones on my part, which is worth recording.
+
+1. I first said the constant was self-grading and unresolved.
+2. Then I built a Python HMAC reference and it disagreed -- but the reference itself
+   was broken: it built the RFC 4231 message block as 72 bytes instead of 64, so it
+   failed its own published vector.
+3. I fixed that, and it still disagreed, so I concluded the RTL was wrong. That was
+   also wrong: my test vector placed the image's `0x80` pad byte at bit 312 when the
+   RTL's concatenation `{auth_in_data, word0_q, 8'h80, 312'd0, 64'd1024}` puts it at
+   bits [383:376]. I was hashing a different message.
+
+With the field position corrected, the reference and the RTL agree exactly:
+
+| | inner digest | MAC |
+| --- | --- | --- |
+| reference (validated on RFC 4231) | `0401b551...db4bbdb8` | `05265470...245c5aa2` |
+| RTL | `0401b551...db4bbdb8` | `05265470...245c5aa2` |
+
+`BOOT_MAC` is the correct HMAC-SHA-256 of the image under `BOOT_KEY`, and
+`tb_bootseq` passing is now backed by an independent computation rather than by a
+constant copied from the design.
+
+The lesson is the one this project keeps teaching: a self-built oracle has to be
+validated at the layer it is judging, and every bit position in a concatenation is a
+place to be wrong. Twice I published a claim about the RTL that was really a claim
+about my own test vector.
+
+### Zicclsm -- misaligned loads and stores work in hardware
+
+Misaligned accesses used to trap. They are now split across the 8-byte beat
+boundary by the LSU and merged, for every width, loads and stores alike.
+
+`tb/tb_lsu.sv` -- a new directed testbench that drives the LSU on its own.
+**14 checks, 0 mismatches under both xezim and Icarus**: aligned byte/half/word/
+double, a half-word at an odd address, and misaligned word, double and half loads
+that cross the beat, plus a misaligned word store checked byte by byte and read back.
+
+This is the testbench that should have existed before either of the two failed
+attempts through the whole core. It found the bugs in minutes:
+
+* the strobe is a BYTE vector, so it shifts by `addr[2:0]`, not by `addr[2:0]*8`.
+  Shifting `16'h000F` by 24 zeroed it, turning every misaligned store into a
+  silent no-op -- the store issued its beats and wrote nothing;
+* the response for the beat being captured arrives in the same cycle, so the
+  merge must read the live bus while that state is active; reading only the
+  latched beats returns the previous access's data;
+* and my own testbench used `MSZ_B=0..MSZ_D=3` when the package defines 1..4,
+  which made every check look broken.
+
+The ISS no longer raises load/store misalign traps, so `test_traps` and the trace
+comparisons match the new behaviour.
+
+### Zifencei -- fence.i now invalidates the instruction cache
+
+`fence.i` was decoded but did nothing: the I-cache had no invalidate port, so a
+store into instruction memory was invisible to fetch and self-modifying code
+executed stale instructions. The cache now has an `invalidate` input that clears
+every valid bit and returns the state machine to idle in one cycle, driven from the
+retiring `fence.i` in the core.
+
+`tb_icache` **19 checks, 0 mismatches under both xezim and Icarus**, including
+"after invalidate the line misses" and the refill.
+
+Two bugs, and the first was mine: the testbench drove an `invalidate` signal but
+never connected it to the DUT, so the port floated at X and the branch never fired --
+the same class of miss as the tied-off vector memory port earlier. The RTL bug was
+that clearing the valid bits was not enough; without returning the state machine to
+idle, a pending response is still served from the cleared line.
+
+### SHA-256 and HMAC-SHA-256 (both verified)
+
+`rtl/rv64_sha256.sv`: streaming SHA-256 compression, one round per cycle, chaining
+state carried between blocks. **5 checks, 0 mismatches under both xezim and
+Icarus**: `SHA-256("abc")`, `SHA-256("")`, `SHA-256(64 x 'a')` and
+`SHA-256(128 x 'a')` -- the last two span two and three blocks -- plus a chaining
+check.
+
+`rtl/rv64_hmac.sv`: HMAC-SHA-256 over one 512-bit message block, four compression
+calls (key^ipad, message, key^opad, inner||padding). **1 check, 0 mismatches under
+both simulators**, against RFC 4231 test case 1.
+
+**Two rounds of false alarms, both mine.** The core was correct from the start; my
+test vectors were not:
+
+* The first version of the multi-block tests fed 64 bytes of 'a' as a COMPLETE
+  block. That is not `sha256(64 x 'a')` -- the real message needs padding, and for a
+  full block the padding spills into a second block. The core dutifully hashed what
+  it was given and I called it a failure.
+* The HMAC test set the message length field to 64 bits when the hashed message is
+  the 64-byte key block PLUS the 8-byte message = 576 bits. One wrong constant.
+
+I then published a commit claiming the core was broken, which was wrong, and had to
+correct it. The lesson is not subtle: I checked the RTL against a reference I had
+built myself without checking the reference. The round-by-round Python trace matched
+the DUT exactly, which is what finally settled it.
+
+### Keyed boot authentication (verified standalone, NOT in the core)
+
+`rtl/rv64_bootauth_hmac.sv`: authenticates a 512-bit image with HMAC-SHA-256 under a
+secret key and asserts `boot_ok` only on an exact MAC match. **6 checks, 0
+mismatches under both xezim and Icarus**, and the third case is the one that matters:
+the RIGHT MAC under the WRONG key is rejected. That is the difference between
+corruption detection and tamper resistance -- an attacker who rewrites the image can
+recompute a plain hash, but cannot forge a MAC without the key.
+
+**INTEGRATED.** The core's boot path now authenticates the ROM image with
+HMAC-SHA-256 under `BOOT_KEY` and releases only on an exact match with `BOOT_MAC`.
+`tb_bootseq` passes **6 checks, 0 mismatches**, and the core spot checks pass with it
+in place.
+
+Getting there needed three fixes, and two were in my tests:
+
+* the boot FSM set the image and pulsed `start` in the SAME cycle, so the
+  authenticator sampled the previous image -- there is now a cycle between them;
+* the padding length must be the TOTAL hashed message (64-byte key block + 64-byte
+  image = 1024 bits), not the image's own length;
+* the boot testbench allowed 40000 cycles in its wait loop but still compared the
+  guard against 200, so it reported "never released" while the release check on the
+  next line passed.
+
 **`BOOT_MAC` is NOT trustworthy, and that is now demonstrated rather than suspected.**
 
 The constant in `riscv_core_top` is `05265470dfec59e6a65093fd96de0abbca82d579cacc24cc684a6435245c5aa2`,
