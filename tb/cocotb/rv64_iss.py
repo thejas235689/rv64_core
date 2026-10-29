@@ -59,11 +59,137 @@ if _SIM_DIR not in sys.path:
 import gen_num_vectors as nummodel          # noqa: E402
 
 
+
+# ---------------------------------------------------------------------------
+# RVC expansion -- a Python mirror of rtl/rv64_rvc_expand.sv.
+#
+# Mirrored rather than imported so the ISS and the RTL can disagree, which is the
+# point: tb_rvc pins the RTL against independently computed 32-bit forms, and this
+# function is checked against the same table, so a divergence shows up as a trace
+# mismatch rather than as two implementations agreeing on a shared mistake.
+# ---------------------------------------------------------------------------
+def expand_rvc(h):
+    """Expand a 16-bit compressed instruction. Returns (insn32, illegal)."""
+    op = h & 3
+    f3 = (h >> 13) & 7
+    rd = (h >> 7) & 31
+    rs2 = (h >> 2) & 31
+    rdp = 8 + ((h >> 2) & 7)
+    rs1p = 8 + ((h >> 7) & 7)
+    ci = (((h >> 12) & 1) << 5) | ((h >> 2) & 31)
+    ci_s = sext(ci, 6)
+    ciw = ((((h >> 7) & 0xF) << 6) | (((h >> 11) & 3) << 4) |
+           (((h >> 5) & 1) << 3) | (((h >> 6) & 1) << 2))
+    clw = ((((h >> 5) & 1) << 6) | (((h >> 10) & 7) << 3) | (((h >> 6) & 1) << 2))
+    cld = ((((h >> 5) & 3) << 6) | (((h >> 10) & 7) << 3))
+    lwsp = ((((h >> 2) & 3) << 6) | (((h >> 12) & 1) << 5) | (((h >> 4) & 7) << 2))
+    ldsp = ((((h >> 2) & 7) << 6) | (((h >> 12) & 1) << 5) | (((h >> 5) & 3) << 3))
+    swsp = ((((h >> 7) & 3) << 6) | (((h >> 9) & 0xF) << 2))
+    sdsp = ((((h >> 7) & 7) << 6) | (((h >> 10) & 7) << 3))
+    sp16 = ((((h >> 12) & 1) << 9) | (((h >> 3) & 3) << 7) | (((h >> 5) & 1) << 6) |
+            (((h >> 2) & 1) << 5) | (((h >> 6) & 1) << 4))
+    cj = ((((h >> 12) & 1) << 11) | (((h >> 8) & 1) << 10) | (((h >> 9) & 3) << 8) |
+          (((h >> 6) & 1) << 7) | (((h >> 7) & 1) << 6) | (((h >> 2) & 1) << 5) |
+          (((h >> 11) & 1) << 4) | (((h >> 3) & 7) << 1))
+    cj_s = sext(cj, 12)
+    cb = ((((h >> 12) & 1) << 8) | (((h >> 5) & 3) << 6) | (((h >> 2) & 1) << 5) |
+          (((h >> 10) & 3) << 3) | (((h >> 3) & 3) << 1))
+    cb_s = sext(cb, 9)
+
+    def I(imm, rs1, f3c, rdd, opc):
+        return ((imm & 0xFFF) << 20) | (rs1 << 15) | (f3c << 12) | (rdd << 7) | opc
+
+    def S(imm, rs2v, rs1v, f3c, opc):
+        imm &= 0xFFF
+        return (((imm >> 5) & 0x7F) << 25) | (rs2v << 20) | (rs1v << 15) |                (f3c << 12) | ((imm & 31) << 7) | opc
+
+    def R(f3c, rdd, rs1v, rs2v, opc, f7c=0):
+        return (f7c << 25) | (rs2v << 20) | (rs1v << 15) | (f3c << 12) | (rdd << 7) | opc
+
+    if op == 0:
+        if f3 == 0:
+            if ciw == 0:
+                return 0, True
+            return I(ciw, 2, 0, rdp, 0x13), False
+        if f3 == 2:
+            return I(clw, rs1p, 2, rdp, 0x03), False
+        if f3 == 3:
+            return I(cld, rs1p, 3, rdp, 0x03), False
+        if f3 == 6:
+            return S(clw, rdp, rs1p, 2, 0x23), False
+        if f3 == 7:
+            return S(cld, rdp, rs1p, 3, 0x23), False
+        return 0, True
+    if op == 1:
+        if f3 == 0:
+            return I(ci_s, rd, 0, rd, 0x13), False
+        if f3 == 1:
+            return I(ci_s, rd, 0, rd, 0x1B), False
+        if f3 == 2:
+            return I(ci_s, 0, 0, rd, 0x13), False
+        if f3 == 3:
+            if rd == 2:
+                return I(sp16, 2, 0, 2, 0x13), False
+            return (((ci_s & 0xFFFFF) << 12) | (rd << 7) | 0x37), False
+        if f3 == 4:
+            sub = (h >> 10) & 3
+            if sub == 0:
+                return I(rs2 & 0x3F, rs1p, 5, rs1p, 0x13), False
+            if sub == 1:
+                return I(0x400 | (rs2 & 0x3F), rs1p, 5, rs1p, 0x13), False
+            if sub == 2:
+                return I(ci_s, rs1p, 7, rs1p, 0x13), False
+            sel = (((h >> 12) & 1) << 2) | ((h >> 5) & 3)
+            tbl = {0: (0, 0x33), 1: (4, 0x33), 2: (6, 0x33), 3: (7, 0x33),
+                   4: (0, 0x3B), 5: (0, 0x3B)}
+            if sel not in tbl:
+                return 0, True
+            f3c, opc = tbl[sel]
+            rs1v = rs1p if opc == 0x33 else rs1p
+            return R(f3c, rs1p, rs1v, rs2, opc), False
+        if f3 == 5:
+            # J-type interleaves the immediate: imm[20|10:1|11|19:12]
+            return ((((cj_s >> 20) & 1) << 31) | (((cj_s >> 1) & 0x3FF) << 21) |
+                    (((cj_s >> 11) & 1) << 20) | (((cj_s >> 12) & 0xFF) << 12) |
+                    (0 << 7) | 0x6F), False
+        if f3 in (6, 7):
+            f3b = 0 if f3 == 6 else 1
+            return (((cb_s >> 12) & 1) << 31) | (((cb_s >> 5) & 0x3F) << 25) |                    (0 << 20) | (rs1p << 15) | (f3b << 12) |                    (((cb_s >> 1) & 0xF) << 8) | (((cb_s >> 11) & 1) << 7) | 0x63, False
+        return 0, True
+    if op == 2:
+        if f3 == 0:
+            return I(rs2 & 0x3F, rd, 1, rd, 0x13), False
+        if f3 == 2:
+            return I(lwsp, 2, 2, rd, 0x03), False
+        if f3 == 3:
+            return I(ldsp, 2, 3, rd, 0x03), False
+        if f3 == 4:
+            hi = (h >> 12) & 1
+            if hi == 0 and rd == 0 and rs2 == 0:
+                return 0, True
+            if hi == 1 and rd == 0 and rs2 == 0:
+                return 0x00100073, False
+            if hi == 0 and rs2 == 0:
+                return I(0, rd, 0, 0, 0x67), False
+            if hi == 0:
+                return R(0, rd, 0, rs2, 0x33), False
+            if rs2 == 0:
+                return I(0, rd, 0, 1, 0x67), False
+            return R(0, rd, rd, rs2, 0x33), False
+        if f3 == 6:
+            return S(swsp, rs2, 2, 2, 0x23), False
+        if f3 == 7:
+            return S(sdsp, rs2, 2, 3, 0x23), False
+        return 0, True
+    return 0, True
+
+
 class ISS:
     def __init__(self, mem_size=1 << 17):
         self.mem = bytearray(mem_size)
         self.x = [0] * 32
         self.pc = 0
+        self.insn_len = 4
         self.csr = {
             0x300: 0x1800,       # mstatus: MPP hardwired to M (only M implemented)
             0x301: (2 << 62) | (1 << 0) | (1 << 2) | (1 << 8) | (1 << 12) | (1 << 18) | (1 << 20),  # RV64IMA + C + S + U
@@ -155,9 +281,18 @@ class ISS:
     def step(self):
         """Execute one instruction.  Returns (pc, insn, rd_or_None, wdata)."""
         pc = self.pc
-        insn = int.from_bytes(self.mem[pc:pc + 4], "little")
         self.cycle += 1
         try:
+            half = int.from_bytes(self.mem[pc:pc + 2], "little")
+            if (half & 3) != 3:
+                # RVC: a 16-bit instruction advances pc by 2
+                insn, ill = expand_rvc(half)
+                self.insn_len = 2
+                if ill:
+                    raise Trap(CAUSE_ILLEGAL, half)
+            else:
+                insn = int.from_bytes(self.mem[pc:pc + 4], "little")
+                self.insn_len = 4
             rd, wdata = self._exec(insn)
         except Trap as t:
             # a trapping instruction does not retire: no architectural write
@@ -198,7 +333,7 @@ class ISS:
         imm_u = sext(insn & 0xFFFFF000, 32)
         imm_j = sext(((insn >> 31) << 20) | (((insn >> 12) & 0xFF) << 12) |
                      (((insn >> 20) & 1) << 11) | (((insn >> 21) & 0x3FF) << 1), 21)
-        npc = (self.pc + 4) & M64
+        npc = (self.pc + self.insn_len) & M64
 
         if op == 0x0B:                                    # custom-0: numeric ABI
             self.pc = npc

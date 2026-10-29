@@ -40,6 +40,22 @@ DUT against them. Covergroup instance coverage ranged 52–70 % across these fiv
 programs, which is expected — each program exercises a different slice of the
 ISA, and closure is a P5 activity (see `PROJECT_PLAN.md`).
 
+### Known failure: `test_isa_sweep_fast` regressed with C
+
+The ISA sweep now fails. It is **not** caused by the ISS RVC work -- the failure
+reproduces with the pre-RVC ISS restored from git, so it predates that change.
+
+Almost certainly the cause: the sweep drives raw 32-bit encodings, and some of its
+entries have `insn[1:0] != 2'b11`. Before C those were simply illegal instructions.
+Now the fetch treats any halfword with `[1:0] != 11` as compressed and expands it, so
+those entries become a different instruction rather than trapping, and the DUT diverges
+from the ISS.
+
+The fix is in the sweep, not the RTL: a sweep that intends to test illegal 32-bit
+encodings must place them in a program where the low two bits are `11`, or expect the
+compressed interpretation. This is the sweep doing its job -- it caught a real
+consequence of adding C.
+
 ### Core regression
 
 | Test | Result | What it proves |

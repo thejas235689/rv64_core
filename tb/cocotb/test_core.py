@@ -2002,6 +2002,8 @@ async def test_rvc_in_core(dut):
     await h.startup()
     h.clear()
     await h.load(words)
+    iss = ISS()
+    iss.load_words(0, words)
 
     seen = []
     async def watch():
@@ -2016,6 +2018,8 @@ async def test_rvc_in_core(dut):
     await h.reset()
     await h.run(max_cycles=20000, stop_on_ecall=True)
     dut._log.info(f"fetch presented: {[(hex(p), hex(i), l) for p, i, l in seen]}")
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "rvc-in-core")
     dut._log.info(f"trace = {h.trace}")
     got = h.trace[-1][4] if h.trace else None
     assert len(seen) >= 3, f"fetch presented only {seen}"
@@ -2036,6 +2040,8 @@ async def test_rvc_in_core(dut):
     await h2.startup()
     h2.clear()
     await h2.load(words2)
+    iss2 = ISS()
+    iss2.load_words(0, words2)
     await h2.reset()
     await h2.run(max_cycles=20000, stop_on_ecall=True)
     x5 = None
@@ -2045,5 +2051,7 @@ async def test_rvc_in_core(dut):
                 x5 = int(t[4])
             except (ValueError, TypeError):
                 pass
+    iss2_trace = iss2.run_to(len(h2.trace))
+    compare(h2, iss2_trace, "rvc-straddle")
     dut._log.info(f"straddle: {len(h2.trace)} retirements, x5 = {x5}")
     assert x5 == 8, f"straddled instruction did not run: x5 = {x5}"
