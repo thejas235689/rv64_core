@@ -254,7 +254,7 @@ class ISS:
             n = size[f3]
             addr = u64(a + imm_i)
             if addr % n:
-                raise Trap(CAUSE_LOAD_MISALIGN, addr)
+                pass  # Zicclsm: misaligned loads are handled in hardware
             v = self.read(addr, n)
             if f3 in (0, 1, 2):
                 v = sext(v, 8 * n)
@@ -267,7 +267,7 @@ class ISS:
             n = size[f3]
             addr = u64(a + imm_s)
             if addr % n:
-                raise Trap(CAUSE_STORE_MISALIGN, addr)
+                pass  # Zicclsm: misaligned stores are handled in hardware
             self.write(addr, n, b)
             self.pc = npc
             return None, 0

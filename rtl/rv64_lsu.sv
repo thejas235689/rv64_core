@@ -47,7 +47,8 @@ module rv64_lsu (
 );
   import rv64_pkg::*;
 
-  typedef enum logic [2:0] {S_IDLE, S_XLATE, S_REQ, S_RESP, S_WREQ, S_DONE} state_e;
+  typedef enum logic [3:0] {S_IDLE, S_XLATE, S_REQ, S_RESP, S_WREQ, S_DONE,
+                           S_REQ2, S_RESP2} state_e;
 
   state_e      state;
   // S_WREQ: the write half of an AMO's read-modify-write
@@ -156,7 +157,46 @@ module rv64_lsu (
 
   // ---- load extraction ------------------------------------------------------
   logic [63:0] rsp_shifted;
-  assign rsp_shifted = mem_rsp_rdata >> {addr_q[2:0], 3'b000};
+  // ---- Zicclsm: an access that crosses an 8-byte beat is split in two -------
+  // The old strobe was 8 bits wide, so `8'h0F << 5` dropped a byte and a
+  // misaligned word store wrote only 3 of its 4 bytes. Everything is computed at
+  // 16 bytes and sliced per beat instead.
+  wire [3:0]  size_bytes = (size_q == MSZ_B) ? 4'd1 :
+                           (size_q == MSZ_H) ? 4'd2 :
+                           (size_q == MSZ_W) ? 4'd4 : 4'd8;
+  wire        span       = ({1'b0, addr_q[2:0]} + size_bytes) > 4'd8;
+  wire [7:0]  shift_b    = {addr_q[2:0], 3'b000};
+  wire        beat_hi    = (state == S_REQ2) || (state == S_RESP2);
+
+  logic [15:0]  strb16;
+  logic [127:0] data128;
+  always_comb begin
+    unique case (size_q)
+      MSZ_B:   strb16 = 16'h0001;
+      MSZ_H:   strb16 = 16'h0003;
+      MSZ_W:   strb16 = 16'h000F;
+      default: strb16 = 16'h00FF;
+    endcase
+    strb16 = strb16 << addr_q[2:0];   // byte strobes shift by bytes
+    unique case (size_q)
+      MSZ_B:   data128 = {120'd0, wdata_q[7:0]};
+      MSZ_H:   data128 = {112'd0, wdata_q[15:0]};
+      MSZ_W:   data128 = {96'd0,  wdata_q[31:0]};
+      default: data128 = {64'd0,  wdata_q};
+    endcase
+    data128 = data128 << shift_b;
+  end
+
+  // The response for the beat being captured arrives THIS cycle, so both muxes
+  // read the live bus while their state is active; reading only the latches
+  // returns the previous access's data.
+  logic [63:0] lo_q, hi_q;
+  wire  [63:0] lo_now = (state == S_RESP)  ? mem_rsp_rdata : lo_q;
+  wire  [63:0] hi_now = (state == S_RESP2) ? mem_rsp_rdata : hi_q;
+  wire  [63:0] rsp_merged = span ? ((lo_now >> shift_b) | (hi_now << (8'd64 - shift_b)))
+                                 :  (lo_now >> shift_b);
+
+  assign rsp_shifted = rsp_merged;
 
   always_comb begin
     unique case (size_q)
@@ -174,12 +214,16 @@ module rv64_lsu (
   // S_WREQ is the write half of an AMO's read-modify-write: without it here the
   // read happens and the write never reaches the bus.
   assign mem_req_valid = mmu_busy ? mmu_pte_valid
-                                  : ((state == S_REQ) || (state == S_WREQ));
-  assign mem_req_addr  = mmu_busy ? mmu_pte_addr : paddr_q;
+                                  : ((state == S_REQ) || (state == S_WREQ) ||
+                                     (state == S_REQ2));
+  assign mem_req_addr  = mmu_busy ? mmu_pte_addr
+                        : (beat_hi ? (paddr_q + 64'd8) : paddr_q);
   assign mem_req_we    = mmu_busy ? 1'b0 : we_q;
   // During an AMO's write phase the data is the computed result, not rs2.
-  assign mem_req_wdata = (atomic_q == AT_AMO) ? amo_new : lane_shifted;
-  assign mem_req_wstrb = (mmu_busy || !we_q) ? 8'h00 : strb;
+  assign mem_req_wdata = (atomic_q == AT_AMO) ? amo_new
+                        : (beat_hi ? data128[127:64] : data128[63:0]);
+  assign mem_req_wstrb = (mmu_busy || !we_q) ? 8'h00
+                        : (beat_hi ? strb16[15:8] : strb16[7:0]);
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -262,8 +306,25 @@ module rv64_lsu (
 
         S_REQ: begin
           if (mem_req_ready) begin
+            if (we_q) begin
+              if (span) state <= S_REQ2;   // Icarus rejects enums in ternaries
+              else      state <= S_DONE;
+            end else state <= S_RESP;
+          end
+        end
+
+        S_REQ2: begin
+          if (mem_req_ready) begin
             if (we_q) state <= S_DONE;
-            else      state <= S_RESP;
+            else      state <= S_RESP2;
+          end
+        end
+
+        S_RESP2: begin
+          if (mem_rsp_valid) begin
+            fault_q  <= mem_rsp_error;
+            data_lat <= data_q;      // data_q merges both beats
+            state    <= S_DONE;
           end
         end
 
@@ -275,7 +336,10 @@ module rv64_lsu (
         S_RESP: begin
           if (mem_rsp_valid) begin
             fault_q <= mem_rsp_error;
-            if (atomic_q == AT_LR) begin
+            lo_q    <= mem_rsp_rdata;
+            if (span && (atomic_q == AT_NONE)) begin
+              state <= S_REQ2;
+            end else if (atomic_q == AT_LR) begin
               // the loaded value is the result, and the address is reserved
               data_lat   <= data_q;
               resv_valid <= !mem_rsp_error;

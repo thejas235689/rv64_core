@@ -665,7 +665,11 @@ async def test_csr(dut):
 
 @cocotb.test()
 async def test_traps(dut):
-    """Illegal instruction, unimplemented CSR, misaligned load and store, ecall."""
+    """Illegal instruction, unimplemented CSR, ecall.
+
+    Misaligned load/store no longer traps: Zicclsm handles them in hardware, and
+    tb_lsu checks the split and merge directly.
+    """
     h = Harness(dut)
     await h.startup()
     _, iss_trace, _ = await run_program(h, trap_program(), max_cycles=6000,
@@ -673,8 +677,6 @@ async def test_traps(dut):
     compare(h, iss_trace, "traps")
     causes = [c for _, c in h.traps]
     assert 2 in causes, f"expected an illegal-instruction trap, got {causes}"
-    assert 4 in causes, f"expected a load-misalign trap, got {causes}"
-    assert 6 in causes, f"expected a store-misalign trap, got {causes}"
     assert 11 in causes, f"expected an ecall trap, got {causes}"
 
 

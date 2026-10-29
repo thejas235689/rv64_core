@@ -727,19 +727,11 @@ module riscv_core_top #(
     else                        ex_target = id_ex_pc + id_ex_imm;
   end
 
-  // ---- misalignment (per the contract: misaligned accesses trap) -----------
-  always_comb begin
-    ex_misalign = 1'b0;
-    if (id_ex_ctrl.is_load || id_ex_ctrl.is_store) begin
-      unique case (id_ex_ctrl.mem_size)
-        MSZ_B:   ex_misalign = 1'b0;
-        MSZ_H:   ex_misalign = ex_alu_out[0];
-        MSZ_W:   ex_misalign = (ex_alu_out[1:0] != 2'b00);
-        MSZ_D:   ex_misalign = (ex_alu_out[2:0] != 3'b000);
-        default: ex_misalign = 1'b0;
-      endcase
-    end
-  end
+  // ---- misalignment --------------------------------------------------------
+  // Zicclsm: misaligned loads and stores are handled in hardware. The LSU splits
+  // an access that crosses an 8-byte beat into two and merges the result.
+  // Instruction-address misalignment still traps, generated in fetch.
+  assign ex_misalign = 1'b0;
 
   // ---- exception generation -------------------------------------------------
   always_comb begin

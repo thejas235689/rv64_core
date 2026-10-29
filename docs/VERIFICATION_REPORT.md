@@ -420,6 +420,31 @@ image and compares retire traces against the same vectors, so pointing
 `RUSTDV_VEC_PREFIX` at `sim/uvm_vectors/numeric` covers the families. It remains
 **uncompiled** -- no Rust toolchain is reachable in this environment.
 
+### Zicclsm -- misaligned loads and stores work in hardware
+
+Misaligned accesses used to trap. They are now split across the 8-byte beat
+boundary by the LSU and merged, for every width, loads and stores alike.
+
+`tb/tb_lsu.sv` -- a new directed testbench that drives the LSU on its own.
+**14 checks, 0 mismatches under both xezim and Icarus**: aligned byte/half/word/
+double, a half-word at an odd address, and misaligned word, double and half loads
+that cross the beat, plus a misaligned word store checked byte by byte and read back.
+
+This is the testbench that should have existed before either of the two failed
+attempts through the whole core. It found the bugs in minutes:
+
+* the strobe is a BYTE vector, so it shifts by `addr[2:0]`, not by `addr[2:0]*8`.
+  Shifting `16'h000F` by 24 zeroed it, turning every misaligned store into a
+  silent no-op -- the store issued its beats and wrote nothing;
+* the response for the beat being captured arrives in the same cycle, so the
+  merge must read the live bus while that state is active; reading only the
+  latched beats returns the previous access's data;
+* and my own testbench used `MSZ_B=0..MSZ_D=3` when the package defines 1..4,
+  which made every check look broken.
+
+The ISS no longer raises load/store misalign traps, so `test_traps` and the trace
+comparisons match the new behaviour.
+
 ### Zifencei -- fence.i now invalidates the instruction cache
 
 `fence.i` was decoded but did nothing: the I-cache had no invalidate port, so a
