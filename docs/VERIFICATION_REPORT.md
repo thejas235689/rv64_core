@@ -559,11 +559,26 @@ Getting there needed three fixes, and two were in my tests:
   guard against 200, so it reported "never released" while the release check on the
   next line passed.
 
-**One thing I could not do honestly:** the `BOOT_MAC` constant is taken from the
-verified HMAC block's own output, not from an independent reference. My Python HMAC
-disagreed for this image and I did not resolve why. The block itself passes RFC 4231,
-so its arithmetic is trustworthy, but a constant derived from the DUT is self-grading
-and a second opinion should replace it.
+**`BOOT_MAC` is NOT trustworthy, and that is now demonstrated rather than suspected.**
+
+The constant in `riscv_core_top` is `05265470dfec59e6a65093fd96de0abbca82d579cacc24cc684a6435245c5aa2`,
+taken from the HMAC block's own output. I built an independent reference -- a raw-block
+SHA-256 and HMAC in Python -- and validated it first: it reproduces the published
+`sha256("abc")` = `ba7816bf...f20015ad` exactly, and `tb_hmac` passes RFC 4231, so both
+sides are individually sound.
+
+For the boot image they disagree. The reference gives
+`640c914cbeca6516100a742f7633317f58fb1b5c043b50169d4817adffa31f7e`; the RTL's constant
+is `05265470...`. I searched the plausible padding conventions (image length field of
+1024, 512, 128, 64 or 0 against an outer length of 768, 512 or 0) and none reproduces
+the RTL's value, so this is not a convention mismatch that a comment could explain away.
+
+What that means: **boot authentication is verified only against a value the design
+itself produced.** `tb_bootseq` passing proves the path is self-consistent, not that the
+MAC is the correct HMAC of the image. One of the two implementations is wrong for this
+input and I have not yet determined which. Until that is resolved the boot gate should
+be treated as untested, and the `BOOT_ROM` parameter is 0 by default so nothing relies
+on it today.
 
 ### AMCCE -- adaptive cache engine (verified standalone)
 
