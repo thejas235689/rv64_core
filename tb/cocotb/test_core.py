@@ -1974,6 +1974,7 @@ async def test_cache_ops(dut):
     L.append(".word 0x0000200f")   # prefetch.i (x5)
     L.append(".word 0x00d00073")   # wrs.nto
     L.append(".word 0x01d00073")   # wrs.sto
+    L.append(".word 0x80004073")   # Zimop mop.r.0 (funct3=100, rs1=0, rd=0)
     L.append("ecall")
 
     words, _ = assemble("\n".join(L))

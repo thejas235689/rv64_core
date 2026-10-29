@@ -416,6 +416,12 @@ module rv64_decoder (
             12'h01D: ctrl.is_fence  = 1'b1;
             default: ctrl.illegal   = 1'b1;
           endcase
+        end else if (((funct3 == 3'b100) || (funct3 == 3'b110)) &&
+                     (insn[19:15] == 5'd0) && (insn[11:7] == 5'd0)) begin
+          // Zimop: mop.r.n / mop.rr.n are "may be operations". They are defined to
+          // write zero to rd, and rd is required to be x0, so the result is
+          // discarded and retiring as a no-op is exactly right.
+          ctrl.is_fence = 1'b1;
         end else begin
           // CSR instructions
           ctrl.is_csr   = 1'b1;

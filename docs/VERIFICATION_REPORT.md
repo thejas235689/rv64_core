@@ -437,6 +437,11 @@ zeroed word for word, the line is dropped, and the word after the block is untou
 -- a block-zero that runs one beat too far is a memory-corruption bug, so the
 overrun check matters as much as the fill.
 
+**Zimop is implemented.** `mop.r.n` and `mop.rr.n` (SYSTEM, funct3 100/110, rs1 = 0,
+rd = 0) decode and retire as no-ops. They are defined to write zero to rd and rd is
+required to be x0, so the result is discarded -- a no-op is exactly the specified
+behaviour.
+
 **Zabha is implemented.** Byte and halfword AMOs run at the access width and the
 result is inserted back at the addressed byte. `tb_lsu` **22 checks, 0 mismatches
 under both simulators**, including that the neighbouring bytes survive an `amoadd.b`
