@@ -92,7 +92,10 @@ module rv64_csr (
     csr_impl  = 1'b1;
     unique case (csr_addr)
       CSR_MSTATUS:    csr_rdata = {51'd0, mstatus_mpp_q, 3'd0, mstatus_mpie_q, 3'd0, mstatus_mie_q, 3'd0};
-      CSR_MISA:       csr_rdata = {2'b10, 49'd0, 1'b1, 3'd0, 1'b1, 8'd0};  // RV64IM
+      // MXL=2 (RV64), then A(0), I(8), M(12), S(18), U(20). V is deliberately NOT
+      // set: the vector unit takes RVV semantics but not RVV encoding, so a program
+      // reading misa must not be told rv64gcv binaries will run.
+      CSR_MISA:       csr_rdata = {2'b10, 36'd0, 26'h141101};
       CSR_MIE:        csr_rdata = {52'd0, mie_q[2], 3'd0, mie_q[1], 3'd0, mie_q[0], 3'd0};
       CSR_MTVEC:      csr_rdata = mtvec_q;
       CSR_MCOUNTEREN: csr_rdata = mcounteren_q;

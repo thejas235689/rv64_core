@@ -1917,3 +1917,35 @@ async def test_vle_in_core(dut):
     got = int(dut.u_core.u_rvv.u_vrf.regs[1].value)
     dut._log.info(f"vle8.v in core: v1 = {got:#018x}")
     assert got == 0x1817161514131211, f"vle8.v should have loaded 0x11..0x18, got {got:#x}"
+
+
+@cocotb.test()
+async def test_misa_bits(dut):
+    """misa must advertise what the core actually executes.
+
+    It previously reported RV64IM only, while the core executes A, B, S, U and
+    Sv39. Software that reads misa -- a bootloader picking a page-table mode, an OS
+    probing for atomics -- would take a slower path or refuse to boot. This checks
+    the bits are right, and that V is NOT set: the vector unit follows RVV
+    semantics but not RVV encoding, so advertising V would make -march=rv64gcv
+    binaries fault.
+    """
+    L = [csrr(5, 0x301)]          # misa
+    L.append("ecall")
+    words, _ = assemble("\n".join(L))
+    iss = ISS()
+    iss.load_words(0, words)
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "misa-bits")
+
+    # the retirement record carries the write data, which is the value misa
+    # actually returned; reading the register file hierarchically did not work
+    got = h.trace[0][4]
+    dut._log.info(f"misa = {got:#x}")
+    assert got == 0x8000000000141101, f"misa should be 0x8000000000141101, got {got:#x}"
