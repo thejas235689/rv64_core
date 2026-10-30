@@ -2117,7 +2117,24 @@ async def test_fp_arith_in_core(dut):
     # reset() must come AFTER load(): without it the core never leaves reset and
     # nothing retires, which is exactly the failure this test first showed.
     await h.reset()
+
+    seen = []
+    async def dec_watch():
+        while True:
+            await RisingEdge(dut.clk)
+            await Timer(1, "ns")
+            try:
+                insn = int(dut.u_core.dec_insn.value)
+                if (insn & 0x7F) == 0x53:
+                    seen.append((insn,
+                                 int(dut.u_core.dec_ctrl.value.is_fp) if hasattr(dut.u_core.dec_ctrl.value, 'is_fp') else -1))
+            except Exception:
+                pass
+    cocotb.start_soon(dec_watch())
+
     await h.run(max_cycles=800, stop_on_ecall=True)
+    for insn, isfp in seen[:6]:
+        dut._log.info(f"OP-FP insn={insn:08x} funct7={(insn>>25)&0x7F:07b} dec_ctrl.is_fp={isfp}")
 
     causes = [c for (_, c) in h.traps]
     assert all(c != 2 for c in causes), f"illegal trap: causes={causes}"

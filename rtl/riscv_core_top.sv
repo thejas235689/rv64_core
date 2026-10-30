@@ -1049,6 +1049,23 @@ module riscv_core_top #(
     if (id_ex_v && id_ex_ctrl.is_load && (id_ex_rd != 5'd0) && if_id_v) begin
       if ((dec_rs1 == id_ex_rd) || (dec_rs2 == id_ex_rd)) stall_id = 1'b1;
     end
+
+    // FP RAW interlock. There is no forwarding network on the FP side, so an
+    // instruction reading an FP register that an in-flight FP instruction writes
+    // must wait. Without this, `fld f2` followed immediately by `fadd.d f3,f1,f2`
+    // reads f2 before the load lands and adds zero. Same shape as the numeric
+    // interlock above, and for the same reason.
+    if (dec_ctrl.is_fp || dec_ctrl.fp_src) begin
+      if (id_ex_v && id_ex_is_fp && (id_ex_rd != 5'd0) &&
+          ((dec_rs1 == id_ex_rd) || (dec_rs2 == id_ex_rd)))
+        stall_id = 1'b1;
+      if (ex_mem_v && ex_mem_is_fp && (ex_mem_rd != 5'd0) &&
+          ((dec_rs1 == ex_mem_rd) || (dec_rs2 == ex_mem_rd)))
+        stall_id = 1'b1;
+      if (mem_wb_v && mem_wb_is_fp && (mem_wb_rd != 5'd0) &&
+          ((dec_rs1 == mem_wb_rd) || (dec_rs2 == mem_wb_rd)))
+        stall_id = 1'b1;
+    end
   end
 
   // ---- redirect mux ---------------------------------------------------------
