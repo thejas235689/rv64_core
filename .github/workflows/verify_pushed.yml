@@ -1,0 +1,28 @@
+name: verify pushed ref
+
+# Runs against a fresh clone of the pushed ref, not the working tree. That
+# distinction is the whole point: every expensive mistake in this project was a
+# change verified locally that did not match what shipped.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: install slang
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq slang || echo "slang unavailable, elaboration will skip"
+
+      - name: verify the pushed ref
+        run: |
+          chmod +x ci/verify_pushed.sh
+          REPO_URL="https://github.com/${{ github.repository }}.git" \
+            ./ci/verify_pushed.sh "${{ github.ref_name }}"
