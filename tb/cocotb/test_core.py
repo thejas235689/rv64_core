@@ -2055,3 +2055,36 @@ async def test_rvc_in_core(dut):
     compare(h2, iss2_trace, "rvc-straddle")
     dut._log.info(f"straddle: {len(h2.trace)} retirements, x5 = {x5}")
     assert x5 == 8, f"straddled instruction did not run: x5 = {x5}"
+
+@cocotb.test()
+async def test_fp_in_core(dut):
+    """fadd.d must decode and retire in the core rather than trapping.
+
+    Scope, stated plainly: there is no FP load or FP-to-integer move yet, so the
+    FP registers cannot be loaded from a program and this exercises only the
+    decode, the pipeline path and the write to the FP file. It proves the
+    instruction is no longer an illegal instruction; it does NOT prove the
+    arithmetic, which is covered separately by the UVM and pyuvm environments at
+    315/315 against an independent oracle.
+    """
+    # fadd.d f1, f1, f1   (funct7=0x01, rs2=1, rs1=1, funct3=0, rd=1, opcode=0x53)
+    fadd_d = (0x01 << 25) | (1 << 20) | (1 << 15) | (0 << 12) | (1 << 7) | 0x53
+    words = [fadd_d, 0x00000073]   # fadd.d ; ecall
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+
+    iss = ISS()
+    iss.load_words(0, words)
+
+    await h.run(max_cycles=400, stop_on_ecall=True)
+
+    causes = [c for (_, c) in h.traps]
+    assert all(c != 2 for c in causes), (
+        f"fadd.d trapped as an illegal instruction: causes={causes}")
+
+    # the FP write must not have landed in the integer file
+    assert int(dut.u_core.u_regfile.regs[1].value) == 0, (
+        "FP result leaked into the integer register file")

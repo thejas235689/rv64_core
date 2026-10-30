@@ -226,6 +226,20 @@ module rv64_decoder (
       end
 
       // ------------------------------------------------------------------ OP
+      // ---- OP-FP (opcode 0x53) ------------------------------------------
+      // Only the binary64 add/sub forms are implemented so far; the rest of the
+      // FP encoding traps as illegal rather than silently doing nothing.
+      7'b1010011: begin
+        unique case (funct7)
+          7'b0000001: begin                      // fadd.d / fsub.d
+            ctrl.reg_we  = 1'b1;
+            ctrl.is_fp   = 1'b1;
+            ctrl.fp_sub  = funct3[0];            // 0 = fadd.d, 1 = fsub.d
+            ctrl.wb_sel  = WB_ALU;               // unused for FP, kept defined
+          end
+          default: ctrl.illegal = 1'b1;
+        endcase
+      end
       7'b0110011: begin
         ctrl.reg_we = 1'b1;
         unique case (funct7)
