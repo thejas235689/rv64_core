@@ -64,15 +64,25 @@ def fp_add(a: int, b: int, sub: int = 0):
         sig_sml = f_sml
 
     diff = e_big - e_sml
-    if diff >= 53:
+
+    # Align into a field WIDER than the 53-bit significand so the low bits are
+    # KEPT, not collapsed into a sticky. The result exponent can drop below e_big
+    # during normalisation, which makes those low bits representable -- collapsing
+    # them is what made vec140's exact sum look like it needed rounding.
+    #   aligned = sig_sml * 2**ALIGN_EXT / 2**diff
+    ALIGN_EXT = 3
+    if diff > 53 + ALIGN_EXT:
         aligned = 0
         sticky = sig_sml != 0
     else:
-        aligned = sig_sml >> diff
-        sticky = (sig_sml & ((1 << diff) - 1)) != 0
+        aligned = (sig_sml << ALIGN_EXT) >> diff
+        lost = diff - ALIGN_EXT
+        sticky = (sig_sml & ((1 << lost) - 1)) != 0 if lost > 0 else False
 
-    mag_big = sig_big << 3
-    mag_sml = (aligned << 3) | (1 if sticky else 0)
+    # mag layout, 59 bits: [58]=carry [57]=implicit [56:5]=frac [4:3]=extra
+    #                     [2]=round [1]=guard [0]=sticky
+    mag_big = sig_big << 5
+    mag_sml = (aligned << 2) | (1 if sticky else 0)
 
     if s_big == s_sml:
         mag = mag_big + mag_sml
@@ -84,25 +94,22 @@ def fp_add(a: int, b: int, sub: int = 0):
     exp = e_big
     inexact = 0
 
-    # ---- normalise so the implicit one sits at bit 55 ---------------------
-    if mag >> 56:
+    # ---- normalise so the implicit one sits at bit 57 ---------------------
+    if mag >> 58:
         inexact |= mag & 1
         mag >>= 1
         exp += 1
     else:
-        while not (mag >> 55) and exp > 1:
+        while not (mag >> 57) and exp > 1:
             mag <<= 1
             exp -= 1
         if mag == 0:
             return 0, 0, 0
-        if not (mag >> 55):
-            # exponent bottomed out: denormal result
-            pass
 
-    frac = (mag >> 3) & M52
-    rnd = (mag >> 2) & 1
-    guard = (mag >> 1) & 1
-    stk = mag & 1
+    frac = (mag >> 5) & M52
+    rnd = (mag >> 4) & 1
+    guard = (mag >> 3) & 1
+    stk = 1 if (mag & 0x7) else 0
 
     up = rnd and (guard or stk or (frac & 1))
     inexact |= rnd | guard | stk
