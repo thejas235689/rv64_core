@@ -1,0 +1,1394 @@
+[
+ {
+  "id": "INT-01",
+  "area": "Integer",
+  "item": "Operand corner set across all arithmetic, logical and compare ops",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "INT-02",
+  "area": "Integer",
+  "item": "Word ops sign-extend from bit 31",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "INT-03",
+  "area": "Integer",
+  "item": "Shift amount truncation (6-bit, 5-bit for word forms)",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "INT-04",
+  "area": "Integer",
+  "item": "Branch conditions at signed/unsigned boundaries",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "INT-05",
+  "area": "Integer",
+  "item": "jal/jalr target computation",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "INT-06",
+  "area": "Integer",
+  "item": "x0 discipline and dependency density",
+  "level": "L1",
+  "method": "Random",
+  "priority": "P1"
+ },
+ {
+  "id": "INT-07",
+  "area": "Integer",
+  "item": "Independent architectural compliance check",
+  "level": "L0",
+  "method": "Formal",
+  "priority": "P1"
+ },
+ {
+  "id": "MUL-01",
+  "area": "Mul/Div",
+  "item": "Multiply sign combinations incl. high halves",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "MUL-02",
+  "area": "Mul/Div",
+  "item": "Spec-exact divide special cases",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "MUL-03",
+  "area": "Mul/Div",
+  "item": "Word divide uses only the low 32 bits",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "MUL-04",
+  "area": "Mul/Div",
+  "item": "Abort at every cycle of a long operation",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "MUL-05",
+  "area": "Mul/Div",
+  "item": "Multiplier/divider datapath exhaustive small width",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "MUL-06",
+  "area": "Mul/Div",
+  "item": "Latency and busy protocol",
+  "level": "L0",
+  "method": "Assertion",
+  "priority": "P2"
+ },
+ {
+  "id": "BIT-01",
+  "area": "Bitmanip",
+  "item": "Carry-less multiply family",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BIT-02",
+  "area": "Bitmanip",
+  "item": "Count-leading/trailing zeros and popcount",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BIT-03",
+  "area": "Bitmanip",
+  "item": "Signed vs unsigned min/max and sign/zero extend",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BIT-04",
+  "area": "Bitmanip",
+  "item": "Rotate, orc.b and rev8",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BIT-05",
+  "area": "Bitmanip",
+  "item": "Single-bit ops and their 6-bit immediates",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BIT-06",
+  "area": "Bitmanip",
+  "item": "Zicond with rs2 = x0 and aliasing",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BIT-07",
+  "area": "Bitmanip",
+  "item": "Zihintpause is architecturally a no-op",
+  "level": "L1",
+  "method": "Equivalence",
+  "priority": "P2"
+ },
+ {
+  "id": "BIT-08",
+  "area": "Bitmanip",
+  "item": "Decode negatives for the whole group",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "ATM-01",
+  "area": "Atomics",
+  "item": "All nine AMOs in .w and .d",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "ATM-02",
+  "area": "Atomics",
+  "item": "LR/SC basic semantics and forward progress",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "ATM-03",
+  "area": "Atomics",
+  "item": "Reservation invalidation events",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "ATM-04",
+  "area": "Atomics",
+  "item": "Faulting atomic has no memory side effect",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "ATM-05",
+  "area": "Atomics",
+  "item": "Atomicity under a concurrent agent",
+  "level": "L2",
+  "method": "Random",
+  "priority": "P1"
+ },
+ {
+  "id": "ATM-06",
+  "area": "Atomics",
+  "item": "Reservation mutual exclusion (formal)",
+  "level": "L0",
+  "method": "Formal",
+  "priority": "P2"
+ },
+ {
+  "id": "PRV-01",
+  "area": "Privilege",
+  "item": "Full delegation matrix",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "PRV-02",
+  "area": "Privilege",
+  "item": "sret and mret field restoration",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "PRV-03",
+  "area": "Privilege",
+  "item": "sstatus is a restricted view of mstatus",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "PRV-04",
+  "area": "Privilege",
+  "item": "CSR access control by privilege",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "PRV-05",
+  "area": "Privilege",
+  "item": "Nested trap does not corrupt handler state",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "PRV-06",
+  "area": "Privilege",
+  "item": "wfi in S-mode with TW set and clear",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "VM-01",
+  "area": "Sv39",
+  "item": "Walk depth and superpages",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-02",
+  "area": "Sv39",
+  "item": "Misaligned superpage and reserved PTE forms",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-03",
+  "area": "Sv39",
+  "item": "Permission table exhaustive",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-04",
+  "area": "Sv39",
+  "item": "SUM and MXR",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-05",
+  "area": "Sv39",
+  "item": "MPRV gating",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-06",
+  "area": "Sv39",
+  "item": "satp MODE handling and WARL",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-07",
+  "area": "Sv39",
+  "item": "sfence.vma in all operand forms",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-08",
+  "area": "Sv39",
+  "item": "A/D bit policy",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-09",
+  "area": "Sv39",
+  "item": "TLB fill, eviction and no-fill-on-fault",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-10",
+  "area": "Sv39",
+  "item": "Two-page access with second page invalid",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-11",
+  "area": "Sv39",
+  "item": "PTE fetch denied by PMP",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "VM-12",
+  "area": "Sv39",
+  "item": "Random PTE mutation with random flushes",
+  "level": "L2",
+  "method": "Random",
+  "priority": "P1"
+ },
+ {
+  "id": "FE-01",
+  "area": "Front end",
+  "item": "Speculative fetch cannot fault",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "FE-02",
+  "area": "Front end",
+  "item": "Predecode tags vs decoder",
+  "level": "L1",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "FE-03",
+  "area": "Front end",
+  "item": "Fusion hints are hints only",
+  "level": "L1",
+  "method": "Equivalence",
+  "priority": "P1"
+ },
+ {
+  "id": "FE-04",
+  "area": "Front end",
+  "item": "Single outstanding fetch request",
+  "level": "L0",
+  "method": "Formal",
+  "priority": "P2"
+ },
+ {
+  "id": "FE-05",
+  "area": "Front end",
+  "item": "Fetch buffer occupancy sweep",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "FE-06",
+  "area": "Front end",
+  "item": "Fetch from PMP-denied and unmapped regions",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "FE-07",
+  "area": "Front end",
+  "item": "Predecode comparator error injection",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "BP-01",
+  "area": "Prediction",
+  "item": "Architectural equivalence across forced configurations",
+  "level": "L1",
+  "method": "Equivalence",
+  "priority": "P1"
+ },
+ {
+  "id": "BP-02",
+  "area": "Prediction",
+  "item": "RAS depth, overflow, underflow and repair",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BP-03",
+  "area": "Prediction",
+  "item": "BTB aliasing",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BP-04",
+  "area": "Prediction",
+  "item": "Gshare history and tournament chooser",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "BP-05",
+  "area": "Prediction",
+  "item": "Loop-count predictor edge cases",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "BP-06",
+  "area": "Prediction",
+  "item": "Tagged history and perceptron",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "BP-07",
+  "area": "Prediction",
+  "item": "Shadow predictor model agreement",
+  "level": "L1",
+  "method": "Random",
+  "priority": "P2"
+ },
+ {
+  "id": "BP-08",
+  "area": "Prediction",
+  "item": "Predictor arrays read at reset",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CA-01",
+  "area": "Caches",
+  "item": "I-cache fill and eviction across all 64 lines",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CA-02",
+  "area": "Caches",
+  "item": "Write-through invariant",
+  "level": "L1",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "CA-03",
+  "area": "Caches",
+  "item": "Partial stores and strobes",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CA-04",
+  "area": "Caches",
+  "item": "Fill versus store ordering race",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CA-05",
+  "area": "Caches",
+  "item": "RRIP victim selection",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CA-06",
+  "area": "Caches",
+  "item": "Geometry consistency",
+  "level": "L1",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "CA-07",
+  "area": "Caches",
+  "item": "L2/L3 parameterised module at two geometries",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CA-08",
+  "area": "Caches",
+  "item": "Random address stream with shadow cache model",
+  "level": "L2",
+  "method": "Random",
+  "priority": "P1"
+ },
+ {
+  "id": "CA-09",
+  "area": "Caches",
+  "item": "No writeback path exists (formal)",
+  "level": "L0",
+  "method": "Formal",
+  "priority": "P2"
+ },
+ {
+  "id": "AMC-01",
+  "area": "AMCCE",
+  "item": "Threshold entry and exit under streaming scans",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "AMC-02",
+  "area": "AMCCE",
+  "item": "Hysteresis bound",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "AMC-03",
+  "area": "AMCCE",
+  "item": "Exact threshold boundaries",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "AMC-04",
+  "area": "AMCCE",
+  "item": "BYPASS remains functionally correct",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "AMC-05",
+  "area": "AMCCE",
+  "item": "Architectural equivalence of adaptive control",
+  "level": "L1",
+  "method": "Equivalence",
+  "priority": "P1"
+ },
+ {
+  "id": "AMC-06",
+  "area": "AMCCE",
+  "item": "Counter saturation and reset",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "MEM-01",
+  "area": "Memory ops",
+  "item": "Width x offset exhaustive",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "MEM-02",
+  "area": "Memory ops",
+  "item": "Sign versus zero extension",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "MEM-03",
+  "area": "Memory ops",
+  "item": "Misalignment traps",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "MEM-04",
+  "area": "Memory ops",
+  "item": "Store-to-load forwarding size and offset mismatch",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "MEM-05",
+  "area": "Memory ops",
+  "item": "Access crossing a PMP or page boundary",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "FNC-01",
+  "area": "Zifencei",
+  "item": "Self-modifying code visible after fence.i",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "FNC-02",
+  "area": "Zifencei",
+  "item": "Flush completeness",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "FNC-03",
+  "area": "Zifencei",
+  "item": "Ordering against in-flight fetch",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "FNC-04",
+  "area": "Zifencei",
+  "item": "Privilege and no-fence consistency",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "PMP-01",
+  "area": "PMP",
+  "item": "Full configuration cross",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "PMP-02",
+  "area": "PMP",
+  "item": "Boundary addresses and degenerate ranges",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "PMP-03",
+  "area": "PMP",
+  "item": "Priority: lowest-numbered match wins",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "PMP-04",
+  "area": "PMP",
+  "item": "Whole-access check",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "PMP-05",
+  "area": "PMP",
+  "item": "Lock semantics",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "PMP-06",
+  "area": "PMP",
+  "item": "No-match default and denial on special paths",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "SYS-01",
+  "area": "System",
+  "item": "CSR WARL masks",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "SYS-02",
+  "area": "System",
+  "item": "Illegal-instruction totality",
+  "level": "L0",
+  "method": "Formal",
+  "priority": "P1"
+ },
+ {
+  "id": "SYS-03",
+  "area": "System",
+  "item": "Exception causes, mepc, mtval",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "SYS-04",
+  "area": "System",
+  "item": "CSRRS/CSRRC with rs1 = x0",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "SYS-05",
+  "area": "System",
+  "item": "Side-effecting CSR at 0x7E0",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "SYS-06",
+  "area": "System",
+  "item": "wfi wake-up and retirement",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "IRQ-01",
+  "area": "Interrupts",
+  "item": "Sources, priorities and thresholds",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "IRQ-02",
+  "area": "Interrupts",
+  "item": "Claim/complete protocol",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "IRQ-03",
+  "area": "Interrupts",
+  "item": "Injection at every pipeline stage",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "IRQ-04",
+  "area": "Interrupts",
+  "item": "Conservation",
+  "level": "L1",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "IRQ-05",
+  "area": "Interrupts",
+  "item": "Timer edge cases",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "IRQ-06",
+  "area": "Interrupts",
+  "item": "Delegation, nesting and enable gating",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "IRQ-07",
+  "area": "Interrupts",
+  "item": "Interrupt concurrent with an exception or a debug halt",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "DBG-01",
+  "area": "Debug",
+  "item": "Architectural transparency of halt/resume",
+  "level": "L1",
+  "method": "Equivalence",
+  "priority": "P1"
+ },
+ {
+  "id": "DBG-02",
+  "area": "Debug",
+  "item": "Halt inside long-latency and state-modifying operations",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "DBG-03",
+  "area": "Debug",
+  "item": "Single-step semantics",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "DBG-04",
+  "area": "Debug",
+  "item": "EBREAK configuration",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "DBG-05",
+  "area": "Debug",
+  "item": "GPR read port",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "DBG-06",
+  "area": "Debug",
+  "item": "Watchpoint comparator boundaries",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "DBG-07",
+  "area": "Debug",
+  "item": "Halt during reset and before first retirement",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "BOOT-01",
+  "area": "Boot",
+  "item": "Boot ROM contents and read-only property",
+  "level": "L3",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BOOT-02",
+  "area": "Boot",
+  "item": "BOOT_ROM=0 memory map",
+  "level": "L3",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BOOT-03",
+  "area": "Boot",
+  "item": "Release only on a correct MAC",
+  "level": "L3",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "BOOT-04",
+  "area": "Boot",
+  "item": "Exhaustive MAC bit flips",
+  "level": "L3",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BOOT-05",
+  "area": "Boot",
+  "item": "Image body corruption and length attacks",
+  "level": "L3",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BOOT-06",
+  "area": "Boot",
+  "item": "Key handling",
+  "level": "L3",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BOOT-07",
+  "area": "Boot",
+  "item": "Constant-time comparison",
+  "level": "L3",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BOOT-08",
+  "area": "Boot",
+  "item": "Reset and debug during authentication",
+  "level": "L3",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "BOOT-09",
+  "area": "Boot",
+  "item": "Fault injection on the boot path",
+  "level": "L3",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CRY-01",
+  "area": "Crypto",
+  "item": "SHA-256 published vectors",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CRY-02",
+  "area": "Crypto",
+  "item": "Padding boundaries",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CRY-03",
+  "area": "Crypto",
+  "item": "Streaming chaining per block",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CRY-04",
+  "area": "Crypto",
+  "item": "Message schedule and round timing",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CRY-05",
+  "area": "Crypto",
+  "item": "HMAC construction",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "CRY-06",
+  "area": "Crypto",
+  "item": "State clearing, abort and byte order",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "NUM-01",
+  "area": "Numeric",
+  "item": "binary32 special values",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "NUM-02",
+  "area": "Numeric",
+  "item": "Posit regime boundaries",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "NUM-03",
+  "area": "Numeric",
+  "item": "RNS arithmetic and range",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "NUM-04",
+  "area": "Numeric",
+  "item": "LNS catastrophic cancellation",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "NUM-05",
+  "area": "Numeric",
+  "item": "Register bank isolation",
+  "level": "L1",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "NUM-06",
+  "area": "Numeric",
+  "item": "nerr / ncfg / nflags behaviour",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "QIS-01",
+  "area": "QISA",
+  "item": "Gate x basis state exhaustive",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "QIS-02",
+  "area": "QISA",
+  "item": "Phase and identity invariants",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "QIS-03",
+  "area": "QISA",
+  "item": "CNOT over all control/target pairs",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "QIS-04",
+  "area": "QISA",
+  "item": "Measurement and collapse",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "QIS-05",
+  "area": "QISA",
+  "item": "LFSR reproducibility and period",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "AI-01",
+  "area": "AI accel",
+  "item": "Exhaustive INT8 products",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "AI-02",
+  "area": "AI accel",
+  "item": "Dot product extremes and accumulation",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "AI-03",
+  "area": "AI accel",
+  "item": "Matrix addressing and MAC count",
+  "level": "L0",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "AI-04",
+  "area": "AI accel",
+  "item": "Bank independence, busy protocol and reset",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "X512-01",
+  "area": "XRV512",
+  "item": "Lane independence: carry, borrow, shift",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "X512-02",
+  "area": "XRV512",
+  "item": "Walking-one across all 512 bits",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "X512-03",
+  "area": "XRV512",
+  "item": "Register file and reset values",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "X512-04",
+  "area": "XRV512",
+  "item": "Lane port",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-01",
+  "area": "RVV",
+  "item": "vtype decode and VLMAX across SEW x LMUL",
+  "level": "L0",
+  "method": "Formal",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-02",
+  "area": "RVV",
+  "item": "Data path for every op x SEW x LMUL",
+  "level": "L1",
+  "method": "Random",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-03",
+  "area": "RVV",
+  "item": "Tail preservation",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-04",
+  "area": "RVV",
+  "item": "Masking including all-zero mask",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-05",
+  "area": "RVV",
+  "item": "Masked-off elements are never accessed",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-06",
+  "area": "RVV",
+  "item": "Reductions and seed handling",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-07",
+  "area": "RVV",
+  "item": "Widening and its sign variants",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-08",
+  "area": "RVV",
+  "item": "Narrowing with vnclip and vxrm",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-09",
+  "area": "RVV",
+  "item": "Slides including in-place",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-10",
+  "area": "RVV",
+  "item": "Memory port exactness",
+  "level": "L1",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-11",
+  "area": "RVV",
+  "item": "Vector float",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-12",
+  "area": "RVV",
+  "item": "LMUL grouping rules",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "RVV-13",
+  "area": "RVV",
+  "item": "Vector memory port arbitration",
+  "level": "L2",
+  "method": "Random",
+  "priority": "P2"
+ },
+ {
+  "id": "XCT-01",
+  "area": "Xcetask",
+  "item": "Descriptor decode and readback",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-02",
+  "area": "Xcetask",
+  "item": "Start, done and abort",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-03",
+  "area": "Xcetask",
+  "item": "State isolation between tasks",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-04",
+  "area": "Xcetask",
+  "item": "Access control and illegal descriptors",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "OBS-01",
+  "area": "Observability",
+  "item": "Trace completeness",
+  "level": "L1",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "OBS-02",
+  "area": "Observability",
+  "item": "Trace ordering",
+  "level": "L1",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "OBS-03",
+  "area": "Observability",
+  "item": "Counters",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "OBS-04",
+  "area": "Observability",
+  "item": "Trace error injection (check the checker)",
+  "level": "L0",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-10",
+  "area": "Cross-cutting",
+  "item": "Global invariants always on",
+  "level": "L1",
+  "method": "Assertion",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-11",
+  "area": "Cross-cutting",
+  "item": "Configuration matrix coverage",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-12",
+  "area": "Cross-cutting",
+  "item": "X-propagation",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-13",
+  "area": "Cross-cutting",
+  "item": "Reset behaviour",
+  "level": "L1",
+  "method": "Directed",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-14",
+  "area": "Cross-cutting",
+  "item": "Mutation score",
+  "level": "L1",
+  "method": "Mutation",
+  "priority": "P2"
+ },
+ {
+  "id": "XCT-15",
+  "area": "Cross-cutting",
+  "item": "Performance-feature equivalence suite",
+  "level": "L1",
+  "method": "Equivalence",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-16",
+  "area": "Cross-cutting",
+  "item": "Memory ordering litmus",
+  "level": "L2",
+  "method": "Directed",
+  "priority": "P2"
+ },
+ {
+  "id": "XCT-17",
+  "area": "Cross-cutting",
+  "item": "Stress and liveness",
+  "level": "L2",
+  "method": "Random",
+  "priority": "P1"
+ },
+ {
+  "id": "XCT-18",
+  "area": "Cross-cutting",
+  "item": "System boot",
+  "level": "L4",
+  "method": "Directed",
+  "priority": "P1"
+ }
+]
