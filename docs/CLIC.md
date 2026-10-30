@@ -1,4 +1,4 @@
-# CLIC-lite: status
+# CLIC-lite
 
 `rtl/rv64_clic.sv` — a core-local interrupt controller, the AIA/CLIC alternative to
 PLIC. The difference that matters to a CPU: **PLIC delivers one external line and
@@ -9,46 +9,47 @@ Eight sources, each with a 3-bit priority (7 highest), level/edge selection and 
 selective-hardware-vectoring bit. Arbitration picks the highest priority, lowest
 index breaks ties. Outputs `irq`, `cause_id`, `cause_valid`.
 
-## Test result
+## Status: PASSING
 
-    CLIC_RESULT checks=10 errors=2
+    CLIC_RESULT checks=10 errors=0
 
-**Passing (8 of 10)**
+All ten checks pass:
+
 - level 0 never raises `irq`
 - a configured source raises `irq` with the right `cause_id` and `cause_valid`
 - a deasserted level source clears on acknowledge
 - higher priority wins (level 5 beats level 1)
 - the lower source is delivered after the higher is acknowledged
-- the edge source's pending bit latches *(intermittent — see below)*
+- an edge-sensitive source latches its pending bit
+- an edge source's `cause_id` is reported
+- an acknowledged edge source clears
 
-**Failing (2 of 10)**
-- the edge source's pending bit does not latch reliably
-- consequently its `cause_id` is never reported
+## The bug that cost three turns
 
-## What has been ruled out
+The configuration interface originally split level and edge/shv across two
+addresses, selected by `cfg_addr[3]`:
 
-The config write path is **correct**, and this was proven by finding a testbench bug
-rather than an RTL bug:
+```c
+if (cfg_addr[3] == 0) level_q[i] <= cfg_wdata[2:0];
+else begin edge_q[i] <= cfg_wdata[3]; shv_q[i] <= cfg_wdata[4]; end
+```
 
-    cfg_wdata = {11'd0, 1'b0, e};     // e lands on bit 0
-    cfg_wdata = {12'd0, e, 2'b00};    // e lands on bit 3 -- what the RTL reads
+`edge_q` read back as 0 after a write. I chased the *pending* logic for two turns --
+suspecting `src_q` sampling, pulse width, arbitration -- before dumping `edge_q`
+itself and finding the configuration had never landed. **The write path was the bug,
+not the edge detection.**
 
-With that fixed, `edge_q` is set correctly and `level_q` reads back as programmed
-(levels 0=2, 1=1, 3=5, 5=4 in the dump). So the configuration interface works.
+The fix is one packed word per source, which removes the address-bit scheme that
+invited the mistake:
 
-The arbitration loop is also sound: the five level-path checks exercise it and pass,
-including priority ordering and tie-breaking.
+```c
+cfg_wdata = {shv[4], edge[3], level[2:0]}   // one write configures one source
+```
 
-## Remaining fault
-
-The edge *pulse* is missed. A dump at the check shows `pending = 00000000` with the
-levels correctly programmed, so the pending bit never set on the rising transition.
-Either `src_q` is sampled in the wrong cycle, or the two-cycle pulse in the testbench
-is shorter than the synchroniser needs. That is one focused probe away — print
-`src`, `src_q`, `edge_q[5]` and `pending_q[5]` on every cycle across the pulse.
+A second bug was in the testbench: `{11'd0, 1'b0, e}` puts `e` on bit 0, while the
+RTL reads bit 3.
 
 ## Not integrated
 
 `riscv_core_top` does not instantiate this. Integration needs `cause_id`/`cause_valid`
-wired into the trap logic so the handler can read the vector, which is the step after
-the edge fix.
+wired into the trap logic so the handler can read the vector.

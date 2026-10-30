@@ -23,13 +23,13 @@ module tb_clic;
     end
   endtask
 
-  task automatic set_level(input int i, input logic [2:0] lv);
-    begin @(posedge clk); cfg_we = 1; cfg_addr = i[3:0]; cfg_wdata = {12'd0, lv};
+  task automatic cfg_src(input int i, input logic [2:0] lv, input logic e);
+    begin @(posedge clk); cfg_we = 1; cfg_addr = i[3:0];
+          cfg_wdata = {11'd0, 1'b0, e, lv};
           @(posedge clk); cfg_we = 0; end
   endtask
-  task automatic set_edge(input int i, input logic e);
-    begin @(posedge clk); cfg_we = 1; cfg_addr = 4'h8 | i[3:0]; cfg_wdata = {12'd0, e, 2'b00};
-          @(posedge clk); cfg_we = 0; end
+  task automatic set_level(input int i, input logic [2:0] lv);
+    begin cfg_src(i, lv, 1'b0); end
   endtask
   task automatic do_ack(input int i);
     begin @(posedge clk); ack = 1; ack_id = i[3:0]; @(posedge clk); ack = 0; end
@@ -64,12 +64,11 @@ module tb_clic;
     do_ack(1); src = '0; @(posedge clk); @(posedge clk);
 
     // ---- edge: a pulse sets pending and it STAYS after the source drops ---
-    set_edge(5, 1'b1);
-    set_level(5, 3'd4);
+    cfg_src(5, 3'd4, 1'b1);          // level 4 AND edge-sensitive, one write
     @(posedge clk);
     src = 8'b0010_0000;
-    @(posedge clk);                  // src_q captures the high level here
-    @(posedge clk);                  // rising edge detected on this one
+    @(posedge clk);
+    @(posedge clk);
     src = '0;
     @(posedge clk); @(posedge clk);
     chk("edge source latches pending", irq === 1'b1);

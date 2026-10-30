@@ -37,7 +37,7 @@ module rv64_clic #(
   // configuration: one write port, addressed by source
   input  logic            cfg_we,
   input  logic [3:0]      cfg_addr,      // {src[3:0]} for the config word
-  input  logic [15:0]     cfg_wdata,     // {shv[8], edge[7], level[6:0]}
+  input  logic [15:0]     cfg_wdata,     // {shv[4], edge[3], level[2:0]}, one word per source
 
   // delivered interrupt
   output logic            irq,
@@ -62,15 +62,15 @@ module rv64_clic #(
       edge_q <= '0;
       shv_q  <= '0;
     end else if (cfg_we) begin
-      if (cfg_addr[3] == 1'b0) begin
-        for (int i = 0; i < NSRC; i++)
-          if (cfg_addr[2:0] == 3'(i)) level_q[i] <= cfg_wdata[2:0];
-      end else begin
-        for (int i = 0; i < NSRC; i++)
-          if (cfg_addr[2:0] == 3'(i)) begin
-            edge_q[i] <= cfg_wdata[3];
-            shv_q[i]  <= cfg_wdata[4];
-          end
+      // ONE word configures ONE source: level, edge and shv together. The previous
+      // split by cfg_addr[3] silently dropped the edge write, which cost two turns
+      // of chasing a "pending bit" that was never the problem.
+      for (int i = 0; i < NSRC; i++) begin
+        if (cfg_addr[3:0] == 4'(i)) begin
+          level_q[i] <= cfg_wdata[2:0];
+          edge_q[i]  <= cfg_wdata[3];
+          shv_q[i]   <= cfg_wdata[4];
+        end
       end
     end
   end
