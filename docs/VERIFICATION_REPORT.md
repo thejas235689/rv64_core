@@ -40,21 +40,27 @@ DUT against them. Covergroup instance coverage ranged 52–70 % across these fiv
 programs, which is expected — each program exercises a different slice of the
 ISA, and closure is a P5 activity (see `PROJECT_PLAN.md`).
 
-### Known failure: `test_isa_sweep_fast` regressed with C
+### `test_isa_sweep_fast` is slow, not broken
 
-The ISA sweep now fails. It is **not** caused by the ISS RVC work -- the failure
-reproduces with the pre-RVC ISS restored from git, so it predates that change.
+An earlier revision of this report claimed the ISA sweep had regressed with C. That was
+wrong, and worth recording as a mistake rather than quietly deleting.
 
-Almost certainly the cause: the sweep drives raw 32-bit encodings, and some of its
-entries have `insn[1:0] != 2'b11`. Before C those were simply illegal instructions.
-Now the fetch treats any halfword with `[1:0] != 11` as compressed and expands it, so
-those entries become a different instruction rather than trapping, and the DUT diverges
-from the ISS.
+The sweep passes at every commit I bisected, including the C commit and the ISS RVC
+commit: 844,555 ns of simulated time in about 95 seconds of wall clock. The failures I
+saw came from my own `timeout 80` and `timeout 100` wrappers cutting the run short,
+which cocotb reports as "the simulation ended prematurely" -- an error that looks like a
+DUT fault and is actually a harness timeout.
 
-The fix is in the sweep, not the RTL: a sweep that intends to test illegal 32-bit
-encodings must place them in a program where the low two bits are `11`, or expect the
-compressed interpretation. This is the sweep doing its job -- it caught a real
-consequence of adding C.
+Two lessons, both of which this project has now taught more than once:
+
+* "simulation ended prematurely" from cocotb usually means the run was killed, not that
+  the HDL called `$finish`. Check the wall-clock budget before bisecting the design.
+* A bisect is only as good as the tree it runs in. My first "pre-existing failure"
+  conclusion came from a stale clone sitting at a months-old commit, which made a
+  passing test look like a failing one.
+
+The real issue is the one in the completion plan: this test needs ~95 s, so it does not
+fit a standard CI budget and must be sharded or given a longer allowance.
 
 ### Core regression
 
