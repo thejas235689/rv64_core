@@ -28,8 +28,12 @@ module rv64_fregfile (
 );
   logic [63:0] regs_q [32];
 
-  assign rdata_a = regs_q[raddr_a];
-  assign rdata_b = regs_q[raddr_b];
+  // Write-through bypass. The integer file can rely on a forwarding network; the
+  // FP side has none, and a dependent instruction reaches EX in the SAME cycle the
+  // producer writes at WB -- so without this the reader gets the old value. That
+  // is why `fadd.d f3,f1,f2` followed by `fmv.x.d x7,f3` read a stale f3.
+  assign rdata_a = (we && (waddr == raddr_a)) ? wdata : regs_q[raddr_a];
+  assign rdata_b = (we && (waddr == raddr_b)) ? wdata : regs_q[raddr_b];
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
