@@ -2171,6 +2171,10 @@ async def test_fp_arith_in_core(dut):
 
     got = int(dut.u_core.u_regfile.regs[7].value)
     if got != THREE:
-        dut._log.warning(f"KNOWN BUG: fadd.d in situ x7={got:016x} f3={int(dut.u_core.u_fregfile.regs_q[3].value):016x} expected {THREE:016x}")
+    f3 = int(dut.u_core.u_fregfile.regs_q[3].value)
+    assert f3 == THREE, f"fadd.d 1.0+2.0 -> f3={f3:016x}, expected {THREE:016x}"
+    got = int(dut.u_core.u_regfile.regs[7].value)
+    if got != THREE:
+        dut._log.warning(f"KNOWN BUG: fmv.x.d f3 -> x7={got:016x}, expected {THREE:016x}")
         for e in log[:6]:
             dut._log.info(f"  FP-EX rs1={e[0]} rs2={e[1]} a={e[2]:016x} b={e[3]:016x} out={e[4]:016x}")
