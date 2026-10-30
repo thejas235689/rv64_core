@@ -461,6 +461,12 @@ module rv64_decoder (
             12'h302: ctrl.is_mret   = 1'b1;
             12'h102: ctrl.is_sret   = 1'b1;
             12'h105: ctrl.is_wfi    = 1'b1;
+            // ---- H extension, from the riscv-isa-explorer catalogue ----------
+            12'h202: ctrl.is_hret   = 1'b1;    // HRET     0x20200073
+            12'h220: ctrl.is_hfence = 1'b1;    // HFENCE.VVMA 0x22000073
+            12'h620: ctrl.is_hfence = 1'b1;    // HFENCE.GVMA 0x62000073
+            12'h260: ctrl.is_hfence = 1'b1;    // HINVAL.VVMA 0x26000073
+            12'h660: ctrl.is_hfence = 1'b1;    // HINVAL.GVMA 0x66000073
             // Zawrs: wrs.nto (0x00D) and wrs.sto (0x01D). These wait for an event
             // on a reservation set, but the specification allows them to complete
             // immediately, which is what a single-hart core with no other agent to
@@ -469,6 +475,10 @@ module rv64_decoder (
             12'h01D: ctrl.is_fence  = 1'b1;
             default: ctrl.illegal   = 1'b1;
           endcase
+        // HLV / HLVX / HSV are NOT decoded. The decode was written from the
+        // catalogue and the branch is reached, but the load returns the base
+        // register rather than the loaded value -- a wrong load is worse than an
+        // illegal instruction, so these trap instead until the LSU path is fixed.
         end else if (((funct3 == 3'b100) || (funct3 == 3'b110)) &&
                      (insn[19:15] == 5'd0) && (insn[11:7] == 5'd0)) begin
           // Zimop: mop.r.n / mop.rr.n are "may be operations". They are defined to
