@@ -128,6 +128,9 @@ package rv64_pkg;
 
   // --------------------------------------------------------------------- CSRs
   localparam logic [11:0] CSR_MSTATUS    = 12'h300;
+  localparam logic [11:0] CSR_FFLAGS     = 12'h001;
+  localparam logic [11:0] CSR_FRM        = 12'h002;
+  localparam logic [11:0] CSR_FCSR       = 12'h003;
   // ---- supervisor CSRs -----------------------------------------------------
   localparam logic [11:0] CSR_SSTATUS    = 12'h100;
   localparam logic [11:0] CSR_SIE        = 12'h104;

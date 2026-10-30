@@ -2183,3 +2183,40 @@ async def test_fp_arith_in_core(dut):
             fp_writes[trd] = twd
     assert fp_writes.get(7) == THREE, (
         f"fmv.x.d f3 -> x7: trace shows {fp_writes.get(7)}, expected {THREE:016x}")
+
+@cocotb.test()
+async def test_fcsr(dut):
+    """fcsr / fflags / frm must be readable and writable, and mstatus.FS must reset
+    to Initial (1). Without FS an OS cannot save and restore FP state lazily, which
+    is what makes scalar F usable rather than merely correct."""
+    src = "\n".join([
+        "csrr x5, 0x003",        # fcsr: must read back the reset value 0
+        "li   x6, 0x5",          # placeholder, replaced below
+    ])
+    # build by hand: csrrw x0, fcsr, x6 ; csrr x5, fcsr ; csrr x7, mstatus
+    CSRW = lambda rd, csr, rs1: (csr << 20) | (rs1 << 15) | (1 << 12) | (rd << 7) | 0x73
+    CSRR = lambda rd, csr:      (csr << 20) | (2 << 12) | (rd << 7) | 0x73
+    words = [
+        0x00500313,                      # addi x6, x0, 5   (frm=0, fflags=5)
+        CSRW(0, 0x003, 6),               # csrrw x0, fcsr, x6
+        CSRR(5, 0x003),                  # csrr x5, fcsr
+        CSRR(7, 0x300),                  # csrr x7, mstatus
+        0x00000073,                      # ecall
+    ]
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=400, stop_on_ecall=True)
+
+    causes = [c for (_, c) in h.traps]
+    assert all(c != 2 for c in causes), f"fcsr access trapped as illegal: {causes}"
+
+    vals = {}
+    for t in h.trace:
+        if t[3] is not None:
+            vals[t[3]] = t[4]
+    assert vals.get(5) == 0x5, f"fcsr read back {vals.get(5)}, expected 0x5"
+    fs = (vals.get(7, 0) >> 13) & 0x3
+    assert fs == 1, f"mstatus.FS = {fs}, expected 1 (Initial)"

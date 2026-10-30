@@ -59,6 +59,10 @@ module rv64_csr (
   // ---- architectural state --------------------------------------------------
   logic        mstatus_mie_q, mstatus_mpie_q;
   logic [1:0]  mstatus_mpp_q;
+  // Floating-point state. FS is required by the privileged spec so an OS can save
+  // and restore FP state lazily; fcsr carries frm and fflags.
+  logic [1:0]  mstatus_fs_q;
+  logic [7:0]  fcsr_q;
   logic [63:0] mtvec_q, mepc_q, mcause_q, mtval_q, mscratch_q;
   logic [2:0]  mie_q;                // MSIE, MTIE, MEIE
   logic [2:0]  mip_q;                // pending, read-only from the platform
@@ -91,11 +95,14 @@ module rv64_csr (
     csr_rdata = 64'd0;
     csr_impl  = 1'b1;
     unique case (csr_addr)
-      CSR_MSTATUS:    csr_rdata = {51'd0, mstatus_mpp_q, 3'd0, mstatus_mpie_q, 3'd0, mstatus_mie_q, 3'd0};
+      CSR_MSTATUS:    csr_rdata = {49'd0, mstatus_fs_q, mstatus_mpp_q, 3'd0, mstatus_mpie_q, 3'd0, mstatus_mie_q, 3'd0};
       // MXL=2 (RV64), then A(0), C(2), I(8), M(12), S(18), U(20). V is deliberately NOT
       // set: the vector unit takes RVV semantics but not RVV encoding, so a program
       // reading misa must not be told rv64gcv binaries will run.
       CSR_MISA:       csr_rdata = {2'b10, 36'd0, 26'h141125};   // + C (bit 2) + F (bit 5)
+      CSR_FFLAGS:     csr_rdata = {59'd0, fcsr_q[4:0]};
+      CSR_FRM:        csr_rdata = {61'd0, fcsr_q[7:5]};
+      CSR_FCSR:       csr_rdata = {56'd0, fcsr_q};
       CSR_MIE:        csr_rdata = {52'd0, mie_q[2], 3'd0, mie_q[1], 3'd0, mie_q[0], 3'd0};
       CSR_MTVEC:      csr_rdata = mtvec_q;
       CSR_MCOUNTEREN: csr_rdata = mcounteren_q;
@@ -186,6 +193,8 @@ module rv64_csr (
       mstatus_mie_q  <= 1'b0;
       mstatus_mpie_q <= 1'b0;
       mstatus_mpp_q  <= 2'b11;
+      mstatus_fs_q   <= 2'b01;   // FS = Initial
+      fcsr_q         <= 8'd0;
       priv_q         <= 2'b11;      // reset into M-mode
       sstatus_sie_q  <= 1'b0;
       sstatus_spie_q <= 1'b0;
@@ -238,6 +247,7 @@ module rv64_csr (
         mstatus_mpie_q <= mstatus_mie_q;
         mstatus_mie_q  <= 1'b0;
         mstatus_mpp_q  <= priv_q;
+        mstatus_fs_q   <= csr_wdata[14:13];
         mepc_q         <= trap_pc;
         mcause_q       <= trap_cause;
         mtval_q        <= trap_tval;
@@ -287,6 +297,9 @@ module rv64_csr (
           CSR_MTVEC:      mtvec_q      <= {csr_wval[63:2], 2'b00};   // direct mode only
           CSR_MCOUNTEREN: mcounteren_q <= csr_wval;
           CSR_MSCRATCH:   mscratch_q   <= csr_wval;
+          CSR_FFLAGS:     fcsr_q[4:0]  <= csr_wval[4:0];
+          CSR_FRM:        fcsr_q[7:5]  <= csr_wval[2:0];
+          CSR_FCSR:       fcsr_q       <= csr_wval[7:0];
           CSR_MEPC:       mepc_q       <= {csr_wval[63:2], 2'b00};   // IALIGN = 32
           CSR_MCAUSE:     mcause_q     <= csr_wval;
           CSR_MTVAL:      mtval_q      <= csr_wval;

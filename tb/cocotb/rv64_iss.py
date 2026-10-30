@@ -191,7 +191,7 @@ class ISS:
         self.pc = 0
         self.insn_len = 4
         self.csr = {
-            0x300: 0x1800,       # mstatus: MPP hardwired to M (only M implemented)
+            0x300: 0x3800,       # mstatus: MPP=M, FS=Initial (bit 13)
             0x301: (2 << 62) | (1 << 0) | (1 << 2) | (1 << 8) | (1 << 12) | (1 << 18) | (1 << 20) | (1 << 5),  # RV64IMA + C + F + S + U
             0x304: 0,            # mie
             0x305: 0,            # mtvec
