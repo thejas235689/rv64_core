@@ -29,6 +29,18 @@ module tb_core_top #(
   logic        err_en;
   logic [63:0] err_addr;
   logic        irq_soft, irq_timer, irq_ext;
+  logic [3:0]  plic_src;
+  logic        plic_cfg_we;
+  logic [4:0]  plic_cfg_addr;
+  logic [31:0] plic_cfg_wdata, plic_cfg_rdata;
+  logic        plic_claim, plic_claim_valid, plic_complete;
+  logic [3:0]  plic_claim_id, plic_complete_id;
+  initial begin
+    plic_src = 4'd0; plic_cfg_we = 1'b0; plic_cfg_addr = 5'd0;
+    plic_cfg_wdata = 32'd0; plic_claim = 1'b0; plic_complete = 1'b0;
+    plic_complete_id = 4'd0;
+  end
+
   logic        dbg_halt_req, dbg_resume_req, dbg_step;
   logic [4:0]  dbg_reg_addr;
   logic [63:0] dbg_reg_data;
@@ -189,6 +201,16 @@ module tb_core_top #(
     .irq_soft       (irq_soft),
     .irq_timer      (irq_timer),
     .irq_ext        (irq_ext),
+    .plic_src        (plic_src),
+    .plic_cfg_we     (plic_cfg_we),
+    .plic_cfg_addr   (plic_cfg_addr),
+    .plic_cfg_wdata  (plic_cfg_wdata),
+    .plic_cfg_rdata  (plic_cfg_rdata),
+    .plic_claim      (plic_claim),
+    .plic_claim_id   (plic_claim_id),
+    .plic_claim_valid(plic_claim_valid),
+    .plic_complete   (plic_complete),
+    .plic_complete_id(plic_complete_id),
     .dbg_halt_req   (dbg_halt_req),
     .dbg_resume_req (dbg_resume_req),
     .dbg_step       (dbg_step),

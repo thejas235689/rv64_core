@@ -69,6 +69,20 @@ module riscv_core_top #(
   input  logic        irq_soft,
   input  logic        irq_timer,
   input  logic        irq_ext,
+  // ---- PLIC-lite -----------------------------------------------------------
+  // The core has no peripheral bus, so the interrupt controller's config port is
+  // brought out to the top rather than memory-mapped. Its irq output is ORed into
+  // irq_ext, which is what the CSR sees.
+  input  logic [3:0]  plic_src,
+  input  logic        plic_cfg_we,
+  input  logic [4:0]  plic_cfg_addr,
+  input  logic [31:0] plic_cfg_wdata,
+  output logic [31:0] plic_cfg_rdata,
+  input  logic        plic_claim,
+  output logic [3:0]  plic_claim_id,
+  output logic        plic_claim_valid,
+  input  logic        plic_complete,
+  input  logic [3:0]  plic_complete_id,
 
   // ---- debug ----------------------------------------------------------------
   input  logic        dbg_halt_req,
@@ -454,6 +468,32 @@ module riscv_core_top #(
   logic        fp_flag_invalid, fp_flag_inexact;
   logic        id_ex_fp_sub, ex_mem_fp_sub, mem_wb_fp_sub;
   logic        id_ex_fp_src, ex_mem_fp_src, mem_wb_fp_src;
+
+  // ===========================================================================
+  // Interrupt controller. Was verified standalone and instantiated nowhere; the
+  // core took irq_ext as a bare input, so nothing inside generated or claimed an
+  // interrupt.
+  // ===========================================================================
+  logic plic_irq;
+  logic irq_ext_eff;
+
+  rv64_plic_lite u_plic (
+    .clk         (clk),
+    .rst_n       (rst_n),
+    .src         (plic_src),
+    .cfg_we      (plic_cfg_we),
+    .cfg_addr    (plic_cfg_addr),
+    .cfg_wdata   (plic_cfg_wdata),
+    .cfg_rdata   (plic_cfg_rdata),
+    .claim       (plic_claim),
+    .claim_id    (plic_claim_id),
+    .claim_valid (plic_claim_valid),
+    .complete    (plic_complete),
+    .complete_id (plic_complete_id),
+    .irq         (plic_irq)
+  );
+
+  assign irq_ext_eff = irq_ext | plic_irq;
 
   rv64_regfile u_regfile (
     .clk      (clk),
@@ -912,7 +952,7 @@ module riscv_core_top #(
     .mepc_o         (csr_mepc),
     .irq_soft       (irq_soft),
     .irq_timer      (irq_timer),
-    .irq_ext        (irq_ext),
+    .irq_ext        (irq_ext_eff),
     .mstatus_mie    (csr_mstatus_mie),
     .irq_pending    (csr_irq_pending),
     .retire_valid   (mem_wb_v),
@@ -958,7 +998,7 @@ module riscv_core_top #(
   assign mem_trap = ex_mem_v && (ex_mem_exc || (lsu_done && lsu_fault));
 
   always_comb begin
-    if (csr_irq_pending && irq_ext && csr_mstatus_mie)       irq_cause = CAUSE_M_EXT_INT;
+    if (csr_irq_pending && irq_ext_eff && csr_mstatus_mie)   irq_cause = CAUSE_M_EXT_INT;
     else if (csr_irq_pending && irq_timer && csr_mstatus_mie) irq_cause = CAUSE_M_TIMER_INT;
     else                                                     irq_cause = CAUSE_M_SOFT_INT;
   end
