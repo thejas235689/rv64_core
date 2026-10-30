@@ -60,40 +60,50 @@ module rv64_fp_add (
   // A denormal has no implicit leading one; a normal does.
   wire        imp_big = (e_big != 11'd0);
   wire        imp_sml = (e_sml != 11'd0);
-
-  // ---- align the smaller operand, keeping a sticky bit -------------------
-  // Align the full 53-bit significand (implicit one included) as a unit.
-  logic [52:0] sig_big, sig_sml, sig_sml_aligned;
+  // Alignment into a field WIDER than the 53-bit significand so the low bits are
+  // KEPT, not collapsed into a sticky. The result exponent can drop below e_big
+  // during normalisation, which makes those low bits representable; collapsing
+  // them made an exact sum look like it needed rounding. Transcribed from
+  // rtl/fpu/model/fp_add_model.py, which passes 315/315.
+  localparam int ALIGN_EXT = 3;
+  logic [52:0] sig_big, sig_sml;
+  logic [55:0] sig_sml_aligned;
   logic        sticky;
   always_comb begin
     sig_big = {imp_big, f_big};
     sig_sml = {imp_sml, f_sml};
     sticky  = 1'b0;
-    if (exp_diff >= 12'd53) begin
-      sig_sml_aligned = 53'd0;
+    if (exp_diff > 12'(53 + ALIGN_EXT)) begin
+      sig_sml_aligned = 56'd0;
       sticky          = (sig_sml != 53'd0);
     end else begin
-      logic [52:0] mask;
-      mask            = (53'd1 << exp_diff) - 53'd1;
-      sticky          = ((sig_sml & mask) != 53'd0);
-      sig_sml_aligned = sig_sml >> exp_diff;
+      logic [55:0] ext, mask;
+      logic [11:0] lost;
+      ext = {3'b000, sig_sml} << ALIGN_EXT;
+      // exp_diff can be SMALLER than ALIGN_EXT: lost would then go negative and
+      // (1 << lost) - 1 becomes a huge mask, setting a false sticky. That made
+      // 1.0 - 1.0 return 4.0 instead of zero.
+      if (exp_diff <= 12'(ALIGN_EXT)) begin
+        mask   = 56'd0;
+        sticky = 1'b0;
+      end else begin
+        lost = exp_diff - 12'(ALIGN_EXT);
+        mask = (56'd1 << lost) - 56'd1;
+        sticky = (({3'b000, sig_sml} & mask) != 56'd0);
+      end
+      sig_sml_aligned = ext >> exp_diff;
     end
   end
 
-  // ---- signed-magnitude add / subtract -----------------------------------
-  // Keep 3 extra bits: guard, round, and a slot for the carry out.
-  // 56-bit working format: [55]=carry [54]=implicit leading one
-  //                       [53:2]=fraction [1]=round [0]=sticky
-  logic [55:0] mag_big, mag_sml, mag_sum;
+  // 59-bit working format, exactly as the model:
+  //   [58]=carry [57]=implicit [56:5]=fraction [4:3]=extra [2]=round
+  //   [1]=guard  [0]=sticky
+  logic [58:0] mag_big, mag_sml, mag_sum;
   logic        sign_out;
   logic [10:0] exp_out;
   always_comb begin
-    // The implicit leading one is an EXPLICIT bit here. Without it the working
-    // format cannot represent 1.f at all, which is why every sum came out with
-    // the exponent one too low -- normalisation shifted left to find a leading
-    // one that was never stored.
-    mag_big = {1'b0, sig_big, 2'b00};
-    mag_sml = {1'b0, sig_sml_aligned, 2'b00} | {55'd0, sticky};
+    mag_big = {2'b00, sig_big, 5'b00000};
+    mag_sml = {2'b00, sig_sml_aligned, 2'b00} | {58'd0, sticky};
     if (s_big == s_sml) begin
       mag_sum  = mag_big + mag_sml;
       sign_out = s_big;
@@ -104,51 +114,40 @@ module rv64_fp_add (
     exp_out = e_big;
   end
 
-  // ---- normalise and round, in one block so each signal has one driver ----
-  logic [55:0] norm;
+  logic [58:0] norm;
   logic [10:0] exp_norm;
   logic        inexact;
   logic [51:0] frac_r;
   logic        round_up;
-  int unsigned lshift;
   always_comb begin
     norm     = mag_sum;
     exp_norm = exp_out;
-    lshift   = 0;
     inexact  = 1'b0;
     round_up = 1'b0;
     frac_r   = 52'd0;
 
-    // How far the word was shifted decides where the round and sticky bits end
-    // up. Left-shifting to normalise moves them up with everything else, so
-    // reading them at fixed [1:0] was wrong for every case that needed a shift --
-    // which is exactly the three subtraction cases that were one ulp out.
-    if (norm[55]) begin                       // carry out: shift right one
+    if (norm[58]) begin
       inexact  = norm[0];
-      norm     = {1'b0, norm[55:1]};
+      norm     = {1'b0, norm[58:1]};
       exp_norm = exp_out + 11'd1;
     end else begin
-      for (int i = 0; i < 56; i++) begin
-        if (!norm[54] && (exp_norm > 11'd1)) begin
-          norm     = {norm[54:0], 1'b0};
+      for (int i = 0; i < 59; i++) begin
+        if (!norm[57] && (exp_norm > 11'd1)) begin
+          norm     = {norm[57:0], 1'b0};
           exp_norm = exp_norm - 11'd1;
-          lshift   = lshift + 1;
         end
       end
     end
 
-    // round to nearest, ties to even, at the shifted position
-    frac_r   = norm[53:2];
-    round_up = norm[1 + lshift] && ((|(norm & ((56'd1 << (1 + lshift)) - 1))) ||
-                                    norm[2 + lshift]);
-    inexact  = inexact | norm[1 + lshift] |
-               (|(norm & ((56'd1 << (1 + lshift)) - 1)));
+    frac_r   = norm[56:5];
+    round_up = norm[4] && (norm[3] || (|norm[2:0]) || norm[5]);
+    inexact  = inexact | norm[4] | norm[3] | (|norm[2:0]);
     if (round_up) begin
       frac_r = frac_r + 52'd1;
-      // rounding may carry into the implicit one
       if (frac_r == 52'd0) exp_norm = exp_norm + 11'd1;
     end
   end
+
 
   // ---- assemble, then override for the special cases ---------------------
   always_comb begin
@@ -173,7 +172,7 @@ module rv64_fp_add (
       result = {sb_eff, eb, fb};
     end else if (b_is_zero) begin
       result = a;
-    end else if (norm == 56'd0) begin
+    end else if (norm == 59'd0) begin
       result = 64'd0;                         // exact cancellation gives +0
     end else if (exp_norm >= 11'h7FF) begin
       result       = {sign_out, 11'h7FF, 52'd0};   // overflow saturates to infinity
