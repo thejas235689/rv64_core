@@ -453,6 +453,7 @@ module riscv_core_top #(
   logic [63:0] mem_wb_fp_wdata;
   logic        fp_flag_invalid, fp_flag_inexact;
   logic        id_ex_fp_sub, ex_mem_fp_sub, mem_wb_fp_sub;
+  logic        id_ex_fp_src, ex_mem_fp_src, mem_wb_fp_src;
 
   rv64_regfile u_regfile (
     .clk      (clk),
@@ -815,8 +816,13 @@ module riscv_core_top #(
       WB_PC4:  ex_wb_val = id_ex_pc + (id_ex_rvc ? 64'd2 : 64'd4);
       default: ex_wb_val = ex_alu_out;
     endcase
-    // FP results come from the adder, not the ALU
-    if (id_ex_is_fp) ex_wb_val = ex_fp_out;
+    // OP-FP writeback:
+    //   fadd.d / fsub.d  -> adder result  (fp_src=1, is_fp=1)
+    //   fmv.x.d          -> FP operand    (fp_src=1, is_fp=0)
+    //   fmv.d.x          -> integer operand (fp_src=0, is_fp=1)
+    if (id_ex_is_fp && id_ex_fp_src)      ex_wb_val = ex_fp_out;
+    else if (id_ex_fp_src)                ex_wb_val = fp_rs1_data;
+    else if (id_ex_is_fp)                 ex_wb_val = id_ex_rs1_data;
   end
 
   // ===========================================================================
@@ -1144,6 +1150,7 @@ module riscv_core_top #(
       id_ex_ctrl     <= dec_ctrl;
       id_ex_rs1      <= dec_rs1;
       id_ex_is_fp   <= dec_ctrl.is_fp;
+      id_ex_fp_src  <= dec_ctrl.fp_src;
       id_ex_fp_sub  <= dec_ctrl.fp_sub;
       id_ex_rs2      <= dec_rs2;
       id_ex_rd       <= dec_rd;
@@ -1167,6 +1174,7 @@ module riscv_core_top #(
       ex_mem_rd         <= 5'd0;
       ex_mem_reg_we     <= 1'b0;
       ex_mem_is_fp      <= 1'b0;
+      ex_mem_fp_src     <= 1'b0;
       ex_mem_wb_sel     <= WB_ALU;
       ex_mem_wb_val     <= 64'd0;
       ex_mem_addr       <= 64'd0;
@@ -1205,6 +1213,7 @@ module riscv_core_top #(
       ex_mem_rd         <= id_ex_rd;
       ex_mem_reg_we     <= id_ex_ctrl.reg_we;
       ex_mem_is_fp      <= id_ex_is_fp;
+      ex_mem_fp_src     <= id_ex_fp_src;
       ex_mem_wb_sel     <= id_ex_ctrl.wb_sel;
       ex_mem_wb_val     <= ex_wb_val;
       ex_mem_addr       <= ex_alu_out;
@@ -1238,6 +1247,7 @@ module riscv_core_top #(
       mem_wb_rd     <= 5'd0;
       mem_wb_reg_we <= 1'b0;
       mem_wb_is_fp  <= 1'b0;
+      mem_wb_fp_src <= 1'b0;
       mem_wb_is_num <= 1'b0;
       mem_wb_wdata  <= 64'd0;
     end else if (mem_stall || mem_trap) begin
@@ -1249,6 +1259,7 @@ module riscv_core_top #(
       mem_wb_rd     <= ex_mem_rd;
       mem_wb_reg_we <= ex_mem_reg_we;
       mem_wb_is_fp  <= ex_mem_is_fp;
+      mem_wb_fp_src <= ex_mem_fp_src;
       mem_wb_is_num <= ex_mem_is_num;
       mem_wb_wdata  <= (ex_mem_wb_sel == WB_MEM) ? lsu_load_data : ex_mem_wb_val;
     end else begin

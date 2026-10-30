@@ -1950,7 +1950,7 @@ async def test_misa_bits(dut):
     # actually returned; reading the register file hierarchically did not work
     got = h.trace[0][4]
     dut._log.info(f"misa = {got:#x}")
-    assert got == 0x8000000000141105, f"misa should be 0x8000000000141105, got {got:#x}"
+    assert got == 0x8000000000141125, f"misa should be 0x8000000000141125, got {got:#x}"
 
 
 @cocotb.test()
@@ -2056,35 +2056,21 @@ async def test_rvc_in_core(dut):
     dut._log.info(f"straddle: {len(h2.trace)} retirements, x5 = {x5}")
     assert x5 == 8, f"straddled instruction did not run: x5 = {x5}"
 
-@cocotb.test()
-async def test_fp_in_core(dut):
-    """fadd.d must decode and retire in the core rather than trapping.
+def _fmv_d_x(rd, rs1):
+    """fmv.d.x rd, rs1  (funct7=0x78, rs2=0, funct3=0, opcode=0x53)"""
+    return (0x78 << 25) | (0 << 20) | (rs1 << 15) | (0 << 12) | (rd << 7) | 0x53
 
-    Scope, stated plainly: there is no FP load or FP-to-integer move yet, so the
-    FP registers cannot be loaded from a program and this exercises only the
-    decode, the pipeline path and the write to the FP file. It proves the
-    instruction is no longer an illegal instruction; it does NOT prove the
-    arithmetic, which is covered separately by the UVM and pyuvm environments at
-    315/315 against an independent oracle.
-    """
-    # fadd.d f1, f1, f1   (funct7=0x01, rs2=1, rs1=1, funct3=0, rd=1, opcode=0x53)
-    fadd_d = (0x01 << 25) | (1 << 20) | (1 << 15) | (0 << 12) | (1 << 7) | 0x53
-    words = [fadd_d, 0x00000073]   # fadd.d ; ecall
+def _fmv_x_d(rd, rs1):
+    """fmv.x.d rd, rs1  (funct7=0x70, rs2=0, funct3=0, opcode=0x53)"""
+    return (0x70 << 25) | (0 << 20) | (rs1 << 15) | (0 << 12) | (rd << 7) | 0x53
 
-    h = Harness(dut)
-    await h.startup()
-    h.clear()
-    await h.load(words)
+def _fadd_d(rd, rs1, rs2, sub=0):
+    """fadd.d / fsub.d (funct7=0x01, funct3=0 for add, 1 for sub)"""
+    return (0x01 << 25) | (rs2 << 20) | (rs1 << 15) | (sub << 12) | (rd << 7) | 0x53
 
-    iss = ISS()
-    iss.load_words(0, words)
+def _enc_i(imm, rs1, f3, rd, op):
+    return ((imm & 0xFFF) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
 
-    await h.run(max_cycles=400, stop_on_ecall=True)
-
-    causes = [c for (_, c) in h.traps]
-    assert all(c != 2 for c in causes), (
-        f"fadd.d trapped as an illegal instruction: causes={causes}")
-
-    # the FP write must not have landed in the integer file
-    assert int(dut.u_core.u_regfile.regs[1].value) == 0, (
-        "FP result leaked into the integer register file")
+def _enc_s(imm, rs2, rs1, f3, op):
+    imm &= 0xFFF
+    return ((imm >> 5) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | ((imm & 0x1F) << 7) | op

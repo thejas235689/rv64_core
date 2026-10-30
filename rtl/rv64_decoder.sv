@@ -109,6 +109,28 @@ module rv64_decoder (
       end
 
       // ---------------------------------------------------------------- LOAD
+      // ---- LOAD-FP (0x07): fld -> FP register file ----------------------
+      7'b0000111: begin
+        if (funct3 == 3'b011) begin            // fld: 64-bit
+          ctrl.reg_we = 1'b1;
+          ctrl.is_load = 1'b1;
+          ctrl.is_fp   = 1'b1;                 // result -> FP file
+          ctrl.wb_sel  = WB_MEM;
+          ctrl.mem_size = MSZ_D;
+          ctrl.imm_sel = IMM_I;
+        end else ctrl.illegal = 1'b1;
+      end
+
+      // ---- STORE-FP (0x27): fsd ----------------------------------------
+      7'b0100111: begin
+        if (funct3 == 3'b011) begin            // fsd: 64-bit
+          ctrl.is_store = 1'b1;
+          ctrl.is_fp    = 1'b1;                // store data from FP file
+          ctrl.mem_size = MSZ_D;
+          ctrl.imm_sel  = IMM_S;
+        end else ctrl.illegal = 1'b1;
+      end
+
       7'b0000011: begin
         ctrl.imm_sel = IMM_I;
         ctrl.is_load = 1'b1;
@@ -233,9 +255,26 @@ module rv64_decoder (
         unique case (funct7)
           7'b0000001: begin                      // fadd.d / fsub.d
             ctrl.reg_we  = 1'b1;
-            ctrl.is_fp   = 1'b1;
+            ctrl.is_fp   = 1'b1;                 // result -> FP file
+            ctrl.fp_src  = 1'b1;                 // operands from FP file
             ctrl.fp_sub  = funct3[0];            // 0 = fadd.d, 1 = fsub.d
             ctrl.wb_sel  = WB_ALU;               // unused for FP, kept defined
+          end
+          7'b1110000: begin                      // fmv.x.d: FP -> integer
+            if ((funct3 == 3'b000) && (rs2 == 5'd0)) begin
+              ctrl.reg_we = 1'b1;
+              ctrl.is_fp  = 1'b0;                // result -> integer file
+              ctrl.fp_src = 1'b1;                // operand from FP file
+              ctrl.wb_sel = WB_ALU;
+            end else ctrl.illegal = 1'b1;
+          end
+          7'b1111000: begin                      // fmv.d.x: integer -> FP
+            if ((funct3 == 3'b000) && (rs2 == 5'd0)) begin
+              ctrl.reg_we = 1'b1;
+              ctrl.is_fp  = 1'b1;                // result -> FP file
+              ctrl.fp_src = 1'b0;                // operand from integer file
+              ctrl.wb_sel = WB_ALU;
+            end else ctrl.illegal = 1'b1;
           end
           default: ctrl.illegal = 1'b1;
         endcase

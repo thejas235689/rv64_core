@@ -212,6 +212,8 @@ package rv64_pkg;
     logic        is_ebreak;
     logic        is_fp;       // OP-FP: operands and result live in the FP file
     logic        fp_sub;      // 1 = fsub.d rather than fadd.d
+    logic        fp_src;      // operands come from the FP file
+    // is_fp means the RESULT goes to the FP file
     logic        is_fence;
     logic        is_cbo;        // Zicbom: cbo.inval / cbo.clean / cbo.flush
     logic        is_csr;
