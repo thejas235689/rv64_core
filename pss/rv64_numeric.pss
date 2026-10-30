@@ -1,0 +1,262 @@
+//////////////////////////////////////////////////////////////////////////////////
+// Portable Stimulus model for the rv64_core numeric ABI.
+//
+// Run with Satya (https://github.com/thejas235689/satya):
+//   satya check pss/rv64_numeric.pss
+//   satya solve pss/rv64_numeric.pss --action test --seed 1
+//   satya gen   pss/rv64_numeric.pss --backend uvm --action test
+//
+// Three constraints on how this model is written, all forced by Satya v0.25.0
+// (reproducers in thejas235689/satya, tests/repro/):
+//
+//  1. `op` and `fmt` are pinned with EQUALITY, never with a range. Enum range
+//     constraints are not enforced by the solver -- `op in [PADD..PDIV]` solves
+//     to op=2 -- so a range here would silently leave the operation free and
+//     the model would test nothing in particular. Equality is honoured.
+//  2. Wide operands are pinned, not drawn from a domain. A set of large
+//     bit[64] values exhausts the solver's memory (1.2 GB allocation).
+//  3. No operand reaches 2^63. Literals at or above it solve as 0. INT64_MIN
+//     and -1 coverage therefore stays with the directed cocotb/UVM suites.
+//
+// Operand *values* are randomised over RANGES, never over value lists. Satya
+// v0.25.0 returns the first element of a set every time -- `x in [64, 127,
+// 16384]` gives 64 on every seed -- while a range randomises correctly. For the
+// posit and residue families that costs nothing, because every bit pattern is a
+// legal encoding of that width, so a range is the better sweep anyway.
+//////////////////////////////////////////////////////////////////////////////////
+
+package rv64_numeric_pkg {
+
+   enum num_op_e {
+      QADD, QSUB, QMUL, QCLR, QACC, QGET, ADAPT, ERR,
+      PADD, PSUB, PMUL, PDIV,
+      LNMUL, LNDIV,
+      RADD, RMUL,
+      FADD, FMUL,
+      TOINT, FROMINT
+   };
+
+   enum num_fmt_e { W8, W16, W32, W64 };
+};
+
+component numeric_c {
+
+   // ---- quire lifecycle --------------------------------------------------
+   action quire_clear {
+      rand num_op_e op;
+      constraint op == QCLR;
+   };
+   action quire_accumulate {
+      rand num_op_e op;
+      constraint op == QACC;
+   };
+   action quire_read {
+      rand num_op_e op;
+      constraint op == QGET;
+   };
+
+   // ---- posit: randomised operands, pinned operation ---------------------
+   action posit_add {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == PADD;
+      constraint fmt == W16;
+      // any 16-bit pattern is a legal posit16
+      constraint a in [0x0000..0xFFFF];
+      constraint b in [0x0000..0xFFFF];
+   };
+   action posit_sub {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == PSUB;
+      constraint fmt == W16;
+      // any 16-bit pattern is a legal posit16
+      constraint a in [0x0000..0xFFFF];
+      constraint b in [0x0000..0xFFFF];
+   };
+   action posit_mul {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == PMUL;
+      constraint fmt == W16;
+      // any 16-bit pattern is a legal posit16
+      constraint a in [0x0000..0xFFFF];
+      constraint b in [0x0000..0xFFFF];
+   };
+   action posit_div {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == PDIV;
+      constraint fmt == W16;
+      // avoid the exact zero encoding, which makes division trivial
+      constraint a in [0x0001..0xFFFF];
+      constraint b in [0x0001..0xFFFF];
+   };
+
+   // ---- residue: randomised operands, pinned operation -------------------
+   action rns_add {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == RADD;
+      constraint fmt == W16;
+      // any 12-bit pattern is a residue vector, reduced or not
+      constraint a in [0x000..0xFFF];
+      constraint b in [0x000..0xFFF];
+   };
+   action rns_mul {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == RMUL;
+      constraint fmt == W16;
+      // any 12-bit pattern is a residue vector, reduced or not
+      constraint a in [0x000..0xFFF];
+      constraint b in [0x000..0xFFF];
+   };
+
+   // ---- fixed-Q: directed boundary cases ---------------------------------
+   action qadd_mid {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == QADD;
+      constraint a == 0x180000000;              // 1.5
+      constraint b == 0x200000000;              // 2.0
+   };
+   action qsub_mid {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == QSUB;
+      constraint a == 0x200000000;
+      constraint b == 0x180000000;
+   };
+   action qmul_frac {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == QMUL;
+      constraint a == 0x180000000;              // 1.5 x 2.0 = 3.0
+      constraint b == 0x200000000;
+   };
+   action qadd_rail {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == QADD;
+      constraint a == 0x7FFFFFFFFFFFFFFF;       // the positive rail
+      constraint b == 0x0000000000000001;
+   };
+   action qsub_cancel {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == QSUB;
+      constraint a == 0x4000000000000000;
+      constraint b == 0x4000000000000000;       // exact cancellation
+   };
+
+   // ---- logarithmic: directed --------------------------------------------
+   action lns_mul {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == LNMUL;
+      constraint fmt == W32;
+      constraint a == 0x00010000;               // log2(1.0)
+      constraint b == 0x00020000;               // + log2(2.0) -> 3.0
+   };
+   action lns_div {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == LNDIV;
+      constraint fmt == W32;
+      constraint a == 0x00020000;
+      constraint b == 0x00010000;
+   };
+   action lns_rail {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == LNMUL;
+      constraint fmt == W32;
+      constraint a == 0x00010000;
+      constraint b == 0x7FFFFFFF;               // the +inf rail
+   };
+
+   // ---- IEEE binary32: directed ------------------------------------------
+   action fp32_add {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == FADD;
+      constraint a == 0x3F800000;               // 1.0 + 2.0
+      constraint b == 0x40000000;
+   };
+   action fp32_mul {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == FMUL;
+      constraint a == 0x3FC00000;               // 1.5 x 2.0
+      constraint b == 0x40000000;
+   };
+   action fp32_inf {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == FMUL;
+      constraint a == 0x7F800000;               // inf x 2.0 -> inf
+      constraint b == 0x40000000;
+   };
+   action fp32_nan {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == FADD;
+      constraint a == 0x7FC00000;               // qNaN + 1.0 -> qNaN
+      constraint b == 0x3F800000;
+   };
+   action fp32_zero {
+      rand num_op_e op; rand bit[64] a; rand bit[64] b;
+      constraint op == FMUL;
+      constraint a == 0x00000000;               // 0.0 x 2.0 -> 0.0
+      constraint b == 0x40000000;
+   };
+
+   // ---- width variants ---------------------------------------------------
+   action posit_w8 {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == PADD;
+      constraint fmt == W8;
+      constraint a == 0x40;
+      constraint b == 0x40;
+   };
+   action posit_w32 {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == PMUL;
+      constraint fmt == W32;
+      constraint a == 0x40000000;
+      constraint b == 0x40000000;
+   };
+   action lns_w16 {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == LNMUL;
+      constraint fmt == W16;
+      constraint a == 0x0100;
+      constraint b == 0x0200;
+   };
+   action rns_w8 {
+      rand num_op_e op; rand num_fmt_e fmt; rand bit[64] a; rand bit[64] b;
+      constraint op == RADD;
+      constraint fmt == W8;
+      constraint a == 0x0F;
+      constraint b == 0x2A;
+   };
+};
+
+component pss_top {
+
+   numeric_c num;
+
+   action test {
+      activity {
+         do numeric_c::quire_clear;
+         do numeric_c::quire_accumulate;
+         do numeric_c::quire_read;
+         repeat (4) { do numeric_c::posit_add; };
+         repeat (4) { do numeric_c::posit_sub; };
+         repeat (4) { do numeric_c::posit_mul; };
+         repeat (3) { do numeric_c::posit_div; };
+         repeat (4) { do numeric_c::rns_add; };
+         repeat (4) { do numeric_c::rns_mul; };
+         do numeric_c::qadd_mid;
+         do numeric_c::qsub_mid;
+         do numeric_c::qmul_frac;
+         do numeric_c::qadd_rail;
+         do numeric_c::qsub_cancel;
+         do numeric_c::lns_mul;
+         do numeric_c::lns_div;
+         do numeric_c::lns_rail;
+         do numeric_c::fp32_add;
+         do numeric_c::fp32_mul;
+         do numeric_c::fp32_inf;
+         do numeric_c::fp32_nan;
+         do numeric_c::fp32_zero;
+         do numeric_c::posit_w8;
+         do numeric_c::posit_w32;
+         do numeric_c::lns_w16;
+         do numeric_c::rns_w8;
+      };
+   };
+};

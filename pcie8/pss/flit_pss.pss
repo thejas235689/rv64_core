@@ -1,0 +1,41 @@
+// =============================================================================
+// flit_pss.pss -- PSS model of the FLIT packing scenarios, for Satya v0.41.0.
+//
+// SYNTAX NOTE, learned by measuring rather than by reading the grammar:
+// Satya takes UNNAMED constraints --
+//     constraint <expr>;
+// -- and inline ranges in the declaration, e.g.  rand int in [1..800] n;
+//
+// A NAMED block, `constraint c { ... }`, parses without complaint and is then
+// IGNORED. The solver randomises the field freely and still reports
+// "constraints: 1/1 satisfied". Measured: exact_fill (n_bytes == 236) and
+// span_boundary (n_bytes == 300) both returned unsigned=470 with 1/1 satisfied,
+// and seeds 1/2/3/99 returned 69, 668, 469, 197 -- randomising, never binding.
+// A green log from that form means nothing. The form below binds.
+// =============================================================================
+
+component flit_packer_c {
+
+   action exact_fill {
+      rand int in [236..236] n_bytes;
+      rand bit last_asserted;
+      constraint last_asserted == 1;
+   };
+
+   action span_boundary {
+      rand int in [237..471] n_bytes;
+      constraint n_bytes == 300;
+   };
+
+   action multi_flit {
+      rand int in [2..4] n_flits;
+      rand int in [472..944] n_bytes;
+      constraint n_bytes == n_flits * 236;
+   };
+
+   action partial_tail {
+      rand int in [1..235] remainder;
+      rand int in [237..471] n_bytes;
+      constraint n_bytes == 236 + remainder;
+   };
+};

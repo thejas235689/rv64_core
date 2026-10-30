@@ -1,0 +1,241 @@
+`timescale 1ns/1ps
+// =============================================================================
+// rv64_dcache.sv -- write-through data cache.
+//
+// 64 lines of one 64-bit beat, direct-mapped on address bits [8:3], matching the
+// instruction cache and the width of the core's data bus. The LSU sends the exact
+// (possibly unaligned) address and expects the beat containing it back, so lines
+// are indexed and tagged on addr[63:3] while the requester keeps its own byte
+// extraction.
+//
+// WRITE POLICY: write-through, write-allocate on a hit only.
+//   * a store that hits updates the cached line through its byte strobes AND
+//     issues the same store to memory, so memory is never stale;
+//   * a store that misses goes straight to memory and does NOT allocate, which
+//     avoids a pointless fill for data that was written once.
+// Write-through is the slow choice, and it is deliberate: it keeps the cache
+// coherent with a memory that page-table walks also read, with no invalidation
+// protocol. A write-back cache would need dirty lines and a flush path before
+// Sv39 could trust it.
+//
+// NOT IMPLEMENTED, stated rather than implied: no invalidate port, no write-back,
+// no L2, no RRIP or any replacement beyond direct mapping, no prefetch, no
+// uncached-region control. Stores that straddle two lines are handled by the LSU
+// (it never issues one), not here.
+// =============================================================================
+`default_nettype none
+
+module rv64_dcache (
+  input  logic        clk,
+  input  logic        rst_n,
+
+  // ---- core side (same shape as the LSU's bus port) ------------------------
+  input  logic        req_valid,
+  input  logic [63:0] req_addr,
+  input  logic        req_we,
+  input  logic [7:0]  req_wstrb,
+  input  logic [63:0] req_wdata,
+  output logic        req_ready,
+  output logic        rsp_valid,
+  output logic [63:0] rsp_rdata,
+  output logic        rsp_error,
+
+  // ---- bus side ------------------------------------------------------------
+  output logic        bus_req_valid,
+  output logic [63:0] bus_req_addr,
+  output logic        bus_req_we,
+  output logic [7:0]  bus_req_wstrb,
+  output logic [63:0] bus_req_wdata,
+  input  logic        bus_req_ready,
+  input  logic        bus_rsp_valid,
+  input  logic [63:0] bus_rsp_rdata,
+  input  logic        bus_rsp_error,
+
+  // ---- management (Zicbom) -------------------------------------------------
+  // cbo.inval drops a block. cbo.clean and cbo.flush are no-ops here because the
+  // cache is write-through: memory already holds every byte, so there is nothing
+  // to write back.
+  input  logic        mgmt_valid,
+  input  logic        mgmt_zero,      // 1 = cbo.zero, 0 = cbo.inval
+  input  logic [63:0] mgmt_addr,
+  output logic        mgmt_done,
+
+  // ---- policy input --------------------------------------------------------
+  input  logic        bypass,         // from AMCCE: do not allocate
+
+  // ---- observation ---------------------------------------------------------
+  output logic        acc_hit,        // one-cycle pulse per completed access
+  output logic        acc_miss,
+
+  // ---- counters ------------------------------------------------------------
+  output logic [31:0] hit_count,
+  output logic [31:0] miss_count
+);
+  localparam int NLINES = 64;
+
+  logic [54:0] tag_q  [0:NLINES-1];   // addr[63:9]
+  logic [63:0] data_q [0:NLINES-1];
+  logic        valid_q[0:NLINES-1];
+
+  wire [63:0] line_addr = {req_addr[63:3], 3'b000};
+  wire [5:0]  idx       = req_addr[8:3];
+  wire [5:0]  midx      = mgmt_addr[8:3];
+  wire [54:0] mtag      = mgmt_addr[63:9];
+  // Zicboz: a block zero is eight write beats of zeros, issued from the bus port
+  logic [63:0] zero_addr_q;
+  logic [2:0]  zero_beat_q;
+  logic        mgmt_done_q;
+
+  assign mgmt_done = mgmt_done_q || (mgmt_valid && !mgmt_zero);
+  wire [54:0] tag       = req_addr[63:9];
+  wire        hit       = valid_q[idx] && (tag_q[idx] == tag);
+
+  // No D_WRESP: this bus answers loads only. A store is accepted and forgotten,
+  // which is what the LSU already assumes -- waiting for a write response
+  // deadlocked the core the first time this cache was wired in.
+  typedef enum logic [2:0] {D_IDLE, D_FILL, D_WREQ, D_DONE, D_ZERO} dstate_e;
+  dstate_e     dst;
+  logic [63:0] addr_q, wdata_q;
+  logic [7:0]  wstrb_q;
+  logic        we_q;
+  logic [63:0] rdata_q;
+  logic        err_q;
+  logic        bypass_q;
+  logic        hit_pulse_q, miss_pulse_q;
+
+
+  assign req_ready = (dst == D_IDLE);
+
+  assign bus_req_valid = (dst == D_FILL) || (dst == D_WREQ) || (dst == D_ZERO);
+  assign bus_req_addr  = (dst == D_ZERO) ? zero_addr_q : {addr_q[63:3], 3'b000};
+  assign bus_req_we    = (dst == D_ZERO) ? 1'b1 : we_q;
+  assign bus_req_wstrb = (dst == D_ZERO) ? 8'hFF : ((dst == D_WREQ) ? wstrb_q : 8'h00);
+  assign bus_req_wdata = (dst == D_ZERO) ? 64'd0 : wdata_q;
+
+  assign acc_hit   = hit_pulse_q;
+  assign acc_miss  = miss_pulse_q;
+  assign rsp_valid = (dst == D_DONE);
+  assign rsp_rdata = rdata_q;
+  assign rsp_error = err_q;
+
+  // merge the store bytes into a cached line
+  function automatic logic [63:0] merge(input logic [63:0] old, input logic [63:0] wd,
+                                        input logic [7:0] strb);
+    logic [63:0] r;
+    begin
+      r = old;
+      for (int i = 0; i < 8; i++) if (strb[i]) r[8*i +: 8] = wd[8*i +: 8];
+      return r;
+    end
+  endfunction
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      dst        <= D_IDLE;
+      addr_q     <= 64'd0;
+      wdata_q    <= 64'd0;
+      wstrb_q    <= 8'd0;
+      we_q       <= 1'b0;
+      rdata_q    <= 64'd0;
+      err_q      <= 1'b0;
+      bypass_q   <= 1'b0;
+      hit_pulse_q<= 1'b0;
+      miss_pulse_q <= 1'b0;
+      hit_count  <= 32'd0;
+      miss_count <= 32'd0;
+      for (int i = 0; i < NLINES; i++) begin
+        tag_q[i]   <= 55'd0;
+        data_q[i]  <= 64'd0;
+        valid_q[i] <= 1'b0;
+      end
+    end else begin
+      mgmt_done_q <= 1'b0;
+      // cbo.inval completes in the cycle it is asked
+      if (mgmt_valid && !mgmt_zero) begin
+        if (tag_q[midx] == mtag) valid_q[midx] <= 1'b0;
+      end
+      // cbo.zero: start the eight-beat fill with zeros
+      if (mgmt_valid && mgmt_zero && (dst == D_IDLE)) begin
+        zero_addr_q <= {mgmt_addr[63:3], 3'b000};
+        zero_beat_q <= 3'd0;
+        dst         <= D_ZERO;
+      end
+      hit_pulse_q  <= 1'b0;
+      miss_pulse_q <= 1'b0;
+      case (dst)
+        D_ZERO: begin
+          if (bus_req_ready) begin
+            if (zero_beat_q == 3'd7) begin
+              // the whole block is zeros in memory now, so any cached copy is stale
+              if (tag_q[zero_addr_q[8:3]] == zero_addr_q[63:9])
+                valid_q[zero_addr_q[8:3]] <= 1'b0;
+              mgmt_done_q <= 1'b1;
+              dst         <= D_IDLE;
+            end else begin
+              zero_beat_q <= zero_beat_q + 3'd1;
+              zero_addr_q <= zero_addr_q + 64'd8;
+            end
+          end
+        end
+
+        D_IDLE: begin
+          if (req_valid) begin
+            addr_q  <= req_addr;
+            bypass_q <= bypass;
+            wdata_q <= req_wdata;
+            wstrb_q <= req_wstrb;
+            we_q    <= req_we;
+            if (req_we) begin
+              // write-through: the line is updated if present, and the store
+              // always goes to memory
+              if (hit) begin
+                data_q[idx] <= merge(data_q[idx], req_wdata, req_wstrb);
+                hit_count   <= hit_count + 32'd1;
+                hit_pulse_q <= 1'b1;
+              end else begin
+                miss_count  <= miss_count + 32'd1;
+                miss_pulse_q<= 1'b1;
+              end
+              dst <= D_WREQ;
+            end else if (hit) begin
+              rdata_q    <= data_q[idx];
+              err_q      <= 1'b0;
+              hit_count  <= hit_count + 32'd1;
+              hit_pulse_q<= 1'b1;
+              dst        <= D_DONE;
+            end else begin
+              miss_count  <= miss_count + 32'd1;
+              miss_pulse_q<= 1'b1;
+              dst         <= D_FILL;
+            end
+          end
+        end
+
+        D_FILL: begin
+          if (bus_rsp_valid) begin
+            // BYPASS means streaming: return the data but do not allocate, so
+            // the scan does not evict the working set
+            if (!bus_rsp_error && !bypass_q) begin
+              tag_q[addr_q[8:3]]   <= addr_q[63:9];
+              data_q[addr_q[8:3]]  <= bus_rsp_rdata;
+              valid_q[addr_q[8:3]] <= 1'b1;
+            end
+            rdata_q <= bus_rsp_rdata;
+            err_q   <= bus_rsp_error;
+            dst     <= D_DONE;
+          end
+        end
+
+        D_WREQ: begin
+          // the store is done once the bus accepts it
+          if (bus_req_ready) dst <= D_DONE;
+        end
+
+        D_DONE: dst <= D_IDLE;
+        default: dst <= D_IDLE;
+      endcase
+    end
+  end
+
+endmodule
+`default_nettype wire

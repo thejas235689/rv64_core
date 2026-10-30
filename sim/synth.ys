@@ -1,0 +1,46 @@
+# =============================================================================
+# sim/synth.ys -- Yosys synthesis and structural checks for riscv_core_top.
+#
+# Run from the repository root, after sim/synth.sh has produced
+# build/core_synth.v (sv2v output):
+#
+#   bash sim/synth.sh                 # sv2v + yosys, writes build/*.rpt
+#   yowasp-yosys -s sim/synth.ys      # yosys alone, if build/core_synth.v exists
+#
+# Yosys reads the sv2v-converted Verilog rather than the SystemVerilog sources:
+# Yosys 0.70's SV frontend cannot parse a function that returns a packed struct
+# (rv64_pkg.sv ctrl_default()), which is legal SystemVerilog and is accepted by
+# Icarus, Verilator and xezim. Converting with sv2v keeps the RTL untouched.
+#
+# What this script establishes:
+#   1. the design elaborates with a complete hierarchy,
+#   2. no latch, SR cell or combinational loop is inferred,
+#   3. technology-independent cell counts and flip-flop counts,
+#   4. the longest combinational path in logic levels.
+#
+# Logic levels are a technology-independent proxy, not a timing result: there is
+# no library, no wire delay and no clock constraint here, so no frequency should
+# be inferred from them.
+# =============================================================================
+
+read_verilog build/core_synth.v
+
+hierarchy -check -top riscv_core_top
+
+# ---- front end --------------------------------------------------------------
+proc
+opt
+fsm
+opt
+memory
+opt
+check -assert
+
+# ---- generic technology mapping ---------------------------------------------
+synth -top riscv_core_top -flatten
+
+# ---- structural assertions: nothing that implies unintended storage ---------
+select -assert-none t:$dlatch t:$latch t:$sr
+
+tee -o build/synth_stat.rpt stat
+tee -o build/synth_path.rpt ltp -noff

@@ -1,0 +1,52 @@
+name: regression
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  simulate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install simulator
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends iverilog
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cocotb
+        run: pip install cocotb
+
+      - name: Report tool versions
+        run: |
+          iverilog -V | head -1
+          python -c "import cocotb; print('cocotb', cocotb.__version__)"
+
+      - name: Lint (Icarus, -Wall)
+        run: |
+          iverilog -g2012 -Wall -o /dev/null -s riscv_core_top \
+            rtl/rv64_pkg.sv rtl/rv64_alu.sv rtl/rv64_mdu.sv rtl/rv64_regfile.sv \
+            rtl/rv64_decoder.sv rtl/rv64_pmp.sv rtl/rv64_csr.sv rtl/rv64_lsu.sv \
+            rtl/rv64_bpu.sv rtl/rv64_fetch.sv rtl/rv64_plic_lite.sv \
+            rtl/riscv_core_top.sv
+
+      - name: Core regression
+        run: python3 sim/run.py
+
+      - name: PLIC-lite regression
+        run: python3 sim/run.py --suite plic
+
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cocotb-results
+          path: sim/**/results.xml
+          if-no-files-found: ignore
