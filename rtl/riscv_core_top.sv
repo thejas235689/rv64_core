@@ -664,6 +664,22 @@ module riscv_core_top #(
   logic        xrv512_csr_sel, rvv_csr_sel;
   logic [63:0] xrv512_csr_rdata, rvv_csr_rdata;
 
+  // Any accelerator window the CSR file must treat as implemented rather than
+  // illegal. Without this every access traps before reaching the accelerator.
+  logic        accel_csr_sel;
+  logic [63:0] accel_csr_rdata;
+  assign accel_csr_sel = qisa_csr_sel || aiacc_csr_sel || xrv512_csr_sel ||
+                         rvv_csr_sel || task_csr_sel || num_csr_sel;
+  always_comb begin
+    accel_csr_rdata = 64'd0;
+    if (qisa_csr_sel)        accel_csr_rdata = qisa_csr_rdata;
+    else if (aiacc_csr_sel)  accel_csr_rdata = aiacc_csr_rdata;
+    else if (xrv512_csr_sel) accel_csr_rdata = xrv512_csr_rdata;
+    else if (rvv_csr_sel)    accel_csr_rdata = rvv_csr_rdata;
+    else if (task_csr_sel) accel_csr_rdata = task_csr_rdata;
+    else if (num_csr_sel)    accel_csr_rdata = num_csr_rdata;
+  end
+
   assign qisa_csr_sel  = (id_ex_ctrl.csr_addr >= CSR_QISA_BASE) &&
                          (id_ex_ctrl.csr_addr <= (CSR_QISA_BASE + 12'd6));
   assign aiacc_csr_sel = (id_ex_ctrl.csr_addr >= CSR_AIACC_BASE) &&
@@ -991,6 +1007,8 @@ module riscv_core_top #(
     .irq_soft       (irq_soft),
     .irq_timer      (irq_timer),
     .irq_ext        (irq_ext_eff),
+    .accel_csr_sel  (accel_csr_sel),
+    .accel_csr_rdata(accel_csr_rdata),
     .mstatus_mie    (csr_mstatus_mie),
     .irq_pending    (csr_irq_pending),
     .retire_valid   (mem_wb_v),

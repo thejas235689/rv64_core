@@ -128,6 +128,27 @@ package rv64_pkg;
 
   // --------------------------------------------------------------------- CSRs
   localparam logic [11:0] CSR_MSTATUS    = 12'h300;
+  // ---- hypervisor (H) extension -------------------------------------------
+  localparam logic [11:0] CSR_VSSTATUS   = 12'h200;
+  localparam logic [11:0] CSR_VSIE       = 12'h204;
+  localparam logic [11:0] CSR_VSTVEC     = 12'h205;
+  localparam logic [11:0] CSR_VSSCRATCH  = 12'h240;
+  localparam logic [11:0] CSR_VSEPC      = 12'h241;
+  localparam logic [11:0] CSR_VSCAUSE    = 12'h242;
+  localparam logic [11:0] CSR_VSTVAL     = 12'h243;
+  localparam logic [11:0] CSR_VSIP       = 12'h244;
+  localparam logic [11:0] CSR_HSTATUS    = 12'h600;
+  localparam logic [11:0] CSR_HEDELEG    = 12'h602;
+  localparam logic [11:0] CSR_HIDELEG    = 12'h603;
+  localparam logic [11:0] CSR_HIE        = 12'h604;
+  localparam logic [11:0] CSR_HTVEC      = 12'h605;
+  localparam logic [11:0] CSR_HSCRATCH   = 12'h640;
+  localparam logic [11:0] CSR_HEPC       = 12'h641;
+  localparam logic [11:0] CSR_HCAUSE     = 12'h642;
+  localparam logic [11:0] CSR_HTVAL      = 12'h643;
+  localparam logic [11:0] CSR_HIP        = 12'h644;
+  localparam logic [11:0] CSR_HTINST     = 12'h64A;
+  localparam logic [11:0] CSR_HGATP      = 12'h680;
   localparam logic [11:0] CSR_FFLAGS     = 12'h001;
   localparam logic [11:0] CSR_FRM        = 12'h002;
   localparam logic [11:0] CSR_FCSR       = 12'h003;

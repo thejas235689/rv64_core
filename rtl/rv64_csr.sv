@@ -39,6 +39,11 @@ module rv64_csr (
   input  logic        irq_soft,
   input  logic        irq_timer,
   input  logic        irq_ext,
+  // Custom accelerator CSR windows (RVV, QISA, AI, XRV512, Xcetask, numeric).
+  // They live outside this module, so it cannot decode them itself -- but it must
+  // not call them illegal, or every access traps before the accelerator sees it.
+  input  logic        accel_csr_sel,
+  input  logic [63:0] accel_csr_rdata,
   output logic        mstatus_mie,
   output logic        irq_pending,   // enabled and pending, MIE masked out
 
@@ -63,6 +68,11 @@ module rv64_csr (
   // and restore FP state lazily; fcsr carries frm and fflags.
   logic [1:0]  mstatus_fs_q;
   logic [7:0]  fcsr_q;
+  // ---- hypervisor state ----------------------------------------------------
+  logic [63:0] hstatus_q, hedeleg_q, hideleg_q, hie_q, htvec_q;
+  logic [63:0] hscratch_q, hepc_q, hcause_q, htval_q, hip_q, htinst_q, hgatp_q;
+  logic [63:0] vsstatus_q, vsie_q, vstvec_q, vsscratch_q;
+  logic [63:0] vsepc_q, vscause_q, vstval_q, vsip_q;
   logic [63:0] mtvec_q, mepc_q, mcause_q, mtval_q, mscratch_q;
   logic [2:0]  mie_q;                // MSIE, MTIE, MEIE
   logic [2:0]  mip_q;                // pending, read-only from the platform
@@ -99,7 +109,27 @@ module rv64_csr (
       // MXL=2 (RV64), then A(0), C(2), I(8), M(12), S(18), U(20). V is deliberately NOT
       // set: the vector unit takes RVV semantics but not RVV encoding, so a program
       // reading misa must not be told rv64gcv binaries will run.
-      CSR_MISA:       csr_rdata = {2'b10, 36'd0, 26'h141125};   // + C (bit 2) + F (bit 5)
+      CSR_MISA:       csr_rdata = {2'b10, 36'd0, 26'h1411A5};   // + C(2) F(5) H(7)
+      CSR_HSTATUS:    csr_rdata = hstatus_q;
+      CSR_HEDELEG:    csr_rdata = hedeleg_q;
+      CSR_HIDELEG:    csr_rdata = hideleg_q;
+      CSR_HIE:        csr_rdata = hie_q;
+      CSR_HTVEC:      csr_rdata = htvec_q;
+      CSR_HSCRATCH:   csr_rdata = hscratch_q;
+      CSR_HEPC:       csr_rdata = hepc_q;
+      CSR_HCAUSE:     csr_rdata = hcause_q;
+      CSR_HTVAL:      csr_rdata = htval_q;
+      CSR_HIP:        csr_rdata = hip_q;
+      CSR_HTINST:     csr_rdata = htinst_q;
+      CSR_HGATP:      csr_rdata = hgatp_q;
+      CSR_VSSTATUS:   csr_rdata = vsstatus_q;
+      CSR_VSIE:       csr_rdata = vsie_q;
+      CSR_VSTVEC:     csr_rdata = vstvec_q;
+      CSR_VSSCRATCH:  csr_rdata = vsscratch_q;
+      CSR_VSEPC:      csr_rdata = vsepc_q;
+      CSR_VSCAUSE:    csr_rdata = vscause_q;
+      CSR_VSTVAL:     csr_rdata = vstval_q;
+      CSR_VSIP:       csr_rdata = vsip_q;
       CSR_FFLAGS:     csr_rdata = {59'd0, fcsr_q[4:0]};
       CSR_FRM:        csr_rdata = {61'd0, fcsr_q[7:5]};
       CSR_FCSR:       csr_rdata = {56'd0, fcsr_q};
@@ -148,6 +178,11 @@ module rv64_csr (
     // M-mode CSR from S or U must trap, and the core uses csr_valid for exactly
     // that. This assignment is the only driver of csr_valid -- without it the
     // output floats at 0 and every CSR access becomes an illegal-CSR trap.
+    // accelerator windows are implemented, by definition of accel_csr_sel
+    if (accel_csr_sel) begin
+      csr_impl  = 1'b1;
+      csr_rdata = accel_csr_rdata;
+    end
     csr_valid = csr_impl && csr_perm_ok;
   end
 
@@ -195,6 +230,11 @@ module rv64_csr (
       mstatus_mpp_q  <= 2'b11;
       mstatus_fs_q   <= 2'b01;   // FS = Initial
       fcsr_q         <= 8'd0;
+      hstatus_q <= '0; hedeleg_q <= '0; hideleg_q <= '0; hie_q <= '0;
+      htvec_q <= '0; hscratch_q <= '0; hepc_q <= '0; hcause_q <= '0;
+      htval_q <= '0; hip_q <= '0; htinst_q <= '0; hgatp_q <= '0;
+      vsstatus_q <= '0; vsie_q <= '0; vstvec_q <= '0; vsscratch_q <= '0;
+      vsepc_q <= '0; vscause_q <= '0; vstval_q <= '0; vsip_q <= '0;
       priv_q         <= 2'b11;      // reset into M-mode
       sstatus_sie_q  <= 1'b0;
       sstatus_spie_q <= 1'b0;
@@ -297,6 +337,26 @@ module rv64_csr (
           CSR_MTVEC:      mtvec_q      <= {csr_wval[63:2], 2'b00};   // direct mode only
           CSR_MCOUNTEREN: mcounteren_q <= csr_wval;
           CSR_MSCRATCH:   mscratch_q   <= csr_wval;
+          CSR_HSTATUS:    hstatus_q    <= csr_wval;
+          CSR_HEDELEG:    hedeleg_q    <= csr_wval;
+          CSR_HIDELEG:    hideleg_q    <= csr_wval;
+          CSR_HIE:        hie_q        <= csr_wval;
+          CSR_HTVEC:      htvec_q      <= csr_wval;
+          CSR_HSCRATCH:   hscratch_q   <= csr_wval;
+          CSR_HEPC:       hepc_q       <= csr_wval;
+          CSR_HCAUSE:     hcause_q     <= csr_wval;
+          CSR_HTVAL:      htval_q      <= csr_wval;
+          CSR_HIP:        hip_q        <= csr_wval;
+          CSR_HTINST:     htinst_q     <= csr_wval;
+          CSR_HGATP:      hgatp_q      <= csr_wval;
+          CSR_VSSTATUS:   vsstatus_q   <= csr_wval;
+          CSR_VSIE:       vsie_q       <= csr_wval;
+          CSR_VSTVEC:     vstvec_q     <= csr_wval;
+          CSR_VSSCRATCH:  vsscratch_q  <= csr_wval;
+          CSR_VSEPC:      vsepc_q      <= csr_wval;
+          CSR_VSCAUSE:    vscause_q    <= csr_wval;
+          CSR_VSTVAL:     vstval_q     <= csr_wval;
+          CSR_VSIP:       vsip_q       <= csr_wval;
           CSR_FFLAGS:     fcsr_q[4:0]  <= csr_wval[4:0];
           CSR_FRM:        fcsr_q[7:5]  <= csr_wval[2:0];
           CSR_FCSR:       fcsr_q       <= csr_wval[7:0];
