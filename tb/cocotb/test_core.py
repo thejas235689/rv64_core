@@ -14,7 +14,7 @@ import random
 
 import cocotb
 from cocotb.clock import Clock
-from cocotb.triggers import RisingEdge, FallingEdge
+from cocotb.triggers import RisingEdge, FallingEdge, Timer
 
 from rv64_asm import assemble
 from rv64_iss import ISS
@@ -2130,4 +2130,30 @@ async def test_fp_arith_in_core(dut):
                   f"x10={int(dut.u_core.u_regfile.regs[10].value):x} "
                   f"trace={len(h.trace)}")
     got = int(dut.u_core.u_regfile.regs[7].value)
-    # KNOWN BUG: fadd.d in situ returns only one operand; not asserted
+    # fadd.d in situ is still wrong: x7 reads 0 rather than 3.0. Reported, not
+    # asserted, until the operand path is understood.
+    got = int(dut.u_core.u_regfile.regs[7].value)
+    # fadd.d in situ is still wrong: x7 reads 0 rather than 3.0. Reported, not
+    # asserted, until the operand path is understood.
+    # probe the FP adder's inputs and output while fadd.d is in EX
+    log = []
+    async def fp_watch():
+        while True:
+            await RisingEdge(dut.clk)
+            await Timer(1, "ns")
+            try:
+                if int(dut.u_core.id_ex_is_fp.value) == 1:
+                    log.append((int(dut.u_core.id_ex_rs1.value),
+                                int(dut.u_core.id_ex_rs2.value),
+                                int(dut.u_core.fp_rs1_data.value),
+                                int(dut.u_core.fp_rs2_data.value),
+                                int(dut.u_core.ex_fp_out.value)))
+            except Exception:
+                pass
+    cocotb.start_soon(fp_watch())
+
+    got = int(dut.u_core.u_regfile.regs[7].value)
+    if got != THREE:
+        dut._log.warning(f"KNOWN BUG: fadd.d in situ x7={got:016x} f3={int(dut.u_core.u_fregfile.regs_q[3].value):016x} expected {THREE:016x}")
+        for e in log[:6]:
+            dut._log.info(f"  FP-EX rs1={e[0]} rs2={e[1]} a={e[2]:016x} b={e[3]:016x} out={e[4]:016x}")

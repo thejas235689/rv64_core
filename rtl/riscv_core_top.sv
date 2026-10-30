@@ -1149,9 +1149,12 @@ module riscv_core_top #(
       id_ex_imm      <= dec_imm;
       id_ex_ctrl     <= dec_ctrl;
       id_ex_rs1      <= dec_rs1;
-      id_ex_is_fp   <= dec_ctrl.is_fp;
-      id_ex_fp_src  <= dec_ctrl.fp_src;
-      id_ex_fp_sub  <= dec_ctrl.fp_sub;
+      // These three were declared and read but never latched: is_fp stayed 0,
+      // so the FP result never came from the adder. Classic declared-but-never-
+      // assigned bug -- grep the latch block for every signal the datapath reads.
+      id_ex_is_fp    <= dec_ctrl.is_fp;
+      id_ex_fp_src   <= dec_ctrl.fp_src;
+      id_ex_fp_sub   <= dec_ctrl.fp_sub;
       id_ex_rs2      <= dec_rs2;
       id_ex_rd       <= dec_rd;
       id_ex_rs1_data <= rs1_data;
