@@ -525,6 +525,19 @@ spin:
     jal   x0, spin
 """
 
+EXT_IRQ_PROG = """
+    lui   x5, 0x1
+    csrrw x0, mtvec, x5
+    addi  x1, x0, 0x800          # mie bit 11 = machine external
+    csrrw x0, mie, x1
+    csrrs x2, mstatus, x0
+    ori   x2, x2, 8
+    csrrw x0, mstatus, x2
+    addi  x10, x0, 0
+spin:
+    jal   x0, spin
+"""
+
 IRQ_HANDLER = """
     addi  x10, x10, 1
     csrrs x11, mcause, x0
@@ -2326,3 +2339,46 @@ async def test_pss_memory(dut):
     assert vals.get(7) == s["expect"], (
         f"memory_op width={s['width']} off={s['offset']} -> x7={vals.get(7)}, "
         f"expected {s['expect']}")
+
+@cocotb.test()
+async def test_plic_external_interrupt(dut):
+    """An external interrupt through the PLIC actually reaches the trap logic.
+
+    PLIC-lite was verified standalone and instantiated nowhere until it was wired
+    into the core. This drives a source through its config port and checks that the
+    core raises machine external interrupt, which it could not do before.
+
+    PLIC config map: 0..3 = per-source priority, 4 = enable mask, 5 = threshold.
+    """
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble(pad_to(EXT_IRQ_PROG, 0x1000) + IRQ_HANDLER)
+    h.clear()
+    await h.load(words)
+    await h.reset()
+
+    d = dut
+    await h.run(max_cycles=60, stop_on_ecall=False)   # reach the spin loop
+
+    # enable source 0 with priority above threshold
+    d.plic_cfg_addr.value = 0
+    d.plic_cfg_wdata.value = 1
+    d.plic_cfg_we.value = 1
+    await RisingEdge(d.clk)
+    d.plic_cfg_we.value = 0
+
+    d.plic_cfg_addr.value = 4
+    d.plic_cfg_wdata.value = 0x1
+    d.plic_cfg_we.value = 1
+    await RisingEdge(d.clk)
+    d.plic_cfg_we.value = 0
+
+    d.plic_src.value = 0x1                            # assert source 0
+    await h.run(max_cycles=200, stop_on_ecall=False)
+    d.plic_src.value = 0x0
+    await h.run(max_cycles=100, stop_on_ecall=False)
+
+    causes = [c for _, c in h.traps]
+    assert 0x800000000000000B in causes, (
+        f"expected machine external interrupt (0x800000000000000B), got "
+        f"{[hex(c) for c in causes]}")
