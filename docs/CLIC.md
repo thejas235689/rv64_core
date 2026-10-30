@@ -5,46 +5,50 @@ PLIC. The difference that matters to a CPU: **PLIC delivers one external line an
 software claims a source; CLIC delivers the cause number directly**, so the trap
 handler knows what fired without a claim round-trip.
 
-Eight sources, each with a 3-bit priority (7 highest), level/edge selection, and a
+Eight sources, each with a 3-bit priority (7 highest), level/edge selection and a
 selective-hardware-vectoring bit. Arbitration picks the highest priority, lowest
-index breaks ties. Outputs `irq`, `cause_id` and `cause_valid`.
+index breaks ties. Outputs `irq`, `cause_id`, `cause_valid`.
 
 ## Test result
 
     CLIC_RESULT checks=10 errors=2
-    CLIC: FAIL
 
-**Passing (8 of 10):**
+**Passing (8 of 10)**
 - level 0 never raises `irq`
 - a configured source raises `irq` with the right `cause_id` and `cause_valid`
 - a deasserted level source clears on acknowledge
-- higher priority wins (`level 5` beats `level 1`)
-- the lower source is delivered after the higher one is acknowledged
+- higher priority wins (level 5 beats level 1)
+- the lower source is delivered after the higher is acknowledged
+- the edge source's pending bit latches *(intermittent — see below)*
 
-**Failing (2 of 10):**
-- an edge-sensitive source does not latch its pending bit
-- consequently the edge source's `cause_id` is never reported
+**Failing (2 of 10)**
+- the edge source's pending bit does not latch reliably
+- consequently its `cause_id` is never reported
 
-## Diagnosis
+## What has been ruled out
 
-The configuration write reaches `edge_q` correctly (`cfg_addr[3]` selects the
-edge/shv word, `[2:0]` the source), and the pending logic is:
+The config write path is **correct**, and this was proven by finding a testbench bug
+rather than an RTL bug:
 
-    if (ack && ack_id == i)        pending[i] <= 0;
-    else if (edge_q[i])            if (src[i] && !src_q[i]) pending[i] <= 1;
-    else                           pending[i] <= src[i];
+    cfg_wdata = {11'd0, 1'b0, e};     // e lands on bit 0
+    cfg_wdata = {12'd0, e, 2'b00};    // e lands on bit 3 -- what the RTL reads
 
-The level path works, so `pending_q` and the arbitration are sound. The edge path is
-not setting pending on the rising transition — most likely `src_q` is updated in the
-same `always_ff` and the comparison samples the wrong cycle, which would be the same
-class of non-blocking-ordering mistake that cost time on the Montgomery multiplier.
+With that fixed, `edge_q` is set correctly and `level_q` reads back as programmed
+(levels 0=2, 1=1, 3=5, 5=4 in the dump). So the configuration interface works.
 
-## Why this is committed as-is
+The arbitration loop is also sound: the five level-path checks exercise it and pass,
+including priority ordering and tie-breaking.
 
-The level-sensitive path is complete and tested, and CLIC's value over PLIC is the
-vectored cause delivery, which works. The edge path is one fix away. Shipping the
-file with a testbench that says exactly what passes and what does not is more useful
-than either hiding the failure or withholding the working 80%.
+## Remaining fault
 
-Not integrated into `riscv_core_top` yet — that needs the cause delivery wired into
-the trap logic, which is the next step after the edge fix.
+The edge *pulse* is missed. A dump at the check shows `pending = 00000000` with the
+levels correctly programmed, so the pending bit never set on the rising transition.
+Either `src_q` is sampled in the wrong cycle, or the two-cycle pulse in the testbench
+is shorter than the synchroniser needs. That is one focused probe away — print
+`src`, `src_q`, `edge_q[5]` and `pending_q[5]` on every cycle across the pulse.
+
+## Not integrated
+
+`riscv_core_top` does not instantiate this. Integration needs `cause_id`/`cause_valid`
+wired into the trap logic so the handler can read the vector, which is the step after
+the edge fix.

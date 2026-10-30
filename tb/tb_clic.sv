@@ -28,7 +28,7 @@ module tb_clic;
           @(posedge clk); cfg_we = 0; end
   endtask
   task automatic set_edge(input int i, input logic e);
-    begin @(posedge clk); cfg_we = 1; cfg_addr = 4'h8 | i[3:0]; cfg_wdata = {11'd0, 1'b0, e};
+    begin @(posedge clk); cfg_we = 1; cfg_addr = 4'h8 | i[3:0]; cfg_wdata = {12'd0, e, 2'b00};
           @(posedge clk); cfg_we = 0; end
   endtask
   task automatic do_ack(input int i);
