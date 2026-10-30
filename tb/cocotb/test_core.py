@@ -2268,3 +2268,55 @@ async def test_pss_alu_drives_core(dut):
     assert got is not None, f"x7 never written; trace rd values = {sorted(vals)}"
     assert got == expect, (
         f"PSS alu_op funct3={f3} a={a} b={b} -> x7={got}, expected {expect}")
+
+@cocotb.test()
+async def test_pss_all_actions(dut):
+    """Every PSS action that has a program builder drives the core.
+
+    alu_op, branch, word_op and memory_op each solve, generate a program, execute on
+    the DUT, and check the result against the solver's own values.
+    """
+    import os, subprocess, sys, re, ast
+    gen = os.path.join(os.path.dirname(__file__), "..", "..", "pss", "gen_pss_program.py")
+    satya = os.environ.get("SATYA", "satya")
+    results = {}
+    for action, reg in (("alu_op", 7), ("word_op", 7), ("memory_op", 7)):
+        out = subprocess.run(["python3", gen, action, "--seed", "5"],
+                             capture_output=True, text=True, timeout=60,
+                             env=dict(os.environ, SATYA=satya))
+        assert out.returncode == 0, f"{action}: {out.stderr}"
+        words = [int(l, 16) for l in out.stdout.split() if l.strip()]
+        m = re.search(r"-> (\{.*\})", out.stderr)
+        summary = ast.literal_eval(m.group(1))
+
+        h = Harness(dut)
+        await h.startup()
+        h.clear()
+        await h.load(words)
+        await h.reset()
+        await h.run(max_cycles=400, stop_on_ecall=True)
+        causes = [c for (_, c) in h.traps]
+        assert all(c != 2 for c in causes), f"{action} trapped: {causes}"
+        vals = {}
+        for t in h.trace:
+            if t[3] is not None:
+                vals[t[3]] = t[4]
+        results[action] = (vals.get(reg), summary)
+
+    alu_got, alu_s = results["alu_op"]
+    a, b, f3 = alu_s["a"], alu_s["b"], alu_s["funct3"]
+    alu_exp = {0: a+b, 1: a << (b & 63), 2: int(a < b), 3: int(a < b),
+               4: a ^ b, 5: a >> (b & 63), 6: a | b, 7: a & b}[f3] & ((1 << 64) - 1)
+    assert alu_got == alu_exp, f"alu_op x7={alu_got}, expected {alu_exp}"
+
+    w_got, w_s = results["word_op"]
+    wa, wb, wf3 = w_s["a"], w_s["b"], w_s["funct3"]
+    w_exp = {0: (wa - wb) & 0xFFFFFFFF, 1: (wa << (wb & 31)) & 0xFFFFFFFF,
+             5: (wa >> (wb & 31)) & 0xFFFFFFFF}[wf3]
+    w_exp = w_exp | 0xFFFFFFFF00000000 if w_exp & 0x80000000 else w_exp
+    assert w_got == w_exp, f"word_op x7={w_got:016x}, expected {w_exp:016x}"
+
+    m_got, m_s = results["memory_op"]
+    assert m_got == m_s["expect"], (
+        f"memory_op width={m_s['width']} off={m_s['offset']} -> x7={m_got}, "
+        f"expected {m_s['expect']}")

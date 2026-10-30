@@ -72,7 +72,47 @@ def build_branch(f):
     return words, {"polarity": pol, "taken": taken, "offset": off, "funct3": f3}
 
 
-BUILDERS = {"alu_op": build_alu, "branch": build_branch}
+def build_word(f):
+    """word_op -> addw/subw/sllw/srlw/sraw on values whose sign differs at bit 31."""
+    op = f["op_index"] % 5
+    neg = f["operand_is_negative"]
+    a = 0x7FFFFFF0 if neg else 0x10
+    b = (f["operand_class"] * 7 + 1) & 0x1F
+    # funct3/funct7 for the OP-32 forms
+    W = [(0x0, 0x20), (0x0, 0x20), (0x1, 0x00), (0x5, 0x00), (0x5, 0x20)]
+    f3, f7 = W[op]
+    words = [
+        # lui x5, 0x80000 -> x5 = 0x80000000 (bit31 set, bit32 clear)
+        (0x80000 << 12) | (5 << 7) | 0x37,
+        ((b & 0xFFF) << 20) | (6 << 7) | 0x13,          # addi x6, x0, b
+        enc_r(f7, 6, 5, f3, 7, op=0x3B),                 # <op>w x7, x5, x6
+        0x00000073,
+    ]
+    return words, {"op_index": op, "funct3": f3, "funct7": f7, "a": 0x80000000, "b": b}
+
+
+def build_memory(f):
+    """memory_op -> a sized load or store at a chosen alignment."""
+    width = f["width_code"] % 4          # 0=B 1=H 2=W 3=D
+    is_store = f["is_store"]
+    align = f["align_code"] % 4
+    f3 = [0x0, 0x1, 0x2, 0x3][width]
+    off = align if width == 0 else (align * 2 if width == 1 else align * 4)
+    base = 0x100000
+    words = [
+        (0x100 << 12) | (10 << 7) | 0x37,                # lui x10, 0x100 (0x100000)
+        0x02A00313 if False else ((0x2A << 20) | (6 << 7) | 0x13),   # addi x6, x0, 0x2A
+        # store then load the same width/offset
+        ((off >> 5) << 25) | (6 << 20) | (10 << 15) | (f3 << 12) | ((off & 0x1F) << 7) | 0x23,
+        ((off & 0xFFF) << 20) | (10 << 15) | (f3 << 12) | (7 << 7) | 0x03,
+        0x00000073,
+    ]
+    return words, {"width": width, "funct3": f3, "offset": off,
+                   "is_store": is_store, "expect": 0x2A}
+
+
+BUILDERS = {"alu_op": build_alu, "branch": build_branch,
+            "word_op": build_word, "memory_op": build_memory}
 
 
 def main():
