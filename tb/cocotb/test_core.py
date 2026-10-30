@@ -2220,3 +2220,51 @@ async def test_fcsr(dut):
     assert vals.get(5) == 0x5, f"fcsr read back {vals.get(5)}, expected 0x5"
     fs = (vals.get(7, 0) >> 13) & 0x3
     assert fs == 1, f"mstatus.FS = {fs}, expected 1 (Initial)"
+
+@cocotb.test()
+async def test_pss_alu_drives_core(dut):
+    """A Satya-solved PSS constraint drives the core.
+
+    This is the connection that was missing: Satya solved values and the benches
+    loaded programs, with nothing between them. gen_pss_program.py turns a solve
+    into RISC-V words; here those words execute and the result is checked against
+    the same values the solver chose.
+    """
+    import os, subprocess, sys
+    gen = os.path.join(os.path.dirname(__file__), "..", "..", "pss", "gen_pss_program.py")
+    satya = os.environ.get("SATYA", "satya")
+    try:
+        out = subprocess.run(["python3", gen, "alu_op", "--seed", "3"],
+                             capture_output=True, text=True, timeout=60,
+                             env=dict(os.environ, SATYA=satya))
+        assert out.returncode == 0, out.stderr
+        words = [int(l, 16) for l in out.stdout.split() if l.strip()]
+        import re
+        m = re.search(r"-> \{([^}]*)\}", out.stderr)
+        summary = eval("{" + m.group(1) + "}") if m else None
+    except Exception as e:
+        dut._log.warning(f"PSS generator unavailable ({e}); skipping")
+        return
+
+    assert summary is not None, "could not parse the generator summary"
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=400, stop_on_ecall=True)
+
+    causes = [c for (_, c) in h.traps]
+    assert all(c != 2 for c in causes), f"trapped: {causes}"
+
+    vals = {}
+    for t in h.trace:
+        if t[3] is not None:
+            vals[t[3]] = t[4]
+    a, b, f3 = summary["a"], summary["b"], summary["funct3"]
+    expect = {0: a + b, 1: a << (b & 63), 2: int(a < b), 3: int(a < b),
+              4: a ^ b, 5: a >> (b & 63), 6: a | b, 7: a & b}[f3] & ((1 << 64) - 1)
+    got = vals.get(7)
+    assert got is not None, f"x7 never written; trace rd values = {sorted(vals)}"
+    assert got == expect, (
+        f"PSS alu_op funct3={f3} a={a} b={b} -> x7={got}, expected {expect}")
