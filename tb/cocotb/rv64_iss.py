@@ -196,6 +196,10 @@ class ISS:
             0x304: 0,            # mie
             0x305: 0,            # mtvec
             0x306: 0,            # mcounteren
+            0x001: 0,            # fflags
+            0x002: 0,            # frm
+            0x003: 0,            # fcsr  -- {frm, fflags}; without these a CSR-heavy
+                                 # program traps as illegal and the ISS loops
             0x340: 0,            # mscratch
             0x341: 0,            # mepc
             0x342: 0,            # mcause

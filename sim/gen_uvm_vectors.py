@@ -280,6 +280,7 @@ def main():
     build("trap", pad_to(TRAP_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
     build("random", random_program(120, 7))
     build("bitmanip", BITMANIP_PROG)
+    build("csr", CSR_PROG)
     print(f"vectors written to {OUT}")
 
 
