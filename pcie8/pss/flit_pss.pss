@@ -1,0 +1,40 @@
+// =============================================================================
+// flit_pss.pss -- PSS model of the FLIT packing scenarios.
+//
+// Written against the IEEE 1801 PSS intent: describe the INTENT (what byte
+// streams must be packed and what must be true of the result) and let the solver
+// produce the concrete stimulus, rather than hand-listing test vectors.
+//
+// The scenarios here are the ones a UVM sequence would otherwise enumerate by
+// hand: exact flit fill, a TLP spanning the boundary, and a run long enough to
+// produce several flits.
+// =============================================================================
+component flit_packer_c {
+  action exact_fill {
+    rand int unsigned n_bytes;
+    constraint c { n_bytes == 236; }
+  }
+
+  action span_boundary {
+    rand int unsigned n_bytes;
+    constraint c { n_bytes == 300; }
+  }
+
+  action multi_flit {
+    rand int unsigned n_bytes;
+    rand int unsigned n_flits;
+    constraint c {
+      n_flits in [2..4];
+      n_bytes == n_flits * 236;
+    }
+  }
+
+  action partial_tail {
+    rand int unsigned n_bytes;
+    rand int unsigned remainder;
+    constraint c {
+      remainder in [1..235];
+      n_bytes == 236 + remainder;
+    }
+  }
+}
