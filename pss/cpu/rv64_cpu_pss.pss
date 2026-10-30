@@ -1,0 +1,66 @@
+// =============================================================================
+// rv64_cpu_pss.pss -- Portable Stimulus model of the RV64 CPU test intent.
+//
+// This describes WHAT must be exercised and the invariants that must hold, and
+// lets the solver produce the concrete stimulus. It is the portable layer the
+// UVM and cocotb benches consume, so the same intent drives every backend.
+//
+// SYNTAX NOTE (measured, not assumed): Satya v0.41.0 requires UNNAMED
+// constraints and inline ranges. A named block `constraint c { ... }` parses and
+// is then IGNORED -- it reports "constraints: 1/1 satisfied" while returning a
+// value that violates the constraint. Every constraint below is unnamed.
+// ALSO: `rand bit` is not a 1-bit domain here -- it produced 520 and 385
+// where only 0 or 1 is valid, while still reporting constraints satisfied.
+// Boolean fields are therefore declared `rand int in [0..1]`.
+// =============================================================================
+
+component rv64_cpu_c {
+
+   // ---- integer ALU, every operand class the ISA distinguishes ----------
+   action alu_op {
+      rand int in [0..78]  op_index;      // index into the ALU op table
+      rand int in [0..7]   operand_class; // zero, one, max, min, boundary...
+      rand int in [0..1]   use_immediate;
+   };
+
+   // ---- word (32-bit) operations must sign-extend ------------------------
+   action word_op {
+      rand int in [0..11]  op_index;
+      rand int in [0..7]   operand_class;
+      rand int in [0..1] operand_is_negative;
+   };
+
+   // ---- control flow: taken and not-taken for every polarity -------------
+   action branch {
+      rand int in [0..5]   polarity;
+      rand int in [0..1] taken;
+      rand int in [-4096..4095] offset;
+      constraint offset != 0;
+      constraint taken == 0 || offset > 0;
+   };
+
+   // ---- hazard: a dependent chain of a chosen depth ----------------------
+   action raw_chain {
+      rand int in [1..12]  depth;
+      rand int in [0..1] load_use;
+   };
+
+   // ---- traps: one cause per action run ----------------------------------
+   action trap_case {
+      rand int in [0..5]   cause_class;   // illegal, ebreak, ecall, misalign...
+      rand int in [0..1] recoverable;
+   };
+
+   // ---- CSR access, including the read-only and WARL classes -------------
+   action csr_access {
+      rand int in [0..3]   access_kind;   // rw, rs, rc, immediate
+      rand int in [0..1] target_is_readonly;
+   };
+
+   // ---- memory: width, alignment and sign extension ----------------------
+   action memory_op {
+      rand int in [0..7]   width_code;    // b, h, w, d x signed/unsigned
+      rand int in [0..3]   align_code;    // aligned, +1, +2, +3
+      rand int in [0..1] is_store;
+   };
+};
