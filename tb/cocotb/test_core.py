@@ -2170,7 +2170,6 @@ async def test_fp_arith_in_core(dut):
     cocotb.start_soon(fp_watch())
 
     got = int(dut.u_core.u_regfile.regs[7].value)
-    if got != THREE:
     f3 = int(dut.u_core.u_fregfile.regs_q[3].value)
     assert f3 == THREE, f"fadd.d 1.0+2.0 -> f3={f3:016x}, expected {THREE:016x}"
     got = int(dut.u_core.u_regfile.regs[7].value)

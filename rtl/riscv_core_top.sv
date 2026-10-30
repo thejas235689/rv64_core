@@ -1049,22 +1049,16 @@ module riscv_core_top #(
     if (id_ex_v && id_ex_ctrl.is_load && (id_ex_rd != 5'd0) && if_id_v) begin
       if ((dec_rs1 == id_ex_rd) || (dec_rs2 == id_ex_rd)) stall_id = 1'b1;
     end
-
-    // FP RAW interlock. There is no forwarding network on the FP side, so an
-    // instruction reading an FP register that an in-flight FP instruction writes
-    // must wait. Without this, `fld f2` followed immediately by `fadd.d f3,f1,f2`
-    // reads f2 before the load lands and adds zero. Same shape as the numeric
-    // interlock above, and for the same reason.
+    // FP RAW interlock: no forwarding on the FP side, so a reader must wait for
+    // an in-flight FP writer. Without this, fld f2 followed by fadd.d f3,f1,f2
+    // reads f2 before the load lands.
     if (dec_ctrl.is_fp || dec_ctrl.fp_src) begin
       if (id_ex_v && id_ex_is_fp && (id_ex_rd != 5'd0) &&
-          ((dec_rs1 == id_ex_rd) || (dec_rs2 == id_ex_rd)))
-        stall_id = 1'b1;
+          ((dec_rs1 == id_ex_rd) || (dec_rs2 == id_ex_rd))) stall_id = 1'b1;
       if (ex_mem_v && ex_mem_is_fp && (ex_mem_rd != 5'd0) &&
-          ((dec_rs1 == ex_mem_rd) || (dec_rs2 == ex_mem_rd)))
-        stall_id = 1'b1;
+          ((dec_rs1 == ex_mem_rd) || (dec_rs2 == ex_mem_rd))) stall_id = 1'b1;
       if (mem_wb_v && mem_wb_is_fp && (mem_wb_rd != 5'd0) &&
-          ((dec_rs1 == mem_wb_rd) || (dec_rs2 == mem_wb_rd)))
-        stall_id = 1'b1;
+          ((dec_rs1 == mem_wb_rd) || (dec_rs2 == mem_wb_rd))) stall_id = 1'b1;
     end
   end
 
@@ -1166,12 +1160,9 @@ module riscv_core_top #(
       id_ex_imm      <= dec_imm;
       id_ex_ctrl     <= dec_ctrl;
       id_ex_rs1      <= dec_rs1;
-      // These three were declared and read but never latched: is_fp stayed 0,
-      // so the FP result never came from the adder. Classic declared-but-never-
-      // assigned bug -- grep the latch block for every signal the datapath reads.
-      id_ex_is_fp    <= dec_ctrl.is_fp;
-      id_ex_fp_src   <= dec_ctrl.fp_src;
-      id_ex_fp_sub   <= dec_ctrl.fp_sub;
+      id_ex_is_fp   <= dec_ctrl.is_fp;
+      id_ex_fp_src  <= dec_ctrl.fp_src;
+      id_ex_fp_sub  <= dec_ctrl.fp_sub;
       id_ex_rs2      <= dec_rs2;
       id_ex_rd       <= dec_rd;
       id_ex_rs1_data <= rs1_data;
