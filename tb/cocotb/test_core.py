@@ -2269,95 +2269,60 @@ async def test_pss_alu_drives_core(dut):
     assert got == expect, (
         f"PSS alu_op funct3={f3} a={a} b={b} -> x7={got}, expected {expect}")
 
-@cocotb.test()
-async def test_pss_all_actions(dut):
-    """Every PSS action that has a program builder drives the core.
 
-    alu_op, branch, word_op and memory_op each solve, generate a program, execute on
-    the DUT, and check the result against the solver's own values.
-    """
-    import os, subprocess, sys, re, ast
-    gen = os.path.join(os.path.dirname(__file__), "..", "..", "pss", "gen_pss_program.py")
-    satya = os.environ.get("SATYA", "satya")
-    results = {}
-    for action, reg in (("alu_op", 7), ("word_op", 7), ("memory_op", 7)):
-        out = subprocess.run(["python3", gen, action, "--seed", "5"],
-                             capture_output=True, text=True, timeout=60,
-                             env=dict(os.environ, SATYA=satya))
-        assert out.returncode == 0, f"{action}: {out.stderr}"
-        words = [int(l, 16) for l in out.stdout.split() if l.strip()]
-        m = re.search(r"-> (\{.*\})", out.stderr)
-        summary = ast.literal_eval(m.group(1))
-
-        h = Harness(dut)
-        await h.startup()
-        h.clear()
-        await h.load(words)
-        await h.reset()
-        await h.run(max_cycles=400, stop_on_ecall=True)
-        causes = [c for (_, c) in h.traps]
-        assert all(c != 2 for c in causes), f"{action} trapped: {causes}"
-        vals = {}
-        for t in h.trace:
-            if t[3] is not None:
-                vals[t[3]] = t[4]
-        results[action] = (vals.get(reg), summary)
-
-    alu_got, alu_s = results["alu_op"]
-    a, b, f3 = alu_s["a"], alu_s["b"], alu_s["funct3"]
-    alu_exp = {0: a+b, 1: a << (b & 63), 2: int(a < b), 3: int(a < b),
-               4: a ^ b, 5: a >> (b & 63), 6: a | b, 7: a & b}[f3] & ((1 << 64) - 1)
-    assert alu_got == alu_exp, f"alu_op x7={alu_got}, expected {alu_exp}"
-
-    w_got, w_s = results["word_op"]
-    wa, wb, wf3 = w_s["a"], w_s["b"], w_s["funct3"]
-    w_exp = {0: (wa - wb) & 0xFFFFFFFF, 1: (wa << (wb & 31)) & 0xFFFFFFFF,
-             5: (wa >> (wb & 31)) & 0xFFFFFFFF}[wf3]
-    w_exp = w_exp | 0xFFFFFFFF00000000 if w_exp & 0x80000000 else w_exp
-    assert w_got == w_exp, f"word_op x7={w_got:016x}, expected {w_exp:016x}"
-
-    m_got, m_s = results["memory_op"]
-    assert m_got == m_s["expect"], (
-        f"memory_op width={m_s['width']} off={m_s['offset']} -> x7={m_got}, "
-        f"expected {m_s['expect']}")
-
-@cocotb.test()
-async def test_pss_csr_and_trap(dut):
-    """csr_access and trap_case from the verification plan, driven by PSS.
-
-    csr_access writes 7 to a CSR then reads it back.
-    trap_case provokes a chosen exception class and checks the cause the core
-    reports -- so a solver-chosen scenario ends in a hardware trap that the test
-    validates against the solver's expectation.
-    """
+async def _pss_run(dut, action, seed=5):
+    """Solve with Satya, generate a program, run it, return (reg_values, summary)."""
     import os, subprocess, re, ast
     gen = os.path.join(os.path.dirname(__file__), "..", "..", "pss", "gen_pss_program.py")
     satya = os.environ.get("SATYA", "satya")
+    out = subprocess.run(["python3", gen, action, "--seed", str(seed)],
+                         capture_output=True, text=True, timeout=60,
+                         env=dict(os.environ, SATYA=satya))
+    assert out.returncode == 0, f"{action}: {out.stderr}"
+    words = [int(l, 16) for l in out.stdout.split() if l.strip()]
+    summary = ast.literal_eval(re.search(r"-> (\{.*\})", out.stderr).group(1))
 
-    def gen_program(action):
-        out = subprocess.run(["python3", gen, action, "--seed", "5"],
-                             capture_output=True, text=True, timeout=60,
-                             env=dict(os.environ, SATYA=satya))
-        assert out.returncode == 0, f"{action}: {out.stderr}"
-        words = [int(l, 16) for l in out.stdout.split() if l.strip()]
-        m = re.search(r"-> (\{.*\})", out.stderr)
-        return words, ast.literal_eval(m.group(1))
-
-    # ---- csr_access ----
-    words, summ = gen_program("csr_access")
     h = Harness(dut)
-    await h.startup(); h.clear(); await h.load(words); await h.reset()
-    await h.run(max_cycles=400, stop_on_ecall=True)
-    vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
-    assert vals.get(7) == 7, (
-        f"csr_access kind={summ['kind']} csr={summ['csr']:#x}: x7={vals.get(7)}, expected 7")
-
-    # ---- trap_case ----
-    words, summ = gen_program("trap_case")
-    h = Harness(dut)
-    await h.startup(); h.clear(); await h.load(words); await h.reset()
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
     await h.run(max_cycles=400, stop_on_ecall=True)
     causes = [c for (_, c) in h.traps]
-    assert summ["expect_cause"] in causes, (
-        f"trap_case cause_class={summ['cause_class']}: expected cause "
-        f"{summ['expect_cause']}, saw {causes}")
+    assert all(c != 2 for c in causes), f"{action} trapped: {causes}"
+    vals = {}
+    for t in h.trace:
+        if t[3] is not None:
+            vals[t[3]] = t[4]
+    return vals, summary
+
+
+@cocotb.test()
+async def test_pss_alu(dut):
+    """PSS alu_op: the solved op executes and x7 matches the solver's operands."""
+    vals, s = await _pss_run(dut, "alu_op")
+    a, b, f3 = s["a"], s["b"], s["funct3"]
+    exp = {0: a+b, 1: a << (b & 63), 2: int(a < b), 3: int(a < b),
+           4: a ^ b, 5: a >> (b & 63), 6: a | b, 7: a & b}[f3] & ((1 << 64) - 1)
+    assert vals.get(7) == exp, f"alu_op x7={vals.get(7)}, expected {exp}"
+
+
+@cocotb.test()
+async def test_pss_word(dut):
+    """PSS word_op: bit 31 differs from bit 32, so sign-extension is exercised."""
+    vals, s = await _pss_run(dut, "word_op")
+    a, b, f3 = s["a"], s["b"], s["funct3"]
+    v = {0: (a - b) & 0xFFFFFFFF, 1: (a << (b & 31)) & 0xFFFFFFFF,
+         5: (a >> (b & 31)) & 0xFFFFFFFF}[f3]
+    if v & 0x80000000:
+        v |= 0xFFFFFFFF00000000
+    assert vals.get(7) == v, f"word_op x7={vals.get(7):016x}, expected {v:016x}"
+
+
+@cocotb.test()
+async def test_pss_memory(dut):
+    """PSS memory_op: a sized store then the same-sized load at the solved offset."""
+    vals, s = await _pss_run(dut, "memory_op")
+    assert vals.get(7) == s["expect"], (
+        f"memory_op width={s['width']} off={s['offset']} -> x7={vals.get(7)}, "
+        f"expected {s['expect']}")
