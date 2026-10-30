@@ -405,6 +405,55 @@ FRONTEND_PROG = """
 """
 
 
+SV39_BODY = """
+  lui   x5, 0x1
+  csrrw x0, mtvec, x5
+  lui   x10, 0x100
+  addi  x6, x0, 0x55
+  sd    x6, 0(x10)
+  ld    x7, 0(x10)
+  .word 0x12000073          # sfence.vma x0, x0
+  csrrs x8, satp, x0
+  ld    x9, 0(x10)
+  .word 0x12000073          # sfence.vma again
+  ld    x11, 8(x10)
+  ecall
+"""
+
+DEBUG_BODY = """
+  lui   x5, 0x1
+  csrrw x0, mtvec, x5
+  addi  x6, x0, 11
+  addi  x7, x0, 22
+  .word 0x00100073          # ebreak -> handler advances mepc by 4
+  addi  x8, x0, 33
+  addi  x9, x0, 44
+  ecall
+"""
+
+RVV_BODY = """
+  lui   x5, 0x1
+  csrrw x0, mtvec, x5
+  lui   x10, 0x100
+  .word 0x0C007057          # vsetvli x0, x0, e64, m1
+  .word 0x02057207          # vle64.v v4, (x10)
+  .word 0x020502D7          # vse64.v v4, (x10)
+  ld    x7, 0(x10)
+  ecall
+"""
+
+XCETASK_BODY = """
+  lui   x5, 0x1
+  csrrw x0, mtvec, x5
+  addi  x6, x0, 0x11
+  .word 0x7D032073          # csrrs x0, 0x7D0, x6
+  .word 0x7D002373          # csrrs x6, 0x7D0, x0
+  addi  x7, x0, 0x22
+  .word 0x7D03A073          # csrrs x0, 0x7D0, x7
+  .word 0x7D0033F3          # csrrs x7, 0x7D0, x0
+  ecall
+"""
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     print("generating UVM golden vectors from the Python ISS:")
@@ -420,6 +469,10 @@ def main():
     build("memwidth", MEMWIDTH_PROG)
     build("cache", CACHE_PROG)
     build("frontend", FRONTEND_PROG)
+    build("sv39", pad_to(SV39_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
+    build("debug", pad_to(DEBUG_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
+    build("rvv", pad_to(RVV_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
+    build("xcetask", pad_to(XCETASK_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
     print(f"vectors written to {OUT}")
 
 

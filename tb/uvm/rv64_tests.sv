@@ -161,6 +161,38 @@ class rv64_frontend_test extends rv64_base_test;
   endfunction
 endclass
 
+class rv64_sv39_test extends rv64_base_test;
+  `uvm_component_utils(rv64_sv39_test)
+  function new(string name = "rv64_sv39_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/sv39";
+  endfunction
+endclass
+
+class rv64_debug_test extends rv64_base_test;
+  `uvm_component_utils(rv64_debug_test)
+  function new(string name = "rv64_debug_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/debug";
+  endfunction
+endclass
+
+class rv64_rvv_test extends rv64_base_test;
+  `uvm_component_utils(rv64_rvv_test)
+  function new(string name = "rv64_rvv_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/rvv";
+  endfunction
+endclass
+
+class rv64_xcetask_test extends rv64_base_test;
+  `uvm_component_utils(rv64_xcetask_test)
+  function new(string name = "rv64_xcetask_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/xcetask";
+  endfunction
+endclass
+
 class rv64_bitmanip_test extends rv64_base_test;
   `uvm_component_utils(rv64_bitmanip_test)
   function new(string name = "rv64_bitmanip_test", uvm_component parent = null);
