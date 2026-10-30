@@ -331,6 +331,80 @@ MEMWIDTH_PROG = """
 """
 
 
+# Encodings the assembler has no mnemonics for are written as .word, with the
+# meaning in a comment so the program stays readable.
+SV39_PROG = """
+  lui   x10, 0x100
+  addi  x5, x0, 0x55
+  sd    x5, 0(x10)
+  ld    x6, 0(x10)
+  .word 0x12000073          # sfence.vma x0, x0
+  csrrs x7, satp, x0
+  ld    x8, 0(x10)
+  .word 0x12000073          # sfence.vma again after the reload
+  ld    x9, 8(x10)
+  ecall
+"""
+
+CACHE_PROG = """
+  lui   x10, 0x100
+  addi  x5, x0, 1
+  sd    x5, 0(x10)
+  ld    x6, 0(x10)
+  ld    x7, 0(x10)
+  ld    x8, 0(x10)
+  addi  x9, x0, 2
+  sd    x9, 64(x10)
+  ld    x11, 64(x10)
+  ld    x12, 64(x10)
+  addi  x13, x0, 3
+  sd    x13, 128(x10)
+  ld    x14, 128(x10)
+  ecall
+"""
+
+DEBUG_PROG = """
+  addi  x5, x0, 11
+  addi  x6, x0, 22
+  .word 0x00100073          # ebreak -> debug entry
+  addi  x7, x0, 33
+  ecall
+"""
+
+RVV_PROG = """
+  lui   x10, 0x100
+  .word 0x0C007057          # vsetvli x0, x0, e64, m1
+  .word 0x02053207          # vle64.v v4, (x10)
+  .word 0x02428257          # vle64.v v4, (x5)  -- placeholder second load
+  .word 0x020502D7          # vse64.v v4, (x10)
+  ecall
+"""
+
+XCETASK_PROG = """
+  addi  x5, x0, 0x11
+  .word 0x7D02A073          # csrrs x0, 0x7D0, x5   (xcetask window)
+  .word 0x7D0022F3          # csrrs x5, 0x7D0, x0
+  addi  x6, x0, 0x22
+  .word 0x7D02A073          # csrrs x0, 0x7D0, x5
+  .word 0x7D002373          # csrrs x6, 0x7D0, x0
+  ecall
+"""
+
+FRONTEND_PROG = """
+  lui   x10, 0x100
+  addi  x5, x0, 3
+  sd    x5, 0(x10)
+  ld    x6, 0(x10)
+  .word 0x00000013          # nop
+  .word 0x00000013          # nop
+  ld    x7, 0(x10)
+  addi  x8, x0, 4
+  .word 0x00000013          # nop between dependent ops
+  add   x9, x7, x8
+  ecall
+"""
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     print("generating UVM golden vectors from the Python ISS:")
@@ -344,6 +418,8 @@ def main():
     build("atomic", ATOMIC_PROG)
     build("zifencei", ZIFENCEI_PROG)
     build("memwidth", MEMWIDTH_PROG)
+    build("cache", CACHE_PROG)
+    build("frontend", FRONTEND_PROG)
     print(f"vectors written to {OUT}")
 
 

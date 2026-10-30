@@ -145,6 +145,22 @@ class rv64_memwidth_test extends rv64_base_test;
   endfunction
 endclass
 
+class rv64_cache_test extends rv64_base_test;
+  `uvm_component_utils(rv64_cache_test)
+  function new(string name = "rv64_cache_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/cache";
+  endfunction
+endclass
+
+class rv64_frontend_test extends rv64_base_test;
+  `uvm_component_utils(rv64_frontend_test)
+  function new(string name = "rv64_frontend_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/frontend";
+  endfunction
+endclass
+
 class rv64_bitmanip_test extends rv64_base_test;
   `uvm_component_utils(rv64_bitmanip_test)
   function new(string name = "rv64_bitmanip_test", uvm_component parent = null);
