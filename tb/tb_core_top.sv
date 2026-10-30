@@ -29,6 +29,12 @@ module tb_core_top #(
   logic        err_en;
   logic [63:0] err_addr;
   logic        irq_soft, irq_timer, irq_ext;
+  logic        sha_start, sha_init, sha_busy, sha_done;
+  logic [511:0] sha_block;
+  logic [255:0] sha_digest;
+  logic        hmac_start, hmac_busy, hmac_done;
+  logic [255:0] hmac_key, hmac_mac;
+  logic [511:0] hmac_msg;
   logic [3:0]  plic_src;
   logic        plic_cfg_we;
   logic [4:0]  plic_cfg_addr;
@@ -39,6 +45,8 @@ module tb_core_top #(
     plic_src = 4'd0; plic_cfg_we = 1'b0; plic_cfg_addr = 5'd0;
     plic_cfg_wdata = 32'd0; plic_claim = 1'b0; plic_complete = 1'b0;
     plic_complete_id = 4'd0;
+    sha_start = 1'b0; sha_init = 1'b0; sha_block = 512'd0;
+    hmac_start = 1'b0; hmac_key = 256'd0; hmac_msg = 512'd0;
   end
 
   logic        dbg_halt_req, dbg_resume_req, dbg_step;
@@ -201,6 +209,18 @@ module tb_core_top #(
     .irq_soft       (irq_soft),
     .irq_timer      (irq_timer),
     .irq_ext        (irq_ext),
+    .sha_start       (sha_start),
+    .sha_init        (sha_init),
+    .sha_block       (sha_block),
+    .sha_busy        (sha_busy),
+    .sha_done        (sha_done),
+    .sha_digest      (sha_digest),
+    .hmac_start      (hmac_start),
+    .hmac_key        (hmac_key),
+    .hmac_msg        (hmac_msg),
+    .hmac_busy       (hmac_busy),
+    .hmac_done       (hmac_done),
+    .hmac_mac        (hmac_mac),
     .plic_src        (plic_src),
     .plic_cfg_we     (plic_cfg_we),
     .plic_cfg_addr   (plic_cfg_addr),

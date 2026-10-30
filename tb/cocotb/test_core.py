@@ -2382,3 +2382,41 @@ async def test_plic_external_interrupt(dut):
     assert 0x800000000000000B in causes, (
         f"expected machine external interrupt (0x800000000000000B), got "
         f"{[hex(c) for c in causes]}")
+
+@cocotb.test()
+async def test_crypto_in_core(dut):
+    """SHA-256 and HMAC reachable from the core.
+
+    Both blocks were verified standalone and instantiated nowhere. They are now
+    wired into riscv_core_top with their ports brought out (no peripheral bus), so
+    this drives them through the core's own ports rather than a private bench.
+
+    Uses the standard SHA-256("abc") vector:
+        ba7816bf 8f01cfea 414140de 5dae2223 b00361a396177a9cb410ff61f20015ad
+    """
+    from cocotb.triggers import RisingEdge, Timer
+
+    EXPECT = 0xba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+    # "abc" then 0x80, zero pad, 24-bit length at the end of the block
+    block = (0x616263 << (512 - 24)) | 0x80 << (512 - 32) | 24
+
+    h = Harness(dut)
+    await h.startup()
+    await h.reset()
+
+    d = dut
+    d.sha_block.value = block
+    d.sha_init.value = 1
+    d.sha_start.value = 1
+    await RisingEdge(d.clk)
+    d.sha_start.value = 0
+    d.sha_init.value = 0
+
+    for _ in range(200):
+        await RisingEdge(d.clk)
+        await Timer(1, "ns")
+        if int(d.sha_done.value) == 1:
+            break
+    assert int(d.sha_done.value) == 1, "SHA-256 never signalled done"
+    got = int(d.sha_digest.value)
+    assert got == EXPECT, f"SHA-256(abc) = {got:064x}, expected {EXPECT:064x}"

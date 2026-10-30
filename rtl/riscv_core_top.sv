@@ -73,6 +73,22 @@ module riscv_core_top #(
   // The core has no peripheral bus, so the interrupt controller's config port is
   // brought out to the top rather than memory-mapped. Its irq output is ORed into
   // irq_ext, which is what the CSR sees.
+  // ---- crypto --------------------------------------------------------------
+  // SHA-256 and HMAC are exposed at the top rather than memory-mapped, for the
+  // same reason as the PLIC: there is no peripheral bus. Before this they were
+  // verified standalone and instantiated nowhere.
+  input  logic         sha_start,
+  input  logic         sha_init,
+  input  logic [511:0] sha_block,
+  output logic         sha_busy,
+  output logic         sha_done,
+  output logic [255:0] sha_digest,
+  input  logic         hmac_start,
+  input  logic [255:0] hmac_key,
+  input  logic [511:0] hmac_msg,
+  output logic         hmac_busy,
+  output logic         hmac_done,
+  output logic [255:0] hmac_mac,
   input  logic [3:0]  plic_src,
   input  logic        plic_cfg_we,
   input  logic [4:0]  plic_cfg_addr,
@@ -474,6 +490,28 @@ module riscv_core_top #(
   // core took irq_ext as a bare input, so nothing inside generated or claimed an
   // interrupt.
   // ===========================================================================
+  rv64_sha256 u_sha256 (
+    .clk    (clk),
+    .rst_n  (rst_n),
+    .start  (sha_start),
+    .init   (sha_init),
+    .block  (sha_block),
+    .busy   (sha_busy),
+    .done   (sha_done),
+    .digest (sha_digest)
+  );
+
+  rv64_hmac u_hmac (
+    .clk   (clk),
+    .rst_n (rst_n),
+    .start (hmac_start),
+    .key   (hmac_key),
+    .msg   (hmac_msg),
+    .busy  (hmac_busy),
+    .done  (hmac_done),
+    .mac   (hmac_mac)
+  );
+
   logic plic_irq;
   logic irq_ext_eff;
 
