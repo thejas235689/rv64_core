@@ -45,11 +45,14 @@ module tb_flit_pack
           cap++;
         end
         @(posedge clk);
-        if (sent < n && in_ready) begin
+        // Keep in_valid asserted for the whole stream and let in_ready throttle.
+        // Gating in_valid on in_ready dropped the byte in the cycle the DUT
+        // deasserted ready, so the last byte of every flit was lost.
+        if (sent < n) begin
           in_byte  = 8'(sent);
           in_valid = 1'b1;
           in_last  = (sent == n-1);
-          sent++;
+          if (in_ready) sent++;
         end else begin
           in_valid = 1'b0;
         end
