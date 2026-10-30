@@ -111,8 +111,49 @@ def build_memory(f):
                    "is_store": is_store, "expect": 0x2A}
 
 
+def build_csr(f):
+    """csr_access -> read or write a CSR chosen by access_kind.
+
+    access_kind 0 = read (csrr), 1 = write (csrrw), 2 = set (csrrs).
+    A read-only target must trap on write, which is what target_is_readonly is for.
+    """
+    kind = f["access_kind"] % 3
+    readonly = f["target_is_readonly"]
+    csr = 0x300 if readonly else 0x340          # mstatus (has RO bits) or mscratch
+    opf = {0: 2, 1: 1, 2: 2}[kind]              # csrr/csrrw/csrrs funct3
+    words = [
+        0x00700313,                              # addi x6, x0, 7
+        (csr << 20) | (6 << 15) | (opf << 12) | (0 << 7) | 0x73,   # csr op, rd=x0
+        (csr << 20) | (2 << 12) | (7 << 7) | 0x73,                 # csrr x7, csr
+        0x00000073,
+    ]
+    return words, {"kind": kind, "csr": csr, "readonly": readonly, "funct3": opf}
+
+
+def build_trap(f):
+    """trap_case -> provoke a specific exception class and check the cause.
+
+    cause_class 0 = illegal instruction, 1 = load misaligned, 2 = ebreak.
+    """
+    cause = f["cause_class"] % 3
+    words = []
+    if cause == 0:
+        words = [0xFFFFFFFF, 0x00000073]                 # an illegal encoding
+        expect = 2
+    elif cause == 1:
+        words = [(0x100 << 12) | (10 << 7) | 0x37,       # lui x10, 0x100
+                 (0x1 << 20) | (10 << 15) | (0x3 << 12) | (7 << 7) | 0x03,  # ld x7,1(x10)
+                 0x00000073]
+        expect = 4                                       # load address misaligned
+    else:
+        words = [0x00100073, 0x00000073]                 # ebreak
+        expect = 3                                       # breakpoint
+    return words, {"cause_class": cause, "expect_cause": expect}
+
+
 BUILDERS = {"alu_op": build_alu, "branch": build_branch,
-            "word_op": build_word, "memory_op": build_memory}
+            "word_op": build_word, "memory_op": build_memory,
+            "csr_access": build_csr, "trap_case": build_trap}
 
 
 def main():

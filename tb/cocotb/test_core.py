@@ -2320,3 +2320,44 @@ async def test_pss_all_actions(dut):
     assert m_got == m_s["expect"], (
         f"memory_op width={m_s['width']} off={m_s['offset']} -> x7={m_got}, "
         f"expected {m_s['expect']}")
+
+@cocotb.test()
+async def test_pss_csr_and_trap(dut):
+    """csr_access and trap_case from the verification plan, driven by PSS.
+
+    csr_access writes 7 to a CSR then reads it back.
+    trap_case provokes a chosen exception class and checks the cause the core
+    reports -- so a solver-chosen scenario ends in a hardware trap that the test
+    validates against the solver's expectation.
+    """
+    import os, subprocess, re, ast
+    gen = os.path.join(os.path.dirname(__file__), "..", "..", "pss", "gen_pss_program.py")
+    satya = os.environ.get("SATYA", "satya")
+
+    def gen_program(action):
+        out = subprocess.run(["python3", gen, action, "--seed", "5"],
+                             capture_output=True, text=True, timeout=60,
+                             env=dict(os.environ, SATYA=satya))
+        assert out.returncode == 0, f"{action}: {out.stderr}"
+        words = [int(l, 16) for l in out.stdout.split() if l.strip()]
+        m = re.search(r"-> (\{.*\})", out.stderr)
+        return words, ast.literal_eval(m.group(1))
+
+    # ---- csr_access ----
+    words, summ = gen_program("csr_access")
+    h = Harness(dut)
+    await h.startup(); h.clear(); await h.load(words); await h.reset()
+    await h.run(max_cycles=400, stop_on_ecall=True)
+    vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
+    assert vals.get(7) == 7, (
+        f"csr_access kind={summ['kind']} csr={summ['csr']:#x}: x7={vals.get(7)}, expected 7")
+
+    # ---- trap_case ----
+    words, summ = gen_program("trap_case")
+    h = Harness(dut)
+    await h.startup(); h.clear(); await h.load(words); await h.reset()
+    await h.run(max_cycles=400, stop_on_ecall=True)
+    causes = [c for (_, c) in h.traps]
+    assert summ["expect_cause"] in causes, (
+        f"trap_case cause_class={summ['cause_class']}: expected cause "
+        f"{summ['expect_cause']}, saw {causes}")

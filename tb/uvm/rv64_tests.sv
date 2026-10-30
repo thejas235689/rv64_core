@@ -105,6 +105,14 @@ class rv64_random_test extends rv64_base_test;
 endclass
 
 // ---- systematic ISA sweep: every op x its own exhaustive dimension ---------
+class rv64_bitmanip_test extends rv64_base_test;
+  `uvm_component_utils(rv64_bitmanip_test)
+  function new(string name = "rv64_bitmanip_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/bitmanip";
+  endfunction
+endclass
+
 class rv64_isa_test extends rv64_base_test;
   `uvm_component_utils(rv64_isa_test)
   function new(string name = "rv64_isa_test", uvm_component parent = null);

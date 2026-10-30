@@ -16,7 +16,7 @@ for _i, _n in enumerate(ABI):
 REGS["fp"] = 8
 
 CSRS = {
-    "mstatus": 0x300, "misa": 0x301, "mie": 0x304, "mtvec": 0x305,
+    "mstatus": 0x300, "misa": 0x301, "fflags": 0x001, "frm": 0x002, "fcsr": 0x003, "mie": 0x304, "mtvec": 0x305,
     "mcounteren": 0x306, "mscratch": 0x340, "mepc": 0x341, "mcause": 0x342,
     "mtval": 0x343, "mip": 0x344, "pmpcfg0": 0x3A0,
     "mcycle": 0xB00, "minstret": 0xB02, "mcycleh": 0xB80, "minstreth": 0xB82,

@@ -231,6 +231,47 @@ def build(name, src):
           f"{len(traps):2d} traps")
 
 
+BITMANIP_PROG = """
+  lui   x5, 0x12345
+  addi  x5, x5, 0x678
+  addi  x6, x0, 7
+  slli  x7, x5, 3
+  sh1add x8, x5, x6
+  clz   x9, x5
+  ctz   x10, x5
+  cpop  x11, x5
+  clmul x12, x5, x6
+  andn  x13, x5, x6
+  orn   x14, x5, x6
+  xnor  x15, x5, x6
+  min   x16, x5, x6
+  max   x17, x5, x6
+  rol   x18, x5, x6
+  ror   x19, x5, x6
+  bclr  x20, x5, x6
+  bext  x21, x5, x6
+  binv  x22, x5, x6
+  ecall
+"""
+
+CSR_PROG = """
+  addi  x5, x0, 0x123
+  csrrw x0, mscratch, x5
+  csrrs x6, mscratch, x0
+  csrrs x7, mscratch, x0
+  csrrc x8, mscratch, x0
+  csrrs x9, misa, x0
+  csrrs x10, mhartid, x0
+  csrrs x11, mstatus, x0
+  addi  x12, x0, 0x5
+  csrrw x0, fcsr, x12
+  csrrs x13, fcsr, x0
+  csrrs x14, fflags, x0
+  csrrs x15, frm, x0
+  ecall
+"""
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     print("generating UVM golden vectors from the Python ISS:")
@@ -238,6 +279,7 @@ def main():
     build("mem", MEM_PROG)
     build("trap", pad_to(TRAP_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
     build("random", random_program(120, 7))
+    build("bitmanip", BITMANIP_PROG)
     print(f"vectors written to {OUT}")
 
 
