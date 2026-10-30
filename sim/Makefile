@@ -28,7 +28,6 @@ RTL_SRCS := \
   $(RTL_DIR)/rv64_sha256.sv \
   $(RTL_DIR)/rv64_hmac.sv \
   $(RTL_DIR)/rv64_bootauth_hmac.sv \
-  $(RTL_DIR)/rv64_bootauth.sv \
   $(RTL_DIR)/rv64_icache.sv \
   $(RTL_DIR)/rv64_fetch.sv \
   $(RTL_DIR)/rv64_plic_lite.sv \

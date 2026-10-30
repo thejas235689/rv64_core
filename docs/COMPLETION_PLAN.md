@@ -18,7 +18,7 @@ they are not fixed first.
 | Item | Why first | Exit criteria |
 | --- | --- | --- |
 | RVC in the ISS | Compressed programs are currently verified by observation, not against a golden model. Every later phase that touches fetch or decode needs this. | A mixed compressed/32-bit program trace-compares with zero mismatches |
-| Wire the six orphaned modules | CLINT, UART, DMI, PLIC-lite, L2 arbiter, FNV bootauth are verified and instantiated nowhere. Their tests currently prove nothing about the core. | Each is instantiated, or deleted. No module is both tested and unused |
+| Wire the six orphaned modules | FNV bootauth is **deleted** (superseded by the HMAC version, and only its own TB referenced it). The other five -- CLINT, UART, DMI, PLIC-lite, L2 arbiter -- cannot simply be wired in: each is memory-mapped, and **the core has no peripheral bus**. Wiring them is a design task, not cleanup, and it needs a bus fabric first. | FNV deleted; the other five either wired via a new peripheral bus, or documented as waiting on one |
 | One green regression run | 36 tests pass individually; none of that is visible in CI because the suite exceeds one command timeout | `sim/run.py` completes within the CI budget, or splits into shards that do |
 | UVM sweep throughput | The 4445-instruction sweep is throughput-blocked at ~3250 cycles per retired instruction | Full-size UVM sweep passes, or the driver's speed is documented as a known limit |
 

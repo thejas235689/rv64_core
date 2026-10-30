@@ -65,8 +65,9 @@ the `auipc`/`jal` link value and the `wfi` resume. `misa` advertises C (bit 2).
 
 **Not in this core:** cache coherence, cache inclusion or write-back, prefetch, an
 out-of-order backend, and the four research blocks (DNA, neuromorphic, photonic,
-interconnect). CLINT, UART, DMI and the L2 arbiter exist as verified standalone
-blocks but are **not** instantiated. `docs/ROADMAP.md` maps the target feature list
+interconnect). CLINT, UART, DMI, PLIC-lite and the L2 arbiter exist as verified standalone
+blocks but are **not** instantiated -- they are memory-mapped and the core has no
+peripheral bus to reach them. `docs/ROADMAP.md` maps the target feature list
 against what exists, and `docs/COMPLETION_PLAN.md` sets out the phased path to a
 complete, verified implementation with effort estimates and exit criteria.
 
