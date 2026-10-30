@@ -272,6 +272,65 @@ CSR_PROG = """
 """
 
 
+PMP_PROG = """
+  lui   x5, 0x80000
+  srli  x5, x5, 12
+  csrrw x0, pmpaddr0, x5
+  addi  x6, x0, 0x0F
+  csrrw x0, pmpcfg0, x6
+  csrrs x7, pmpcfg0, x0
+  csrrs x8, pmpaddr0, x0
+  ecall
+"""
+
+ATOMIC_PROG = """
+  lui   x10, 0x100
+  addi  x5, x0, 42
+  sd    x5, 0(x10)
+  .word 0x005533af          # amoadd.d x7, x5, (x10)
+  .word 0x085533af          # amoswap.d x7, x5, (x10)
+  .word 0x205533af          # amoxor.d x7, x5, (x10)
+  .word 0x605533af          # amoand.d x7, x5, (x10)
+  .word 0x405533af          # amoor.d x7, x5, (x10)
+  .word 0x805533af          # amomin.d x7, x5, (x10)
+  .word 0xa05533af          # amomax.d x7, x5, (x10)
+  .word 0xc05533af          # amominu.d x7, x5, (x10)
+  .word 0xe05533af          # amomaxu.d x7, x5, (x10)
+  .word 0x100538af          # lr.d x17, (x10)
+  .word 0x1855392f          # sc.d x18, x5, (x10)
+  ecall
+"""
+
+ZIFENCEI_PROG = """
+  lui   x10, 0x100
+  addi  x5, x0, 7
+  sd    x5, 0(x10)
+  fence.i
+  ld    x6, 0(x10)
+  addi  x7, x0, 9
+  fence
+  addi  x8, x0, 11
+  ecall
+"""
+
+MEMWIDTH_PROG = """
+  lui   x10, 0x100
+  addi  x5, x0, 0x7F
+  sb    x5, 0(x10)
+  lbu   x6, 0(x10)
+  lb    x7, 0(x10)
+  sh    x5, 2(x10)
+  lhu   x8, 2(x10)
+  lh    x9, 2(x10)
+  sw    x5, 4(x10)
+  lwu   x11, 4(x10)
+  lw    x12, 4(x10)
+  sd    x5, 8(x10)
+  ld    x13, 8(x10)
+  ecall
+"""
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     print("generating UVM golden vectors from the Python ISS:")
@@ -281,6 +340,10 @@ def main():
     build("random", random_program(120, 7))
     build("bitmanip", BITMANIP_PROG)
     build("csr", CSR_PROG)
+    build("pmp", PMP_PROG)
+    build("atomic", ATOMIC_PROG)
+    build("zifencei", ZIFENCEI_PROG)
+    build("memwidth", MEMWIDTH_PROG)
     print(f"vectors written to {OUT}")
 
 

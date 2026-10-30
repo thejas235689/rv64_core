@@ -113,6 +113,38 @@ class rv64_csr_test extends rv64_base_test;
   endfunction
 endclass
 
+class rv64_pmp_test extends rv64_base_test;
+  `uvm_component_utils(rv64_pmp_test)
+  function new(string name = "rv64_pmp_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/pmp";
+  endfunction
+endclass
+
+class rv64_atomic_test extends rv64_base_test;
+  `uvm_component_utils(rv64_atomic_test)
+  function new(string name = "rv64_atomic_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/atomic";
+  endfunction
+endclass
+
+class rv64_zifencei_test extends rv64_base_test;
+  `uvm_component_utils(rv64_zifencei_test)
+  function new(string name = "rv64_zifencei_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/zifencei";
+  endfunction
+endclass
+
+class rv64_memwidth_test extends rv64_base_test;
+  `uvm_component_utils(rv64_memwidth_test)
+  function new(string name = "rv64_memwidth_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/memwidth";
+  endfunction
+endclass
+
 class rv64_bitmanip_test extends rv64_base_test;
   `uvm_component_utils(rv64_bitmanip_test)
   function new(string name = "rv64_bitmanip_test", uvm_component parent = null);
