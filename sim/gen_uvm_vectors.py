@@ -454,6 +454,45 @@ XCETASK_BODY = """
   ecall
 """
 
+AMCCE_BODY = """
+  lui   x5, 0x1
+  csrrw x0, mtvec, x5
+  lui   x10, 0x100
+  # a streaming scan: distinct lines, one touch each -- the pattern AMCCE switches
+  # the D-cache to BYPASS for
+  ld    x6, 0(x10)
+  ld    x7, 64(x10)
+  ld    x8, 128(x10)
+  ld    x9, 192(x10)
+  ld    x11, 256(x10)
+  ld    x12, 320(x10)
+  ld    x13, 384(x10)
+  ld    x14, 448(x10)
+  # then a hot loop, which should bring it back
+  ld    x15, 0(x10)
+  ld    x16, 0(x10)
+  ld    x17, 0(x10)
+  ecall
+"""
+
+ACCEL_BODY = """
+  lui   x5, 0x1
+  csrrw x0, mtvec, x5
+  # XRV512 window, QISA window, AI window: read then write each
+  csrrs x6, xrv512, x0
+  csrrs x7, qisa, x0
+  csrrs x8, aiacc, x0
+  addi  x9, x0, 0x5
+  csrrw x0, xrv512, x9
+  csrrw x0, qisa, x9
+  csrrw x0, aiacc, x9
+  csrrs x10, xrv512, x0
+  csrrs x11, qisa, x0
+  csrrs x12, aiacc, x0
+  ecall
+"""
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     print("generating UVM golden vectors from the Python ISS:")
@@ -473,6 +512,8 @@ def main():
     build("debug", pad_to(DEBUG_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
     build("rvv", pad_to(RVV_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
     build("xcetask", pad_to(XCETASK_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
+    build("amcce", pad_to(AMCCE_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
+    build("accel", pad_to(ACCEL_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
     print(f"vectors written to {OUT}")
 
 

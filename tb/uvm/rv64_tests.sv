@@ -193,6 +193,22 @@ class rv64_xcetask_test extends rv64_base_test;
   endfunction
 endclass
 
+class rv64_amcce_test extends rv64_base_test;
+  `uvm_component_utils(rv64_amcce_test)
+  function new(string name = "rv64_amcce_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/amcce";
+  endfunction
+endclass
+
+class rv64_accel_test extends rv64_base_test;
+  `uvm_component_utils(rv64_accel_test)
+  function new(string name = "rv64_accel_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/accel";
+  endfunction
+endclass
+
 class rv64_bitmanip_test extends rv64_base_test;
   `uvm_component_utils(rv64_bitmanip_test)
   function new(string name = "rv64_bitmanip_test", uvm_component parent = null);
