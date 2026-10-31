@@ -2518,3 +2518,48 @@ async def test_clint_uart(dut):
     assert 2 not in causes, f"CLINT/UART CSR access trapped: {causes[:4]}"
     vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
     assert vals.get(6) == 0x2A, f"mtimecmp read back {vals.get(6, -1):#x}, expected 0x2A"
+
+@cocotb.test()
+async def test_clint_timer_irq(dut):
+    """The CLINT's timer_irq reaches the core's trap logic.
+
+    Before this, clint_timer_irq was dangling: the block was reachable over CSRs but
+    its interrupt output went nowhere, so a program could arm the timer and nothing
+    would ever happen.
+    """
+    from rv64_asm import assemble
+    words, _ = assemble("""
+        addi x5, x0, 0
+        csrrw x0, 0x7d2, x5      # mtimecmp[31:0] = 0  -> pend immediately
+        csrrw x0, 0x7d3, x5      # mtimecmp[63:32] = 0
+        addi x6, x0, 1
+        csrrw x0, 0x7d6, x6      # timer_en = 1
+        addi x7, x0, 0x80
+        csrrw x0, 0x304, x7      # mie.MTIE
+        addi x9, x0, 8
+        csrrw x0, 0x300, x9      # mstatus.MIE is bit 3, not bit 7
+        addi x8, x0, 1           # loop marker
+        jal x0, 0                # spin; the interrupt must arrive
+    """)
+    h = Harness(dut)
+    await h.startup(); h.clear(); await h.load(words)
+    # trap vector must point somewhere harmless
+    await h.reset()
+    seen = []
+    from cocotb.triggers import RisingEdge, Timer
+    async def watch():
+        while True:
+            await RisingEdge(dut.clk); await Timer(1, "ns")
+            seen.append((int(dut.u_core.u_clint.timer_en.value),
+                         int(dut.u_core.u_clint.timer_irq.value),
+                         int(dut.u_core.irq_timer_eff.value),
+                         int(dut.u_core.u_csr.mie_q.value if hasattr(dut.u_core.u_csr,'mie_q') else 0)))
+    cocotb.start_soon(watch())
+    await h.run(max_cycles=600, stop_on_ecall=False)
+    hits = [e for e in seen if e[1]==1]
+    dut._log.warning(f"  timer_irq cycles: {len(hits)}  first: {hits[:2]}")
+
+    causes = [c for (_, c) in h.traps]
+    dut._log.warning(f"  traps seen: {causes[:6]}")
+    assert 0x80000007 in causes or any((c & 0x7FFFFFFF) == 7 for c in causes), \
+        f"no machine timer interrupt: {causes[:6]}"

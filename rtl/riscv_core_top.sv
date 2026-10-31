@@ -572,6 +572,11 @@ module riscv_core_top #(
   );
 
   assign irq_ext_eff = irq_ext | plic_irq;
+  // The CLINT is the core's own timer: its timer_irq must reach the trap logic, not
+  // dangle. irq_timer_eff is what the CSR block sees.
+  logic irq_timer_eff, irq_soft_eff;
+  assign irq_timer_eff = irq_timer | clint_timer_irq;
+  assign irq_soft_eff  = irq_soft  | clint_soft_irq;
 
   rv64_regfile u_regfile (
     .clk      (clk),
@@ -708,11 +713,11 @@ module riscv_core_top #(
   // illegal. Without this every access traps before reaching the accelerator.
   logic        accel_csr_sel;
   logic [63:0] accel_csr_rdata;
-  // CLINT at 0x7D0..0x7D3, UART at 0x7D8..0x7DB. Both blocks expose a 4-bit
+  // CLINT at 0x7D0..0x7D7 (7 registers), UART at 0x7D8..0x7DB. Both blocks expose a 4-bit
   // CSR-style interface, so they attach to CSR space directly -- the same approach
   // the accelerator windows use, and no peripheral bus required.
   assign clint_csr_sel = (id_ex_ctrl.csr_addr >= CSR_CLINT_BASE) &&
-                         (id_ex_ctrl.csr_addr <= (CSR_CLINT_BASE + 12'd3));
+                         (id_ex_ctrl.csr_addr <= (CSR_CLINT_BASE + 12'd7));
   assign uart_csr_sel  = (id_ex_ctrl.csr_addr >= CSR_UART_BASE) &&
                          (id_ex_ctrl.csr_addr <= (CSR_UART_BASE + 12'd3));
 
@@ -1061,8 +1066,8 @@ module riscv_core_top #(
     .satp_o         (csr_satp),
     .mtvec_o        (csr_mtvec),
     .mepc_o         (csr_mepc),
-    .irq_soft       (irq_soft),
-    .irq_timer      (irq_timer),
+    .irq_soft       (irq_soft_eff),
+    .irq_timer      (irq_timer_eff),
     .irq_ext        (irq_ext_eff),
     .accel_csr_sel  (accel_csr_sel),
     .accel_csr_rdata(accel_csr_rdata),
@@ -1112,7 +1117,8 @@ module riscv_core_top #(
 
   always_comb begin
     if (csr_irq_pending && irq_ext_eff && csr_mstatus_mie)   irq_cause = CAUSE_M_EXT_INT;
-    else if (csr_irq_pending && irq_timer && csr_mstatus_mie) irq_cause = CAUSE_M_TIMER_INT;
+    else if (csr_irq_pending && irq_timer_eff && csr_mstatus_mie) irq_cause = CAUSE_M_TIMER_INT;
+    else if (csr_irq_pending && irq_soft_eff && csr_mstatus_mie) irq_cause = CAUSE_M_SOFT_INT;
     else                                                     irq_cause = CAUSE_M_SOFT_INT;
   end
 
