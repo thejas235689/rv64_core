@@ -828,7 +828,11 @@ module riscv_core_top #(
   logic [63:0] main_csr_rdata;
 
   always_comb begin
-    if (task_csr_sel)     csr_rdata = task_csr_rdata;
+    // CLINT/UART first: they are not part of the machine CSR file, so without an
+    // explicit branch here the access falls through to main_csr_rdata (0).
+    if (clint_csr_sel)      csr_rdata = clint_csr_rdata;
+    else if (uart_csr_sel)  csr_rdata = uart_csr_rdata;
+    else if (task_csr_sel)  csr_rdata = task_csr_rdata;
     else if (qisa_csr_sel)  csr_rdata = qisa_csr_rdata;
     else if (aiacc_csr_sel) csr_rdata = aiacc_csr_rdata;
     else if (xrv512_csr_sel) csr_rdata = xrv512_csr_rdata;
