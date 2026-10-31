@@ -2480,8 +2480,4 @@ async def test_h_instructions(dut):
             f"{i}:{w:08x}" for i, w in enumerate(words)))
     assert 2 not in causes, f"H instruction trapped as illegal: {causes[:4]}"
     vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
-    # The decode is proven -- no illegal trap. The data path is not: hsvd does not
-    # write memory, so hlvd reads the wrong location. Asserted as a known bug.
-    if vals.get(7) != 0x2A:
-        dut._log.warning(f"KNOWN BUG: hlvd read {vals.get(7, -1):#x}, expected 0x2A "
-                         f"(hsvd does not write memory)")
+    assert vals.get(7) == 0x2A, f"hlvd read {vals.get(7, -1):#x}, expected 0x2A"

@@ -492,7 +492,9 @@ module rv64_decoder (
             ctrl.is_load  = 1'b1;
             ctrl.reg_we   = 1'b1;
             ctrl.wb_sel   = WB_MEM;
-            ctrl.imm_sel  = IMM_I;
+            // Same as the store: NO immediate field, address is rs1 alone.
+            ctrl.imm_sel  = IMM_NONE;
+            ctrl.b_sel    = B_IMM;
           end
           unique case (funct7[2:0])
             3'b000, 3'b100: ctrl.mem_size = MSZ_B;
