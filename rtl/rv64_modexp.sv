@@ -17,7 +17,7 @@ module rv64_modexp #(parameter int WORDS = 64) (
 );
   localparam int AW = (WORDS <= 1) ? 1 : $clog2(WORDS);
   logic [63:0] basem [0:WORDS-1], r2m [0:WORDS-1], nmem [0:WORDS-1];
-  logic [63:0] acc [0:WORDS-1], emem [0:WORDS-1];
+  logic [63:0] acc [0:WORDS-1], emem [0:WORDS-1], seedm [0:WORDS-1];
   logic [63:0] n0inv_q;
   always_ff @(posedge clk) begin
     if (ld_we) case (ld_sel)
@@ -26,6 +26,7 @@ module rv64_modexp #(parameter int WORDS = 64) (
       3'd2: nmem [ld_addr[AW-1:0]] <= ld_wdata;
       3'd3: acc  [ld_addr[AW-1:0]] <= ld_wdata;
       3'd4: emem [ld_addr[AW-1:0]] <= ld_wdata;
+      3'd5: seedm[ld_addr[AW-1:0]] <= ld_wdata;
       default: ;
     endcase
     if (n0inv_we) n0inv_q <= n0inv_wdata;
@@ -110,6 +111,7 @@ module rv64_modexp #(parameter int WORDS = 64) (
           unique case (ph_q)
             PH_CONV: begin
               for (int k = 0; k < WORDS; k++) basem[k] <= acc[k];
+              for (int k = 0; k < WORDS; k++) acc[k]   <= seedm[k];
               ph_q <= PH_SQ; st_q <= LA;
             end
             PH_OUT: st_q <= FIN;

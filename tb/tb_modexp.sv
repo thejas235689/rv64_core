@@ -52,7 +52,7 @@ module tb_modexp;
     for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); put(0,i,w); end
     for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); put(1,i,w); end
     for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); put(2,i,w); end
-    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); put(3,i,w); end
+    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); put(3,i,w); put(5,i,w); end
     for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); put(4,i,w); end
     code=$fscanf(fd,"%h",w); e_bits = w[15:0];
     for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); exp_res[i]=w; end
