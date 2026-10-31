@@ -479,17 +479,18 @@ module rv64_decoder (
                      ((funct7[6:4] == 3'b011) || (funct7[6:4] == 3'b110))) begin
           // HLV/HLVX/HSV. Bit 6 of funct7 separates loads (0x30..0x3F) from stores
           // (0x60..0x6F); bit 4 does NOT -- HLV.D is 0x36 and has bit 4 set.
+          // Without G-stage translation a guest access is an ordinary access, so
+          // emit exactly the flags an ordinary load/store emits. is_hlv/is_hsv are
+          // not consumed anywhere and setting them alongside the normal flags
+          // perturbed the address path.
           if (funct7[6]) begin
-            // HSV: a store to the guest address. Without G-stage translation this
-            // is an ordinary store, so set exactly the flags an ordinary store sets.
             ctrl.is_store = 1'b1;
-            ctrl.is_hsv   = 1'b1;
             ctrl.imm_sel  = IMM_S;
           end else begin
             ctrl.is_load  = 1'b1;
-            ctrl.is_hlv   = 1'b1;
             ctrl.reg_we   = 1'b1;
             ctrl.wb_sel   = WB_MEM;
+            ctrl.imm_sel  = IMM_I;
           end
           unique case (funct7[2:0])
             3'b000, 3'b100: ctrl.mem_size = MSZ_B;

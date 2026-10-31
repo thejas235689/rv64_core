@@ -2494,4 +2494,4 @@ async def test_h_instructions(dut):
     # write memory, so hlvd reads the wrong location. Asserted as a known bug.
     if vals.get(7) != 0x2A:
         dut._log.warning(f"KNOWN BUG: hlvd read {vals.get(7, -1):#x}, expected 0x2A "
-                         f"(hsvd does not store)")
+                         f"(hsvd does not write memory)")

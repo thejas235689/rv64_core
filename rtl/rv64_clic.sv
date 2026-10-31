@@ -1,3 +1,4 @@
+`timescale 1ns/1ps
 // =============================================================================
 // rv64_clic.sv -- CLIC-lite core-local interrupt controller.
 //
