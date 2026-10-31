@@ -2491,11 +2491,11 @@ async def test_clint_uart(dut):
     from cocotb.triggers import RisingEdge, Timer
     words, _ = assemble("""
         addi x5, x0, 42
-        csrrw x0, 0x7d2, x5
-        csrrs x6, 0x7d2, x0
+        csrrw x0, 0x7f2, x5
+        csrrs x6, 0x7f2, x0
         addi x7, x0, 85
-        csrrw x0, 0x7d8, x7
-        csrrs x8, 0x7d0, x0
+        csrrw x0, 0x7f8, x7
+        csrrs x8, 0x7f0, x0
         ecall
     """)
     h = Harness(dut)
@@ -2530,10 +2530,10 @@ async def test_clint_timer_irq(dut):
     from rv64_asm import assemble
     words, _ = assemble("""
         addi x5, x0, 0
-        csrrw x0, 0x7d2, x5      # mtimecmp[31:0] = 0  -> pend immediately
-        csrrw x0, 0x7d3, x5      # mtimecmp[63:32] = 0
+        csrrw x0, 0x7f2, x5      # mtimecmp[31:0] = 0  -> pend immediately
+        csrrw x0, 0x7f3, x5      # mtimecmp[63:32] = 0
         addi x6, x0, 1
-        csrrw x0, 0x7d6, x6      # timer_en = 1
+        csrrw x0, 0x7f6, x6      # timer_en = 1
         addi x7, x0, 0x80
         csrrw x0, 0x304, x7      # mie.MTIE
         addi x9, x0, 8
