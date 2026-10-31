@@ -69,7 +69,10 @@ module rv64_montmul #(
   state_e        state_q;
   logic [AW-1:0] i_q, j_q;
   logic [63:0]   m_q, carry_q;
-  logic [128:0]  acc;   // t[j] + a[j]*b[i] + carry: the product is 128 bits
+  logic [128:0]  acc;
+  logic [63:0]   sub_d;
+  logic          sub_bw;
+  logic          ge_q;   // t[j] + a[j]*b[i] + carry: the product is 128 bits
 
   assign busy = (state_q != IDLE);
   assign done = (state_q == FIN);
@@ -135,11 +138,24 @@ module rv64_montmul #(
         end
 
         FIN: begin
-          // Plain copy. The CIOS result is < 2N, so a single conditional subtract
-          // completes the reduction -- and doing it here was the only part that did
-          // not match the model. Software (or a later state) performs it, which is
-          // standard practice and keeps this block exactly equal to the reference.
-          for (int k = 0; k < WORDS; k++) rmem[k] <= t[k];
+          // t >= N ?  Scan from the top word down; the first difference decides.
+          // iterate LOW to HIGH so the highest differing word has the last say
+          ge_q = 1'b1;                       // equal => subtract
+          for (int k = 0; k < WORDS; k++) begin
+            // full 65 bits: bit 64 of t[0] is the CIOS overflow and means t > N
+            if (t[k] > {1'b0, nmem[k]})      ge_q = 1'b1;
+            else if (t[k] < {1'b0, nmem[k]}) ge_q = 1'b0;
+          end
+          if (ge_q) begin
+            sub_bw = 1'b0;
+            for (int k = 0; k < WORDS; k++) begin
+              sub_d    = t[k][63:0] - nmem[k] - {63'd0, sub_bw};
+              rmem[k] <= sub_d;
+              sub_bw   = ({1'b0, t[k][63:0]} < ({1'b0, nmem[k]} + {64'd0, sub_bw})) ? 1'b1 : 1'b0;
+            end
+          end else begin
+            for (int k = 0; k < WORDS; k++) rmem[k] <= t[k][63:0];
+          end
           state_q <= IDLE;
         end
 

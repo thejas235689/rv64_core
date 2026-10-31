@@ -1,6 +1,6 @@
 `timescale 1ns/1ps
 module tb_modexp;
-  localparam int W = 2;
+  localparam int W = 4;
   logic clk=0, rst_n=0, start=0, busy, done;
   logic n0inv_we=0; logic [63:0] n0inv_wdata=0; logic [15:0] e_bits=0;
   logic ld_we=0; logic [2:0] ld_sel=0; logic [7:0] ld_addr=0; logic [63:0] ld_wdata=0;
@@ -64,6 +64,7 @@ module tb_modexp;
       
       
       if (i == 15) $display("  n0inv_q=%016h amem0=%016h", dut.n0inv_q, u_mont.amem[0]);
+      if (probe_op_valid) $display("  OP %0d a=%016h b=%016h", probe_op, m_a_wdata, m_b_wdata);
       if (done) i=9999;
     end
     $display("  fin: done=%b op=%0d acc0=%016h rmem0=%016h rst=%b m_st=%0d",

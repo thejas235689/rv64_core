@@ -1,7 +1,7 @@
 `timescale 1ns/1ps
 // Compares rv64_montmul against per-iteration intermediates from a Python model.
 module tb_montmul;
-  localparam int W = 4;
+  localparam int W = 16;
   logic clk = 0, rst_n = 0, start = 0, busy, done;
   logic [63:0] n0inv;
   logic a_we=0, b_we=0, n_we=0;
