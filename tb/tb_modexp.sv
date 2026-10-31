@@ -42,6 +42,13 @@ module tb_modexp;
     rst_n = 1; repeat (2) @(posedge clk);
     fd = $fopen("vectors_exp.hex","r");
     if (fd==0) begin $display("no vectors"); $finish; end
+    code=$fscanf(fd,"%h",w);
+    $display("  n0inv from file: %016h", w);
+    n0inv_wdata = w; n0inv_we = 1'b1;
+    @(posedge clk); @(posedge clk);
+    n0inv_we = 1'b0;
+    @(posedge clk);
+    $display("  n0inv_q after load: %016h  we was %b", dut.n0inv_q, n0inv_we);
     for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); put(0,i,w); end
     for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); put(1,i,w); end
     for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); put(2,i,w); end
@@ -54,7 +61,9 @@ module tb_modexp;
     start = 1; @(posedge clk); start = 0;
     for (i=0;i<4000;i++) begin
       @(posedge clk); #1;
-      if ((i > 30 && i < 34) || (i > 1500 && i < 1504)) $display("  i=%0d m_st=%0d rmem0=%016h acc0=%016h", i, u_mont.state_q, u_mont.rmem[0], dut.acc[0]);
+      
+      
+      if (i == 15) $display("  n0inv_q=%016h amem0=%016h", dut.n0inv_q, u_mont.amem[0]);
       if (done) i=9999;
     end
     $display("  fin: done=%b op=%0d acc0=%016h rmem0=%016h rst=%b m_st=%0d",

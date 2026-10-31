@@ -42,17 +42,32 @@ module rv64_modexp #(parameter int WORDS = 64) (
   assign probe_op_valid = (st_q == RUN);
   logic expbit;
   always_comb expbit = emem[int'(bit_q) / 64][bit_q[5:0]];
+  logic [63:0] b_word;
+  always_comb begin
+    unique case (ph_q)
+      PH_CONV: b_word = r2m[w_q];
+      PH_SQ:   b_word = acc[w_q];
+      PH_MUL:  b_word = basem[w_q];
+      default: b_word = (w_q == '0) ? 64'd1 : 64'd0;
+    endcase
+  end
+
+  // ALL multiplier controls are combinational, from the state. Assigning any of them
+  // in the FSM body as well gave two drivers and the write never happened.
   always_comb begin
     m_start   = (st_q == RUN);
-    m_a_we    = 1'b0; m_b_we = 1'b0; m_n_we = 1'b0;
+    m_a_we    = (st_q == LA);
+    m_b_we    = (st_q == LB);
+    m_n_we    = (st_q == LN);
     m_a_addr  = {{(8-AW){1'b0}}, w_q};
     m_b_addr  = {{(8-AW){1'b0}}, w_q};
     m_n_addr  = {{(8-AW){1'b0}}, w_q};
     m_r_addr  = {{(8-AW){1'b0}}, w_q};
-    m_a_wdata = 64'd0; m_b_wdata = 64'd0; m_n_wdata = 64'd0;
+    m_a_wdata = (ph_q == PH_CONV) ? basem[w_q] : acc[w_q];
+    m_b_wdata = b_word;
+    m_n_wdata = nmem[w_q];
     m_n0inv   = n0inv_q;
   end
-  logic [63:0] b_word;
   always_comb begin
     unique case (ph_q)
       PH_CONV: b_word = r2m[w_q];
@@ -72,18 +87,14 @@ module rv64_modexp #(parameter int WORDS = 64) (
           st_q <= LA;
         end
         LA: begin
-          m_a_we = 1'b1;
-          m_a_wdata = (ph_q == PH_CONV) ? basem[w_q] : acc[w_q];
           if (w_q == AW'(WORDS-1)) begin w_q <= '0; st_q <= LB; end
           else w_q <= w_q + 1'b1;
         end
         LB: begin
-          m_b_we = 1'b1; m_b_wdata = b_word;
           if (w_q == AW'(WORDS-1)) begin w_q <= '0; st_q <= LN; end
           else w_q <= w_q + 1'b1;
         end
         LN: begin
-          m_n_we = 1'b1; m_n_wdata = nmem[w_q];
           if (w_q == AW'(WORDS-1)) begin w_q <= '0; st_q <= RUN; end
           else w_q <= w_q + 1'b1;
         end
