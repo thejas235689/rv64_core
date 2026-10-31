@@ -108,6 +108,9 @@ module riscv_core_top #(
   input  logic [63:0]   mont_n_wdata,
   output logic [63:0]   mont_r_rdata,
   input  logic [7:0]    mont_r_addr,
+  // ---- CLINT and UART, reached through CSR windows (no peripheral bus) --------
+  output logic        uart_tx,
+  input  logic        uart_rx,
   input  logic [3:0]  plic_src,
   input  logic        plic_cfg_we,
   input  logic [4:0]  plic_cfg_addr,
@@ -158,6 +161,13 @@ module riscv_core_top #(
   input  logic [63:0] task_done_result,
   output logic        task_irq_o
 );
+
+  // ---- CLINT / UART declarations (must precede the instances) ----
+  localparam logic [11:0] CSR_CLINT_BASE = 12'h7D0;
+  localparam logic [11:0] CSR_UART_BASE  = 12'h7D8;
+  logic        clint_csr_sel, uart_csr_sel;
+  logic [63:0] clint_csr_rdata, uart_csr_rdata;
+  logic        clint_timer_irq, clint_soft_irq;
   import rv64_pkg::*;
   import rv64_num_pkg::*;
 
@@ -698,8 +708,17 @@ module riscv_core_top #(
   // illegal. Without this every access traps before reaching the accelerator.
   logic        accel_csr_sel;
   logic [63:0] accel_csr_rdata;
+  // CLINT at 0x7D0..0x7D3, UART at 0x7D8..0x7DB. Both blocks expose a 4-bit
+  // CSR-style interface, so they attach to CSR space directly -- the same approach
+  // the accelerator windows use, and no peripheral bus required.
+  assign clint_csr_sel = (id_ex_ctrl.csr_addr >= CSR_CLINT_BASE) &&
+                         (id_ex_ctrl.csr_addr <= (CSR_CLINT_BASE + 12'd3));
+  assign uart_csr_sel  = (id_ex_ctrl.csr_addr >= CSR_UART_BASE) &&
+                         (id_ex_ctrl.csr_addr <= (CSR_UART_BASE + 12'd3));
+
   assign accel_csr_sel = qisa_csr_sel || aiacc_csr_sel || xrv512_csr_sel ||
-                         rvv_csr_sel || task_csr_sel || num_csr_sel;
+                         rvv_csr_sel || task_csr_sel || num_csr_sel ||
+                         clint_csr_sel || uart_csr_sel;
   always_comb begin
     accel_csr_rdata = 64'd0;
     if (qisa_csr_sel)        accel_csr_rdata = qisa_csr_rdata;
@@ -708,6 +727,8 @@ module riscv_core_top #(
     else if (rvv_csr_sel)    accel_csr_rdata = rvv_csr_rdata;
     else if (task_csr_sel) accel_csr_rdata = task_csr_rdata;
     else if (num_csr_sel)    accel_csr_rdata = num_csr_rdata;
+    else if (clint_csr_sel)  accel_csr_rdata = clint_csr_rdata;
+    else if (uart_csr_sel)   accel_csr_rdata = uart_csr_rdata;
   end
 
   assign qisa_csr_sel  = (id_ex_ctrl.csr_addr >= CSR_QISA_BASE) &&
@@ -1574,6 +1595,28 @@ module riscv_core_top #(
   assign l2_bus_rsp_rdata = d_rsp_rdata;
   assign l2_bus_rsp_error = d_rsp_error;
 
+
+  rv64_clint u_clint (
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .csr_we    (id_ex_ctrl.is_csr && clint_csr_sel && id_ex_v),
+    .csr_addr  (id_ex_ctrl.csr_addr[3:0] - CSR_CLINT_BASE[3:0]),
+    .csr_wdata (id_ex_rs1_data),
+    .csr_rdata (clint_csr_rdata),
+    .timer_irq (clint_timer_irq),
+    .soft_irq  (clint_soft_irq)
+  );
+
+  rv64_uart u_uart (
+    .clk       (clk),
+    .rst_n     (rst_n),
+    .csr_we    (id_ex_ctrl.is_csr && uart_csr_sel && id_ex_v),
+    .csr_addr  (id_ex_ctrl.csr_addr[3:0] - CSR_UART_BASE[3:0]),
+    .csr_wdata (id_ex_rs1_data),
+    .csr_rdata (uart_csr_rdata),
+    .tx        (uart_tx),
+    .rx        (uart_rx)
+  );
 
 endmodule
 `default_nettype wire

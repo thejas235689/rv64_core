@@ -39,6 +39,7 @@ module tb_core_top #(
   logic [63:0] mont_n0inv, mont_a_wdata, mont_b_wdata, mont_n_wdata, mont_r_rdata;
   logic        mont_a_we, mont_b_we, mont_n_we;
   logic [7:0]  mont_a_addr, mont_b_addr, mont_n_addr, mont_r_addr;
+  logic uart_tx, uart_rx;
   logic [3:0]  plic_src;
   logic        plic_cfg_we;
   logic [4:0]  plic_cfg_addr;
@@ -49,6 +50,7 @@ module tb_core_top #(
     plic_src = 4'd0; plic_cfg_we = 1'b0; plic_cfg_addr = 5'd0;
     plic_cfg_wdata = 32'd0; plic_claim = 1'b0; plic_complete = 1'b0;
     plic_complete_id = 4'd0;
+    uart_rx = 1'b1;
     mont_start = 1'b0; mont_n0inv = 64'd0;
     mont_a_we = 1'b0; mont_b_we = 1'b0; mont_n_we = 1'b0;
     mont_a_addr = 8'd0; mont_b_addr = 8'd0; mont_n_addr = 8'd0; mont_r_addr = 8'd0;
@@ -244,6 +246,8 @@ module tb_core_top #(
     .mont_n_wdata    (mont_n_wdata),
     .mont_r_rdata    (mont_r_rdata),
     .mont_r_addr     (mont_r_addr),
+    .uart_tx         (uart_tx),
+    .uart_rx         (uart_rx),
     .plic_src        (plic_src),
     .plic_cfg_we     (plic_cfg_we),
     .plic_cfg_addr   (plic_cfg_addr),

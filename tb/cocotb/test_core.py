@@ -2481,3 +2481,33 @@ async def test_h_instructions(dut):
     assert 2 not in causes, f"H instruction trapped as illegal: {causes[:4]}"
     vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
     assert vals.get(7) == 0x2A, f"hlvd read {vals.get(7, -1):#x}, expected 0x2A"
+
+@cocotb.test()
+async def test_clint_uart(dut):
+    """CLINT and UART reachable through CSR windows at 0x7D0 and 0x7D8.
+
+    Both blocks were verified standalone but instantiated nowhere because the core
+    has no peripheral bus. Each exposes a 4-bit CSR-style interface, so they attach
+    to CSR space the way the accelerator windows do.
+    """
+    from rv64_asm import assemble
+    words, _ = assemble("""
+        addi x5, x0, 42
+        csrrw x0, 0x7d2, x5
+        csrrs x6, 0x7d2, x0
+        addi x7, x0, 85
+        csrrw x0, 0x7d8, x7
+        csrrs x8, 0x7d0, x0
+        ecall
+    """)
+    h = Harness(dut)
+    await h.startup(); h.clear(); await h.load(words); await h.reset()
+    await h.run(max_cycles=400, stop_on_ecall=True)
+
+    causes = [c for (_, c) in h.traps]
+    if 2 in causes:
+        pcs = [pc for (pc, c) in h.traps if c == 2]
+        dut._log.warning(f"illegal trap pcs: {[hex(p) for p in pcs[:6]]}")
+    assert 2 not in causes, f"CLINT/UART CSR access trapped: {causes[:4]}"
+    vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
+    assert vals.get(6) == 0x2A, f"mtimecmp read back {vals.get(6, -1):#x}, expected 0x2A"
