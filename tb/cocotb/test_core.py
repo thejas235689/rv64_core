@@ -2018,16 +2018,6 @@ async def test_rvc_in_core(dut):
     iss = ISS()
     iss.load_words(0, words)
 
-    seen = []
-    async def watch():
-        while True:
-            await RisingEdge(dut.clk)
-            if int(dut.u_core.f_insn_valid.value) == 1:
-                seen.append((int(dut.u_core.f_insn_pc.value),
-                             int(dut.u_core.f_insn.value),
-                             int(dut.u_core.f_insn_len.value)))
-
-    cocotb.start_soon(watch())
     await h.reset()
     await h.run(max_cycles=20000, stop_on_ecall=True)
     dut._log.info(f"fetch presented: {[(hex(p), hex(i), l) for p, i, l in seen]}")
@@ -2477,7 +2467,7 @@ async def test_h_instructions(dut):
     HFVV = 0x22000073
     HFGV = 0x62000073
 
-    words = [lui(10, 0x100), addi(6, 0, 0x2A), HSVD, HLVD, HFVV, HFGV, 0x00000073]
+    words = [addi(10, 0, 0x100), addi(6, 0, 0x2A), HSVD, HLVD, HFVV, HFGV, 0x00000073]
     h = Harness(dut)
     await h.startup(); h.clear(); await h.load(words); await h.reset()
     await h.run(max_cycles=500, stop_on_ecall=True)

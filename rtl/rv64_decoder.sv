@@ -485,7 +485,9 @@ module rv64_decoder (
           // perturbed the address path.
           if (funct7[6]) begin
             ctrl.is_store = 1'b1;
-            ctrl.imm_sel  = IMM_S;
+            // HLV/HSV have NO immediate: the address is rs1 alone.
+            ctrl.imm_sel  = IMM_NONE;
+            ctrl.b_sel    = B_IMM;   // address = rs1 + 0, not rs1 + rs2
           end else begin
             ctrl.is_load  = 1'b1;
             ctrl.reg_we   = 1'b1;
