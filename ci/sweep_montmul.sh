@@ -28,6 +28,11 @@ for i in range(W):
     for j in range(W): t[j]=t[j+1]
     t[W]=0
 raw=sum(t[k]<<(64*k) for k in range(W))
+# The RTL deliberately returns the UNREDUCED CIOS value (< 2N); software does the
+# one conditional subtract. Expecting the reduced value was my test's error.
+ref = (a*b*pow(1 << (64*W), -1, N)) % N
+assert raw % N == ref, f"model wrong: {raw % N:x} != {ref:x}"
+assert raw < 2*N, "CIOS result must be < 2N"
 with open('vectors.hex','w') as f:
     for v in aw+bw+nw+[n0inv]: f.write(f"{v:016x}\n")
     for v in t: f.write(f"{v:016x}\n")

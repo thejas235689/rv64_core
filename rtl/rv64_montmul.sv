@@ -56,7 +56,7 @@ module rv64_montmul #(
   logic [63:0] bmem [0:WORDS-1];
   logic [63:0] nmem [0:WORDS-1];
   logic [63:0] rmem [0:WORDS-1];
-  logic [63:0] t    [0:WORDS];
+  logic [64:0] t    [0:WORDS];   // 65 bits: t[W]+c must not wrap
 
   always_ff @(posedge clk) begin
     if (a_we) amem[a_addr[AW-1:0]] <= a_wdata;
@@ -101,7 +101,7 @@ module rv64_montmul #(
           t[j_q]  <= acc[63:0];
           carry_q <= acc[127:64];
           if (j_q == AW'(WORDS-1)) begin
-            t[WORDS] <= acc[127:64];
+            t[WORDS] <= {1'b0, acc[127:64]};
             j_q      <= '0;
             carry_q  <= 64'd0;
             state_q  <= GET_M;
@@ -120,7 +120,7 @@ module rv64_montmul #(
           t[j_q]  <= acc[63:0];
           carry_q <= acc[127:64];
           if (j_q == AW'(WORDS-1)) begin
-            t[WORDS] <= t[WORDS] + acc[127:64];
+            t[WORDS] <= {1'b0, t[WORDS][63:0]} + {1'b0, acc[127:64]};
             j_q      <= '0;
             carry_q  <= 64'd0;
             state_q  <= SHIFT;
