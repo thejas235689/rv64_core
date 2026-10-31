@@ -35,10 +35,11 @@ module tb_core_top #(
   logic        hmac_start, hmac_busy, hmac_done;
   logic [255:0] hmac_key, hmac_mac;
   logic [511:0] hmac_msg;
-  logic        mont_start, mont_busy, mont_done;
-  logic [63:0] mont_n0inv, mont_a_wdata, mont_b_wdata, mont_n_wdata, mont_r_rdata;
-  logic        mont_a_we, mont_b_we, mont_n_we;
-  logic [7:0]  mont_a_addr, mont_b_addr, mont_n_addr, mont_r_addr;
+  logic        modexp_start, modexp_busy, modexp_done, modexp_n0inv_we, modexp_ld_we;
+  logic [63:0] modexp_n0inv, modexp_ld_wdata, modexp_rdata;
+  logic [15:0] modexp_e_bits;
+  logic [2:0]  modexp_ld_sel;
+  logic [7:0]  modexp_ld_addr, modexp_r_addr;
   logic uart_tx, uart_rx;
   logic [3:0]  plic_src;
   logic        plic_cfg_we;
@@ -51,10 +52,9 @@ module tb_core_top #(
     plic_cfg_wdata = 32'd0; plic_claim = 1'b0; plic_complete = 1'b0;
     plic_complete_id = 4'd0;
     uart_rx = 1'b1;
-    mont_start = 1'b0; mont_n0inv = 64'd0;
-    mont_a_we = 1'b0; mont_b_we = 1'b0; mont_n_we = 1'b0;
-    mont_a_addr = 8'd0; mont_b_addr = 8'd0; mont_n_addr = 8'd0; mont_r_addr = 8'd0;
-    mont_a_wdata = 64'd0; mont_b_wdata = 64'd0; mont_n_wdata = 64'd0;
+    modexp_start = 1'b0; modexp_n0inv_we = 1'b0; modexp_n0inv = 64'd0;
+    modexp_e_bits = 16'd0; modexp_ld_we = 1'b0; modexp_ld_sel = 3'd0;
+    modexp_ld_addr = 8'd0; modexp_ld_wdata = 64'd0; modexp_r_addr = 8'd0;
     sha_start = 1'b0; sha_init = 1'b0; sha_block = 512'd0;
     hmac_start = 1'b0; hmac_key = 256'd0; hmac_msg = 512'd0;
   end
@@ -231,21 +231,18 @@ module tb_core_top #(
     .hmac_busy       (hmac_busy),
     .hmac_done       (hmac_done),
     .hmac_mac        (hmac_mac),
-    .mont_start      (mont_start),
-    .mont_n0inv      (mont_n0inv),
-    .mont_busy       (mont_busy),
-    .mont_done       (mont_done),
-    .mont_a_we       (mont_a_we),
-    .mont_a_addr     (mont_a_addr),
-    .mont_a_wdata    (mont_a_wdata),
-    .mont_b_we       (mont_b_we),
-    .mont_b_addr     (mont_b_addr),
-    .mont_b_wdata    (mont_b_wdata),
-    .mont_n_we       (mont_n_we),
-    .mont_n_addr     (mont_n_addr),
-    .mont_n_wdata    (mont_n_wdata),
-    .mont_r_rdata    (mont_r_rdata),
-    .mont_r_addr     (mont_r_addr),
+    .modexp_start     (modexp_start),
+    .modexp_busy      (modexp_busy),
+    .modexp_done      (modexp_done),
+    .modexp_n0inv_we  (modexp_n0inv_we),
+    .modexp_n0inv     (modexp_n0inv),
+    .modexp_e_bits    (modexp_e_bits),
+    .modexp_ld_we     (modexp_ld_we),
+    .modexp_ld_sel    (modexp_ld_sel),
+    .modexp_ld_addr   (modexp_ld_addr),
+    .modexp_ld_wdata  (modexp_ld_wdata),
+    .modexp_rdata     (modexp_rdata),
+    .modexp_r_addr    (modexp_r_addr),
     .uart_tx         (uart_tx),
     .uart_rx         (uart_rx),
     .plic_src        (plic_src),

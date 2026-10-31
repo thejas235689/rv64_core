@@ -19,18 +19,6 @@ module rv64_modexp #(parameter int WORDS = 64) (
   logic [63:0] basem [0:WORDS-1], r2m [0:WORDS-1], nmem [0:WORDS-1];
   logic [63:0] acc [0:WORDS-1], emem [0:WORDS-1], seedm [0:WORDS-1];
   logic [63:0] n0inv_q;
-  always_ff @(posedge clk) begin
-    if (ld_we) case (ld_sel)
-      3'd0: basem[ld_addr[AW-1:0]] <= ld_wdata;
-      3'd1: r2m  [ld_addr[AW-1:0]] <= ld_wdata;
-      3'd2: nmem [ld_addr[AW-1:0]] <= ld_wdata;
-      3'd3: acc  [ld_addr[AW-1:0]] <= ld_wdata;
-      3'd4: emem [ld_addr[AW-1:0]] <= ld_wdata;
-      3'd5: seedm[ld_addr[AW-1:0]] <= ld_wdata;
-      default: ;
-    endcase
-    if (n0inv_we) n0inv_q <= n0inv_wdata;
-  end
   assign r_rdata = acc[r_addr[AW-1:0]];
   typedef enum logic [3:0] {IDLE, LA, LB, LN, RUN, WAIT, RD, NEXT, FIN} st_e;
   typedef enum logic [1:0] {PH_CONV, PH_SQ, PH_MUL, PH_OUT} ph_e;
@@ -69,18 +57,22 @@ module rv64_modexp #(parameter int WORDS = 64) (
     m_n_wdata = nmem[w_q];
     m_n0inv   = n0inv_q;
   end
-  always_comb begin
-    unique case (ph_q)
-      PH_CONV: b_word = r2m[w_q];
-      PH_SQ:   b_word = acc[w_q];
-      PH_MUL:  b_word = basem[w_q];
-      default: b_word = (w_q == '0) ? 64'd1 : 64'd0;
-    endcase
-  end
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       st_q <= IDLE; w_q <= '0; bit_q <= '0; op_q <= '0; ph_q <= PH_CONV;
     end else begin
+      // operand loads share this process: two always_ff writing the same arrays
+      // would let a software load corrupt an in-flight exponentiation
+      if (ld_we) case (ld_sel)
+        3'd0: basem[ld_addr[AW-1:0]] <= ld_wdata;
+        3'd1: r2m  [ld_addr[AW-1:0]] <= ld_wdata;
+        3'd2: nmem [ld_addr[AW-1:0]] <= ld_wdata;
+        3'd3: acc  [ld_addr[AW-1:0]] <= ld_wdata;
+        3'd4: emem [ld_addr[AW-1:0]] <= ld_wdata;
+        3'd5: seedm[ld_addr[AW-1:0]] <= ld_wdata;
+        default: ;
+      endcase
+      if (n0inv_we) n0inv_q <= n0inv_wdata;
       case (st_q)
         IDLE: if (start) begin
           w_q <= '0; op_q <= '0; ph_q <= PH_CONV;

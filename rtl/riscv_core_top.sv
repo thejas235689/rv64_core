@@ -93,21 +93,18 @@ module riscv_core_top #(
   // Exposed at the top like the PLIC and crypto blocks: there is no peripheral bus.
   // This is the first of three blocks RSA-4096 needs; modexp and key handling are
   // not implemented, so this is a primitive, not a usable RSA engine.
-  input  logic          mont_start,
-  input  logic [63:0]   mont_n0inv,
-  output logic          mont_busy,
-  output logic          mont_done,
-  input  logic          mont_a_we,
-  input  logic [7:0]    mont_a_addr,
-  input  logic [63:0]   mont_a_wdata,
-  input  logic          mont_b_we,
-  input  logic [7:0]    mont_b_addr,
-  input  logic [63:0]   mont_b_wdata,
-  input  logic          mont_n_we,
-  input  logic [7:0]    mont_n_addr,
-  input  logic [63:0]   mont_n_wdata,
-  output logic [63:0]   mont_r_rdata,
-  input  logic [7:0]    mont_r_addr,
+  input  logic          modexp_start,
+  output logic          modexp_busy,
+  output logic          modexp_done,
+  input  logic          modexp_n0inv_we,
+  input  logic [63:0]   modexp_n0inv,
+  input  logic [15:0]   modexp_e_bits,
+  input  logic          modexp_ld_we,
+  input  logic [2:0]    modexp_ld_sel,
+  input  logic [7:0]    modexp_ld_addr,
+  input  logic [63:0]   modexp_ld_wdata,
+  output logic [63:0]   modexp_rdata,
+  input  logic [7:0]    modexp_r_addr,
   // ---- CLINT and UART, reached through CSR windows (no peripheral bus) --------
   output logic        uart_tx,
   input  logic        uart_rx,
@@ -541,13 +538,34 @@ module riscv_core_top #(
     .mac   (hmac_mac)
   );
 
+  logic m_start, m_done;
+  logic [63:0] m_n0inv;
+  logic m_a_we, m_b_we, m_n_we;
+  logic [7:0] m_a_addr, m_b_addr, m_n_addr, m_r_addr;
+  logic [63:0] m_a_wdata, m_b_wdata, m_n_wdata, m_r_rdata;
+
+  rv64_modexp #(.WORDS(64)) u_modexp (
+    .clk(clk), .rst_n(rst_n), .start(modexp_start),
+    .busy(modexp_busy), .done(modexp_done),
+    .n0inv_we(modexp_n0inv_we), .n0inv_wdata(modexp_n0inv), .e_bits(modexp_e_bits),
+    .ld_we(modexp_ld_we), .ld_sel(modexp_ld_sel),
+    .ld_addr(modexp_ld_addr), .ld_wdata(modexp_ld_wdata),
+    .r_rdata(modexp_rdata), .r_addr(modexp_r_addr),
+    .probe_op(), .probe_op_valid(),
+    .m_start(m_start), .m_n0inv(m_n0inv), .m_done(m_done),
+    .m_a_we(m_a_we), .m_a_addr(m_a_addr), .m_a_wdata(m_a_wdata),
+    .m_b_we(m_b_we), .m_b_addr(m_b_addr), .m_b_wdata(m_b_wdata),
+    .m_n_we(m_n_we), .m_n_addr(m_n_addr), .m_n_wdata(m_n_wdata),
+    .m_r_rdata(m_r_rdata), .m_r_addr(m_r_addr)
+  );
+
   rv64_montmul #(.WORDS(64)) u_montmul (
-    .clk(clk), .rst_n(rst_n), .start(mont_start), .n0inv(mont_n0inv),
-    .busy(mont_busy), .done(mont_done),
-    .a_we(mont_a_we), .a_addr(mont_a_addr), .a_wdata(mont_a_wdata),
-    .b_we(mont_b_we), .b_addr(mont_b_addr), .b_wdata(mont_b_wdata),
-    .n_we(mont_n_we), .n_addr(mont_n_addr), .n_wdata(mont_n_wdata),
-    .r_rdata(mont_r_rdata), .r_addr(mont_r_addr),
+    .clk(clk), .rst_n(rst_n), .start(m_start), .n0inv(m_n0inv),
+    .busy(), .done(m_done),
+    .a_we(m_a_we), .a_addr(m_a_addr), .a_wdata(m_a_wdata),
+    .b_we(m_b_we), .b_addr(m_b_addr), .b_wdata(m_b_wdata),
+    .n_we(m_n_we), .n_addr(m_n_addr), .n_wdata(m_n_wdata),
+    .r_rdata(m_r_rdata), .r_addr(m_r_addr),
     .probe_i(), .probe_t0(), .probe_t1(), .probe_t2(), .probe_t3(),
     .probe_state(), .probe_valid()
   );
