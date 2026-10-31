@@ -40,16 +40,19 @@ module tb_montmul;
   initial begin
     fd = $fopen("vectors.hex", "r");
     if (fd == 0) begin $display("MONT: no vectors.hex"); $finish; end
-    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h\n",w); ld(0,i,w); end
-    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h\n",w); ld(1,i,w); end
-    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h\n",w); ld(2,i,w); end
-    code = $fscanf(fd,"%h\n",w); n0inv = w;
-    // per-iteration intermediates: W rows of W+1 words
-    for (i=0;i<W;i++) for (j=0;j<=W;j++) begin
-      code = $fscanf(fd,"%h\n",w); exp_t[i][j] = w;
+    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); ld(0,i,w); end
+    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); ld(1,i,w); end
+    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); ld(2,i,w); end
+    code = $fscanf(fd,"%h",w); n0inv = w;
+    // the probe fires once, at FIN: one row of W+1 words
+    for (j=0;j<=W;j++) begin
+      code = $fscanf(fd,"%h",w); exp_t[0][j] = w;
     end
-    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h\n",w); exp_r[i]=w; end
+    for (i=0;i<W;i++) begin code=$fscanf(fd,"%h",w); exp_r[i]=w; end
     $fclose(fd);
+    $display("  READ exp_t[0]=%016h %016h %016h %016h %016h",
+             exp_t[0][0], exp_t[0][1], exp_t[0][2], exp_t[0][3], exp_t[0][4]);
+    $display("  READ exp_r=%016h %016h %016h %016h", exp_r[0], exp_r[1], exp_r[2], exp_r[3]);
 
     repeat (4) @(posedge clk); rst_n = 1; @(posedge clk);
     $display("  LOADED a=%016h %016h %016h %016h", dut.amem[0], dut.amem[1], dut.amem[2], dut.amem[3]);
@@ -68,12 +71,12 @@ module tb_montmul;
       end
       if (probe_valid && probe_i < W) begin
         checks = checks + 1;
-        if (probe_t0 !== exp_t[probe_i][0] || probe_t1 !== exp_t[probe_i][1] ||
-            probe_t2 !== exp_t[probe_i][2] || probe_t3 !== exp_t[probe_i][W]) begin
+        if (probe_t0 !== exp_t[0][0] || probe_t1 !== exp_t[0][1] ||
+            probe_t2 !== exp_t[0][2] || probe_t3 !== exp_t[0][3]) begin
           errors = errors + 1;
-          $display("MONT_ITER i=%0d got %016h", probe_i, probe_t0);
+          $display("MONT_ITER got %016h %016h %016h %016h", probe_t0, probe_t1, probe_t2, probe_t3);
           $display("           exp %016h %016h %016h %016h",
-                   exp_t[probe_i][0], exp_t[probe_i][1], exp_t[probe_i][2], exp_t[probe_i][W]);
+                   exp_t[0][0], exp_t[0][1], exp_t[0][2], exp_t[0][3]);
         end
       end
       if (done) break;

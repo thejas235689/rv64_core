@@ -89,6 +89,25 @@ module riscv_core_top #(
   output logic         hmac_busy,
   output logic         hmac_done,
   output logic [255:0] hmac_mac,
+  // ---- RSA / Montgomery multiplier ----------------------------------------
+  // Exposed at the top like the PLIC and crypto blocks: there is no peripheral bus.
+  // This is the first of three blocks RSA-4096 needs; modexp and key handling are
+  // not implemented, so this is a primitive, not a usable RSA engine.
+  input  logic          mont_start,
+  input  logic [63:0]   mont_n0inv,
+  output logic          mont_busy,
+  output logic          mont_done,
+  input  logic          mont_a_we,
+  input  logic [7:0]    mont_a_addr,
+  input  logic [63:0]   mont_a_wdata,
+  input  logic          mont_b_we,
+  input  logic [7:0]    mont_b_addr,
+  input  logic [63:0]   mont_b_wdata,
+  input  logic          mont_n_we,
+  input  logic [7:0]    mont_n_addr,
+  input  logic [63:0]   mont_n_wdata,
+  output logic [63:0]   mont_r_rdata,
+  input  logic [7:0]    mont_r_addr,
   input  logic [3:0]  plic_src,
   input  logic        plic_cfg_we,
   input  logic [4:0]  plic_cfg_addr,
@@ -510,6 +529,17 @@ module riscv_core_top #(
     .busy  (hmac_busy),
     .done  (hmac_done),
     .mac   (hmac_mac)
+  );
+
+  rv64_montmul #(.WORDS(64)) u_montmul (
+    .clk(clk), .rst_n(rst_n), .start(mont_start), .n0inv(mont_n0inv),
+    .busy(mont_busy), .done(mont_done),
+    .a_we(mont_a_we), .a_addr(mont_a_addr), .a_wdata(mont_a_wdata),
+    .b_we(mont_b_we), .b_addr(mont_b_addr), .b_wdata(mont_b_wdata),
+    .n_we(mont_n_we), .n_addr(mont_n_addr), .n_wdata(mont_n_wdata),
+    .r_rdata(mont_r_rdata), .r_addr(mont_r_addr),
+    .probe_i(), .probe_t0(), .probe_t1(), .probe_t2(), .probe_t3(),
+    .probe_state(), .probe_valid()
   );
 
   logic plic_irq;
