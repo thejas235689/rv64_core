@@ -160,8 +160,8 @@ module riscv_core_top #(
 );
 
   // ---- CLINT / UART declarations (must precede the instances) ----
-  localparam logic [11:0] CSR_CLINT_BASE = 12'h7F0;
-  localparam logic [11:0] CSR_UART_BASE  = 12'h7F8;
+  localparam logic [11:0] CSR_CLINT_BASE = 12'h7D9;
+  localparam logic [11:0] CSR_UART_BASE  = 12'h7FC;
   logic        clint_csr_sel, uart_csr_sel;
   logic [63:0] clint_csr_rdata, uart_csr_rdata;
   logic        clint_timer_irq, clint_soft_irq;
@@ -731,12 +731,15 @@ module riscv_core_top #(
   // illegal. Without this every access traps before reaching the accelerator.
   logic        accel_csr_sel;
   logic [63:0] accel_csr_rdata;
-  // CLINT at 0x7F0..0x7F7 (7 registers), UART at 0x7F8..0x7FB.
-  // NOTE: 0x7D0..0x7D8 is Xcetask's window (CSR_TASK_BASE) -- do not reuse it. Both blocks expose a 4-bit
+  // CSR map (0x7C0..0x7FF). Occupied elsewhere -- do not reuse:
+  //   0x780-0x78F RVV   0x7C0-0x7C2 numeric   0x7D0-0x7D8 Xcetask
+  //   0x7E0-0x7E6 QISA  0x7E8-0x7EF AIACC     0x7F0-0x7F7 XRV512
+  // CLINT occupies 0x7D9..0x7DF (7 registers: mtime lo/hi, mtimecmp lo/hi,
+  // msip, status, timer_en). UART occupies 0x7FC..0x7FF (4 registers). Both blocks expose a 4-bit
   // CSR-style interface, so they attach to CSR space directly -- the same approach
   // the accelerator windows use, and no peripheral bus required.
   assign clint_csr_sel = (id_ex_ctrl.csr_addr >= CSR_CLINT_BASE) &&
-                         (id_ex_ctrl.csr_addr <= (CSR_CLINT_BASE + 12'd7));
+                         (id_ex_ctrl.csr_addr <= (CSR_CLINT_BASE + 12'd6));
   assign uart_csr_sel  = (id_ex_ctrl.csr_addr >= CSR_UART_BASE) &&
                          (id_ex_ctrl.csr_addr <= (CSR_UART_BASE + 12'd3));
 
