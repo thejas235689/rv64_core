@@ -721,14 +721,16 @@ module riscv_core_top #(
                          clint_csr_sel || uart_csr_sel;
   always_comb begin
     accel_csr_rdata = 64'd0;
-    if (qisa_csr_sel)        accel_csr_rdata = qisa_csr_rdata;
+    // CLINT/UART first: their address ranges are new and must not be shadowed by
+    // an earlier select whose window happens to overlap.
+    if (clint_csr_sel)       accel_csr_rdata = clint_csr_rdata;
+    else if (uart_csr_sel)   accel_csr_rdata = uart_csr_rdata;
+    else if (qisa_csr_sel)   accel_csr_rdata = qisa_csr_rdata;
     else if (aiacc_csr_sel)  accel_csr_rdata = aiacc_csr_rdata;
     else if (xrv512_csr_sel) accel_csr_rdata = xrv512_csr_rdata;
     else if (rvv_csr_sel)    accel_csr_rdata = rvv_csr_rdata;
     else if (task_csr_sel) accel_csr_rdata = task_csr_rdata;
     else if (num_csr_sel)    accel_csr_rdata = num_csr_rdata;
-    else if (clint_csr_sel)  accel_csr_rdata = clint_csr_rdata;
-    else if (uart_csr_sel)   accel_csr_rdata = uart_csr_rdata;
   end
 
   assign qisa_csr_sel  = (id_ex_ctrl.csr_addr >= CSR_QISA_BASE) &&
@@ -1599,9 +1601,9 @@ module riscv_core_top #(
   rv64_clint u_clint (
     .clk       (clk),
     .rst_n     (rst_n),
-    .csr_we    (id_ex_ctrl.is_csr && clint_csr_sel && id_ex_v),
+    .csr_we    (csr_we && clint_csr_sel),
     .csr_addr  (id_ex_ctrl.csr_addr[3:0] - CSR_CLINT_BASE[3:0]),
-    .csr_wdata (id_ex_rs1_data),
+    .csr_wdata (csr_wdata),
     .csr_rdata (clint_csr_rdata),
     .timer_irq (clint_timer_irq),
     .soft_irq  (clint_soft_irq)
@@ -1610,9 +1612,9 @@ module riscv_core_top #(
   rv64_uart u_uart (
     .clk       (clk),
     .rst_n     (rst_n),
-    .csr_we    (id_ex_ctrl.is_csr && uart_csr_sel && id_ex_v),
+    .csr_we    (csr_we && uart_csr_sel),
     .csr_addr  (id_ex_ctrl.csr_addr[3:0] - CSR_UART_BASE[3:0]),
-    .csr_wdata (id_ex_rs1_data),
+    .csr_wdata (csr_wdata),
     .csr_rdata (uart_csr_rdata),
     .tx        (uart_tx),
     .rx        (uart_rx)

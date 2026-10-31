@@ -2129,8 +2129,10 @@ async def test_fp_arith_in_core(dut):
             try:
                 insn = int(dut.u_core.dec_insn.value)
                 if (insn & 0x7F) == 0x53:
-                    seen.append((insn,
-                                 int(dut.u_core.dec_ctrl.value.is_fp) if hasattr(dut.u_core.dec_ctrl.value, 'is_fp') else -1))
+                    seen.append((int(dut.u_core.clint_csr_sel.value),
+                             int(dut.u_core.accel_csr_sel.value),
+                             int(dut.u_core.clint_csr_rdata.value),
+                             int(dut.u_core.accel_csr_rdata.value)))
             except Exception:
                 pass
     cocotb.start_soon(dec_watch())
@@ -2484,13 +2486,9 @@ async def test_h_instructions(dut):
 
 @cocotb.test()
 async def test_clint_uart(dut):
-    """CLINT and UART reachable through CSR windows at 0x7D0 and 0x7D8.
-
-    Both blocks were verified standalone but instantiated nowhere because the core
-    has no peripheral bus. Each exposes a 4-bit CSR-style interface, so they attach
-    to CSR space the way the accelerator windows do.
-    """
+    """CLINT and UART reachable through CSR windows at 0x7D0 and 0x7D8."""
     from rv64_asm import assemble
+    from cocotb.triggers import RisingEdge, Timer
     words, _ = assemble("""
         addi x5, x0, 42
         csrrw x0, 0x7d2, x5
@@ -2502,12 +2500,21 @@ async def test_clint_uart(dut):
     """)
     h = Harness(dut)
     await h.startup(); h.clear(); await h.load(words); await h.reset()
+
+    seen = []
+    async def watch():
+        while True:
+            await RisingEdge(dut.clk); await Timer(1, "ns")
+            seen.append((int(dut.u_core.clint_csr_sel.value),
+                         int(dut.u_core.accel_csr_sel.value),
+                         int(dut.u_core.main_csr_rdata.value),
+                         int(dut.u_core.accel_csr_rdata.value)))
+    cocotb.start_soon(watch())
     await h.run(max_cycles=400, stop_on_ecall=True)
+    hits = [e for e in seen if e[0] == 1]
+    dut._log.warning(f"  sel/accel_sel/csr_rdata/accel_rdata: {hits[:4]}")
 
     causes = [c for (_, c) in h.traps]
-    if 2 in causes:
-        pcs = [pc for (pc, c) in h.traps if c == 2]
-        dut._log.warning(f"illegal trap pcs: {[hex(p) for p in pcs[:6]]}")
     assert 2 not in causes, f"CLINT/UART CSR access trapped: {causes[:4]}"
     vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
     assert vals.get(6) == 0x2A, f"mtimecmp read back {vals.get(6, -1):#x}, expected 0x2A"
