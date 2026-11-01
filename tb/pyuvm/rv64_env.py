@@ -16,11 +16,13 @@ from pyuvm import (uvm_component, uvm_driver, uvm_sequencer, uvm_sequence_item,
 class Rv64Item(uvm_sequence_item):
     """One program to run: assembly source plus expectations."""
 
-    def __init__(self, name="item", src="", checks=None, max_cycles=20000):
+    def __init__(self, name="item", src="", checks=None, max_cycles=20000,
+                 expect_trap=False):
         super().__init__(name)
         self.src = src
         self.checks = checks or {}      # reg index -> expected value
         self.max_cycles = max_cycles
+        self.expect_trap = expect_trap   # a trap here is the point of the test
         self.result = None              # filled by the driver
         self.traps = []
 
@@ -70,8 +72,10 @@ class Rv64Scoreboard(uvm_subscriber):
             if got != want:
                 bad.append(f"x{reg}: got {got if got is None else hex(got)}, want {hex(want)}")
         illegal = [c for (_, c) in item.traps if c == 2]
-        if illegal:
+        if illegal and not item.expect_trap:
             bad.append(f"illegal-instruction trap at {[hex(p) for p, c in item.traps if c == 2][:3]}")
+        if item.expect_trap and not item.traps:
+            bad.append("expected a trap, none taken")
         if bad:
             self.failed.append((item.get_name(), bad))
         else:
