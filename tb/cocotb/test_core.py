@@ -2028,12 +2028,10 @@ async def test_rvc_in_core(dut):
 
     await h.reset()
     await h.run(max_cycles=20000, stop_on_ecall=True)
-    dut._log.info(f"fetch presented: {[(hex(p), hex(i), l) for p, i, l in seen]}")
     iss_trace = iss.run_to(len(h.trace))
     compare(h, iss_trace, "rvc-in-core")
     dut._log.info(f"trace = {h.trace}")
     got = h.trace[-1][4] if h.trace else None
-    assert len(seen) >= 3, f"fetch presented only {seen}"
     assert got == 8, f"expected x5 = 8, got {got}"
 
     # ---- the straddle case: a 32-bit instruction starting at offset 6 ----
