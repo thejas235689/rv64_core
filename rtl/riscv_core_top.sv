@@ -170,9 +170,20 @@ module riscv_core_top #(
 );
 
   // ---- CLINT / UART declarations (must precede the instances) ----
+  localparam logic [11:0] CSR_MODEXP_BASE = 12'h800;   // 8 registers, see below
   localparam logic [11:0] CSR_CLINT_BASE = 12'h7D9;
   localparam logic [11:0] CSR_UART_BASE  = 12'h7FC;
-  logic        clint_csr_sel, uart_csr_sel;
+  logic        clint_csr_sel, uart_csr_sel, modexp_csr_sel;
+  logic [63:0] modexp_csr_rdata;
+  logic [63:0] modexp_ctrl;
+  logic [63:0] modexp_ld_wdata_q;
+  logic [7:0]  modexp_ld_addr_q;
+  logic [2:0]  modexp_ld_sel_q;
+  logic        modexp_ld_we_q, modexp_start_q, modexp_n0inv_we_q;
+  logic [63:0] modexp_n0inv_q;
+  logic [15:0] modexp_e_bits_q;
+  logic [7:0]  modexp_r_addr_q;
+
   logic [63:0] clint_csr_rdata, uart_csr_rdata;
   logic        clint_timer_irq, clint_soft_irq;
   import rv64_pkg::*;
@@ -554,13 +565,59 @@ module riscv_core_top #(
   logic [7:0] m_a_addr, m_b_addr, m_n_addr, m_r_addr;
   logic [63:0] m_a_wdata, m_b_wdata, m_n_wdata, m_r_rdata;
 
+  // Software writes an operand by setting ld_sel/ld_addr/ld_wdata, then writes
+  // 0x800 with bit0=1 to strobe it into the engine for one cycle.
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      modexp_ld_we_q <= 1'b0; modexp_start_q <= 1'b0; modexp_n0inv_we_q <= 1'b0;
+      modexp_ld_sel_q <= 3'd0; modexp_ld_addr_q <= 8'd0;
+      modexp_ld_wdata_q <= 64'd0; modexp_n0inv_q <= 64'd0;
+      modexp_e_bits_q <= 16'd0; modexp_r_addr_q <= 8'd0;
+    end else begin
+      modexp_ld_we_q     <= 1'b0;
+      modexp_start_q     <= 1'b0;
+      modexp_n0inv_we_q  <= 1'b0;
+      if (modexp_csr_sel && csr_we) begin
+        unique case (id_ex_ctrl.csr_addr - CSR_MODEXP_BASE)
+          12'd0: begin
+            modexp_ld_we_q    <= csr_wdata[0];
+            modexp_start_q    <= csr_wdata[1];
+            modexp_n0inv_we_q <= csr_wdata[2];
+          end
+          12'd1: modexp_n0inv_q  <= csr_wdata;
+          12'd2: modexp_e_bits_q <= csr_wdata[15:0];
+          12'd3: modexp_ld_sel_q <= csr_wdata[2:0];
+          12'd4: modexp_ld_addr_q<= csr_wdata[7:0];
+          12'd5: modexp_ld_wdata_q <= csr_wdata;
+          12'd6: modexp_r_addr_q <= csr_wdata[7:0];
+          default: ;
+        endcase
+      end
+    end
+  end
+
+  always_comb begin
+    modexp_csr_rdata = 64'd0;
+    unique case (id_ex_ctrl.csr_addr - CSR_MODEXP_BASE)
+      12'd0: modexp_csr_rdata = {61'd0, modexp_n0inv_we_q, modexp_start_q, modexp_ld_we_q};
+      12'd1: modexp_csr_rdata = modexp_n0inv_q;
+      12'd2: modexp_csr_rdata = {48'd0, modexp_e_bits_q};
+      12'd3: modexp_csr_rdata = {61'd0, modexp_ld_sel_q};
+      12'd4: modexp_csr_rdata = {56'd0, modexp_ld_addr_q};
+      12'd5: modexp_csr_rdata = modexp_ld_wdata_q;
+      12'd6: modexp_csr_rdata = {56'd0, modexp_r_addr_q};
+      12'd7: modexp_csr_rdata = {62'd0, modexp_done, modexp_busy};
+      default: ;
+    endcase
+  end
+
   rv64_modexp #(.WORDS(64)) u_modexp (
-    .clk(clk), .rst_n(rst_n), .start(modexp_start),
+    .clk(clk), .rst_n(rst_n), .start(modexp_start_q),
     .busy(modexp_busy), .done(modexp_done),
-    .n0inv_we(modexp_n0inv_we), .n0inv_wdata(modexp_n0inv), .e_bits(modexp_e_bits),
-    .ld_we(modexp_ld_we), .ld_sel(modexp_ld_sel),
-    .ld_addr(modexp_ld_addr), .ld_wdata(modexp_ld_wdata),
-    .r_rdata(modexp_rdata), .r_addr(modexp_r_addr),
+    .n0inv_we(modexp_n0inv_we_q), .n0inv_wdata(modexp_n0inv_q), .e_bits(modexp_e_bits_q),
+    .ld_we(modexp_ld_we_q), .ld_sel(modexp_ld_sel_q),
+    .ld_addr(modexp_ld_addr_q), .ld_wdata(modexp_ld_wdata_q),
+    .r_rdata(modexp_rdata), .r_addr(modexp_r_addr_q),
     .probe_op(), .probe_op_valid(),
     .m_start(m_start), .m_n0inv(m_n0inv), .m_done(m_done),
     .m_a_we(m_a_we), .m_a_addr(m_a_addr), .m_a_wdata(m_a_wdata),
@@ -778,6 +835,7 @@ module riscv_core_top #(
     // an earlier select whose window happens to overlap.
     if (clint_csr_sel)       accel_csr_rdata = clint_csr_rdata;
     else if (uart_csr_sel)   accel_csr_rdata = uart_csr_rdata;
+    else if (modexp_csr_sel) accel_csr_rdata = modexp_csr_rdata;
     else if (qisa_csr_sel)   accel_csr_rdata = qisa_csr_rdata;
     else if (aiacc_csr_sel)  accel_csr_rdata = aiacc_csr_rdata;
     else if (xrv512_csr_sel) accel_csr_rdata = xrv512_csr_rdata;
@@ -885,6 +943,7 @@ module riscv_core_top #(
     // explicit branch here the access falls through to main_csr_rdata (0).
     if (clint_csr_sel)      csr_rdata = clint_csr_rdata;
     else if (uart_csr_sel)  csr_rdata = uart_csr_rdata;
+    else if (modexp_csr_sel) csr_rdata = modexp_csr_rdata;
     else if (task_csr_sel)  csr_rdata = task_csr_rdata;
     else if (qisa_csr_sel)  csr_rdata = qisa_csr_rdata;
     else if (aiacc_csr_sel) csr_rdata = aiacc_csr_rdata;

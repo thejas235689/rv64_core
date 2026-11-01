@@ -18,6 +18,8 @@ src = TOP.read_text()
 # base -> span, from every "csr_addr >= BASE) && ... <= BASE + N" pair
 bases = {}
 for m in re.finditer(r"csr_addr >= (CSR_[A-Z0-9_]+)\)", src):
+    pass
+for m in re.finditer(r"csr_addr >= (CSR_[A-Z0-9_]+)\)", src):
     bases.setdefault(m.group(1), None)
 for m in re.finditer(r"\(id_ex_ctrl\.csr_addr <= \((CSR_[A-Z0-9_]+) \+ 12'd(\d+)\)\)", src):
     bases[m.group(1)] = int(m.group(2))
