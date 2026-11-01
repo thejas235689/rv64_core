@@ -6,7 +6,7 @@ Everything below was run against the published tree; nothing here is inferred.
 
 | Framework | Result | Command |
 | --- | --- | --- |
-| cocotb | **40 / 40 pass** | `sim/run.py --testcase <t>` |
+| cocotb | **43 / 43 pass** | `sim/run.py --testcase <t>` |
 | UVM (xezim) | **22 / 22 pass** | `sim/run_uvm.sh` |
 | Montgomery sweep | **6 / 6 widths** | `ci/sweep_montmul.sh` |
 | Modexp sweep | **4 / 4 widths** | `ci/sweep_modexp.sh` |
@@ -48,6 +48,7 @@ clint  uart  clic  montmul  modexp  xcetask
 0x7E8-0x7ED  AIACC
 0x7F0-0x7F7  XRV512
 0x7FC-0x7FF  UART       tx, rx
+0x800-0x807  modexp     control, n0inv, e_bits, ld_sel, ld_addr, ld_wdata, r_addr, status
 ```
 
 `ci/check_csr_map.py` fails on any overlap. Run it before adding a window.
@@ -64,8 +65,14 @@ memories and drives a/b/n one word per cycle.
 **Not constant-time.** The branch on the exponent bit leaks timing. That matters for
 real RSA and is stated in the RTL header rather than left to be discovered.
 
-**Not reachable from software yet** — the engine has top-level ports but no CSR
-window, so a program cannot start an exponentiation.
+**Reachable from software.** CSR window at 0x800-0x807: software loads an operand by
+writing ld_sel/ld_addr/ld_wdata, then writes 0x800 with bit0 set to strobe it in, and
+reads busy/done from 0x807. Verified by `test_modexp_csr`, which round-trips a 64-bit
+value through 0x801.
+
+Note: the CSR address is 12 bits, so 0x800-0xFFF was always free. Custom blocks had
+been confined to 0x7C0-0x7FF unnecessarily, which is why three collisions happened
+inside a 64-address range that did not need to be a constraint.
 
 ## Still orphaned
 
