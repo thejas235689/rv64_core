@@ -47,6 +47,7 @@ module rv64_fetch (
 
   logic        out_pending;
   logic [63:0] out_addr;
+  logic [63:0] out_align;   // aligned at issue time
 
   logic        fault_q;
   logic [63:0] fault_addr_q;
@@ -121,6 +122,7 @@ module rv64_fetch (
       beat_data    <= 64'd0;
       out_pending  <= 1'b0;
       out_addr     <= 64'd0;
+      out_align    <= 64'd0;
       fault_q      <= 1'b0;
       fault_addr_q <= 64'd0;
       prev_insn_q  <= 32'd0;
@@ -142,18 +144,19 @@ module rv64_fetch (
       // issue tracking
       if (req_valid && req_ready) begin
         out_pending <= 1'b1;
+        out_align   <= aligned;
         out_addr    <= need ? aligned : (aligned + 64'd8);
       end
 
       // response: accept only if it still matches the address we want
       if (rsp_valid && out_pending) begin
         out_pending <= 1'b0;
-        if (rsp_error && (out_addr == aligned)) begin
+        if (rsp_error && (out_addr == out_align)) begin
           fault_q      <= 1'b1;
           fault_addr_q <= aligned;
           beat_v       <= 1'b0;
         end else if (!rsp_error) begin
-          if (out_addr == aligned) begin
+          if (out_addr == out_align) begin
             beat_v <= 1'b1; beat_addr <= out_addr; beat_data <= rsp_data;
           end else begin
             nxt_v <= 1'b1; nxt_addr <= out_addr; nxt_data <= rsp_data;
