@@ -237,6 +237,16 @@ class rv64_numeric_test extends rv64_base_test;
 endclass
 
 // ---- reduced ISA sweep, sized to complete at the driver's throughput ------
+// ALU / LSU / posit / quire matrix. The program is generated from the same intent as
+// pss/rv64_full_matrix.pss, so the PSS and UVM layers score against the same bins.
+class rv64_alu_matrix_test extends rv64_base_test;
+  `uvm_component_utils(rv64_alu_matrix_test)
+  function new(string name = "rv64_alu_matrix_test", uvm_component parent = null);
+    super.new(name, parent);
+    vec_prefix = "sim/uvm_vectors/alu_matrix";
+  endfunction
+endclass
+
 class rv64_isa_small_test extends rv64_base_test;
   `uvm_component_utils(rv64_isa_small_test)
   function new(string name = "rv64_isa_small_test", uvm_component parent = null);

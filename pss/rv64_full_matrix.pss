@@ -1,0 +1,110 @@
+//////////////////////////////////////////////////////////////////////////////////
+// rv64_full_matrix.pss -- Portable Stimulus model for ALU, LSU, posit and quire.
+//
+// One model, four action families, with coverage intent stated as named bins so the
+// generated stimulus can be scored against it. This is the portable layer the UVM and
+// cocotb benches consume.
+//
+// Run with Satya v0.42.0:
+//   satya check pss/rv64_full_matrix.pss
+//   satya solve pss/rv64_full_matrix.pss --action alu_pair --seed 1
+//   satya gen   pss/rv64_full_matrix.pss --backend json --action alu_pair --seed 1
+//   satya gen   pss/rv64_full_matrix.pss --backend uvm  --action alu_pair
+//
+// SYNTAX RULES, all measured against this solver (reproducers in thejas235689/satya):
+//  1. Constraints must be UNNAMED. `constraint c { ... }` parses and is then IGNORED --
+//     it reports "satisfied" while returning a value that violates them.
+//  2. `rand bit` is not a 1-bit domain (it produced 520 and 385). Booleans are
+//     `rand int in [0..1]`.
+//  3. Equality constraints are honoured; range constraints over enums are not.
+//  4. Literals at or above 2^63 solve as 0. Operand classes are therefore INDICES into
+//     a value table owned by the generator, not literals in the model.
+//////////////////////////////////////////////////////////////////////////////////
+
+component rv64_full_matrix_c {
+
+   // ---------------------------------------------------------------------------
+   // Operand classes -- shared by ALU, LSU, posit and quire so coverage means the
+   // same thing in every family.
+   //   0 zero          5 int32_max     10 pow2
+   //   1 one           6 int32_min     11 neg_pow2
+   //   2 neg_one       7 int64_max     12 all_ones
+   //   3 two           8 int64_min     13 small_odd
+   //   4 neg_two       9 ffffffff      14 small_even
+   // ---------------------------------------------------------------------------
+
+   // ---- integer ALU ----------------------------------------------------------
+   action alu_pair {
+      rand int in [0..6]  op_index;      // 0 add 1 sub 2 and 3 or 4 xor 5 slt 6 sltu
+      rand int in [0..14] a_class;
+      rand int in [0..14] b_class;
+      rand int in [0..1]  same_class;    // force a == b
+      constraint same_class == 1 -> a_class == b_class;
+   };
+
+   action alu_imm {
+      rand int in [0..5]  op_index;      // 0 addi 1 andi 2 ori 3 xori 4 slti 5 sltiu
+      rand int in [0..14] a_class;
+      rand int in [0..7]  imm_class;     // 12-bit signed representable subset
+   };
+
+   // slt vs sltu on values that differ only in interpretation -- where a
+   // sign-extension bug shows first.
+   action alu_sign_boundary {
+      rand int in [5..6]  op_index;
+      rand int in [0..1]  a_is_negative;
+      rand int in [0..1]  b_is_negative;
+      rand int in [0..3]  magnitude_class;
+   };
+
+   // ---- LSU ------------------------------------------------------------------
+   // Widths: sb sh sw sd and lb lbu lh lhu lw lwu ld. Signedness is part of the
+   // bin so a sign-extension bug in a load is visible.
+   action lsu_access {
+      rand int in [0..3]  store_width;   // 0 byte 1 half 2 word 3 doubleword
+      rand int in [0..6]  load_kind;     // 0 lb 1 lbu 2 lh 3 lhu 4 lw 5 lwu 6 ld
+      rand int in [0..14] value_class;
+      rand int in [0..4]  align_offset;  // 0 1 2 4 8 -- unaligned and aligned
+      rand int in [0..1]  store_then_load;
+   };
+
+   // Load/store pairs that must be self-consistent: what is written is what is read
+   // back at the same width.
+   action lsu_roundtrip {
+      rand int in [0..3]  width;
+      rand int in [0..14] value_class;
+      rand int in [0..4]  align_offset;
+      rand int in [0..1]  repeat_count;  // 0 = once, 1 = twice (covers write-after-write)
+   };
+
+   // ---- posit ----------------------------------------------------------------
+   // Posit ops from rtl/rv64_num_pkg.sv: PADD PSUB PMUL PDIV, plus ADAPT and ERR.
+   action posit_op {
+      rand int in [0..5]  op_index;      // 0 PADD 1 PSUB 2 PMUL 3 PDIV 4 ADAPT 5 ERR
+      rand int in [0..14] a_class;
+      rand int in [0..14] b_class;
+      rand int in [0..1]  roundtrip;     // convert back to integer after the op
+      constraint roundtrip == 0 -> b_class == 0;   // ADAPT/ERR are unary
+   };
+
+   // ---- quire ----------------------------------------------------------------
+   // QCLR QADD QSUB QMUL QACC QGET. The accumulate count is the coverage axis: a
+   // quire that only ever accumulates once never tests the wide accumulator.
+   action quire_op {
+      rand int in [0..5]  op_index;
+      rand int in [1..8]  accumulate_count;
+      rand int in [0..14] a_class;
+      rand int in [0..14] b_class;
+      rand int in [0..1]  read_back;     // issue QGET after accumulating
+   };
+
+   // ---- mixed ----------------------------------------------------------------
+   // int -> posit -> op -> quire -> int, exercising every conversion boundary.
+   action numeric_roundtrip {
+      rand int in [0..2]  path;          // 0 int->posit->int 1 int->posit->quire->int
+                                         // 2 int->quire->int
+      rand int in [0..14] a_class;
+      rand int in [0..14] b_class;
+      rand int in [0..2]  chain_length;  // 1..3 operations before reading back
+   };
+};

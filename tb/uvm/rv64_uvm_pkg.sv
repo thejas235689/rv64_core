@@ -14,6 +14,7 @@ package rv64_uvm_pkg;
   `include "rv64_obs_monitor.sv"
   `include "rv64_scoreboard.sv"
   `include "rv64_coverage.sv"
+  `include "rv64_alu_lsu_num_cov.sv"
   `include "rv64_env.sv"
   `include "rv64_seq_lib.sv"
   `include "rv64_tests.sv"
