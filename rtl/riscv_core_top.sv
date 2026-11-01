@@ -421,6 +421,10 @@ module riscv_core_top #(
     .fill_rsp_valid (rom_sel_q ? rom_rsp_valid : if_rsp_valid),
     .fill_rsp_data  (rom_sel_q ? rom_rsp_rdata : if_rsp_data),
     .fill_rsp_error (rom_sel_q ? rom_rsp_error : if_rsp_error),
+    // tied low: this port was unconnected, which left the FSM's invalidate branch
+    // undefined. Driving it from fence.i is a separate change -- no fence.i commit
+    // signal exists in the core yet.
+    .invalidate     (1'b0),
     .hit_count      (ic_hits),
     .miss_count     (ic_misses)
   );

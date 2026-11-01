@@ -60,6 +60,8 @@ def main():
         sources = [os.path.join(RTL_DIR, f) for f in RTL_SRCS]
         sources.append(os.path.join(TB_DIR, "tb_core_top.sv"))
         toplevel, module = "tb_core_top", "test_core"
+    if any(t.startswith("test_two_store") for t in args.testcase):
+        toplevel, module = "tb_core_top", "tb_two_store"
     if any(t.startswith("test_pyuvm_") for t in args.testcase):
         toplevel, module = "tb_core_top", "test_pyuvm"
 
