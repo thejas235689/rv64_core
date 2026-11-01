@@ -207,7 +207,7 @@ module riscv_core_top #(
   logic        id_ex_rvc;
   logic [31:0] id_ex_insn;
   logic [63:0] id_ex_imm;
-  ctrl_t       id_ex_ctrl;
+  rv64_pkg::ctrl_t id_ex_ctrl;
   logic [4:0]  id_ex_rs1, id_ex_rs2, id_ex_rd;
   logic [63:0] id_ex_rs1_data, id_ex_rs2_data;
   logic        id_ex_ptaken;
@@ -508,7 +508,7 @@ module riscv_core_top #(
   // ===========================================================================
   // ID stage
   // ===========================================================================
-  ctrl_t       dec_ctrl;
+  rv64_pkg::ctrl_t dec_ctrl;
   logic [63:0] dec_imm;
   logic [4:0]  dec_rs1, dec_rs2, dec_rd;
   logic [63:0] rs1_data, rs2_data;
