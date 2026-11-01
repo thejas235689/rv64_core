@@ -1,0 +1,76 @@
+//////////////////////////////////////////////////////////////////////////////////
+// Portable Stimulus model for the RV64 ALU operand matrix.
+//
+// Covers add/sub/and/or/xor/slt/sltu and their immediate forms across the operand
+// classes the request names: zero, one, minus one, two, minus two, INT32_MAX/MIN,
+// INT64_MAX/MIN, 0x7FFFFFFF, 0x80000000, 0xFFFFFFFF, +/- powers of two, all-ones.
+//
+// Run with Satya:
+//   satya check pss/rv64_alu_matrix.pss
+//   satya solve pss/rv64_alu_matrix.pss --action alu_pair --seed 1
+//   satya gen   pss/rv64_alu_matrix.pss --backend json --action alu_pair
+//
+// SYNTAX NOTES, all measured against Satya in this repo (see pss/rv64_numeric.pss
+// for the original reproducers). They are repeated here because getting them wrong
+// makes the model silently test nothing:
+//
+//  1. Constraints must be UNNAMED. `constraint c { ... }` parses and is then
+//     IGNORED -- Satya reports "constraints satisfied" while returning a value that
+//     violates them. Every constraint below is inline on the field.
+//  2. `rand bit` is not a 1-bit domain; it produced 520 and 385. Boolean fields are
+//     `rand int in [0..1]`.
+//  3. Equality constraints are honoured, range constraints over enums are not.
+//     Where a specific operation must be exercised it is pinned by equality.
+//  4. No operand reaches 2^63: literals at or above it solve as 0. INT64_MIN
+//     coverage therefore stays with the directed cocotb/UVM suites, and this model
+//     draws from classes that the solver handles.
+//////////////////////////////////////////////////////////////////////////////////
+
+component rv64_alu_matrix_c {
+
+   // Operand class index. Each class maps to a concrete 64-bit value in the
+   // generator (gen_alu_matrix.py), so the solver picks coverage, not literals.
+   //   0 zero            5 INT32_MAX      10 +2^k
+   //   1 one             6 INT32_MIN      11 -2^k
+   //   2 minus one       7 0x80000000     12 all-ones
+   //   3 two             8 0xFFFFFFFF     13 small odd
+   //   4 minus two       9 0x7FFFFFFF     14 small even
+   action alu_pair {
+      // register-register form: one operation over two operand classes
+      rand int in [0..6]  op_index;        // 0 add 1 sub 2 and 3 or 4 xor 5 slt 6 sltu
+      rand int in [0..14] a_class;
+      rand int in [0..14] b_class;
+      rand int in [0..1]  same_class;      // force a == b when 1
+
+      // same_class means the two operands must come from the same class; this is
+      // an inline constraint because named blocks are ignored by the solver.
+      constraint same_class == 1 -> a_class == b_class;
+   };
+
+   // Immediate form. The immediate is a 12-bit signed field, so the representable
+   // classes are the subset that fits: 0, 1, -1, 2, -2, 2047, -2048, +/-2^k <= 2047.
+   action alu_imm {
+      rand int in [0..5]  op_index;        // 0 addi 1 andi 2 ori 3 xori 4 slti 5 sltiu
+      rand int in [0..14] a_class;
+      rand int in [0..7]  imm_class;
+      rand int in [0..1]  imm_negative;
+   };
+
+   // Signed/unsigned boundary focus: slt vs sltu on values that differ only in
+   // their interpretation. This is where a sign-extension bug shows first.
+   action alu_sign_boundary {
+      rand int in [5..6]  op_index;        // only slt and sltu
+      rand int in [0..1]  a_is_negative;
+      rand int in [0..1]  b_is_negative;
+      rand int in [0..3]  magnitude_class;
+   };
+
+   // Every operation at least once, so a coverage run is guaranteed to touch all
+   // seven register forms and all six immediate forms.
+   action alu_coverage {
+      rand int in [0..6]  reg_op;
+      rand int in [0..5]  imm_op;
+      rand int in [0..14] a_class;
+      rand int in [0..14] b_class;
+   };
+};
