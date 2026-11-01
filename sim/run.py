@@ -60,6 +60,8 @@ def main():
         sources = [os.path.join(RTL_DIR, f) for f in RTL_SRCS]
         sources.append(os.path.join(TB_DIR, "tb_core_top.sv"))
         toplevel, module = "tb_core_top", "test_core"
+    if any(t.startswith("test_pyuvm_") for t in args.testcase):
+        toplevel, module = "tb_core_top", "test_pyuvm"
 
     build_dir = os.path.join(SIM_DIR, f"sim_build_{args.sim}_{args.suite}")
     if args.sim == "icarus":
@@ -81,6 +83,7 @@ def main():
     )
 
     sys.path.insert(0, os.path.join(TB_DIR, "cocotb"))
+    sys.path.insert(0, os.path.join(TB_DIR, "pyuvm"))
     runner.test(
         hdl_toplevel=toplevel,
         test_module=module,
