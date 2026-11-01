@@ -170,7 +170,6 @@ module riscv_core_top #(
 );
 
   // ---- CLINT / UART declarations (must precede the instances) ----
-  localparam logic [11:0] CSR_MODEXP_BASE = 12'h800;   // 8 registers, see below
   localparam logic [11:0] CSR_CLINT_BASE = 12'h7D9;
   localparam logic [11:0] CSR_UART_BASE  = 12'h7FC;
   logic        clint_csr_sel, uart_csr_sel, modexp_csr_sel;
@@ -828,7 +827,7 @@ module riscv_core_top #(
 
   assign accel_csr_sel = qisa_csr_sel || aiacc_csr_sel || xrv512_csr_sel ||
                          rvv_csr_sel || task_csr_sel || num_csr_sel ||
-                         clint_csr_sel || uart_csr_sel;
+                         clint_csr_sel || uart_csr_sel || modexp_csr_sel;
   always_comb begin
     accel_csr_rdata = 64'd0;
     // CLINT/UART first: their address ranges are new and must not be shadowed by

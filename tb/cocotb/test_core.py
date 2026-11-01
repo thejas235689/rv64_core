@@ -2611,3 +2611,36 @@ async def test_clic_in_core(dut):
     d.clic_ack.value = 0
     await RisingEdge(d.clk)
     assert int(d.clic_irq.value) == 0, "CLIC did not clear after ack"
+
+@cocotb.test()
+async def test_modexp_csr(dut):
+    """The modexp engine is reachable over CSRs at 0x800..0x807.
+
+    This test exists because I added that window and published it without one --
+    and the select signal was never assigned, so the whole interface was dead.
+    A write/read-back catches that in one line; nothing else did.
+    """
+    from rv64_asm import assemble
+    words, _ = assemble("""
+        addi x5, x0, 0x1234
+        csrrw x0, 0x801, x5      # n0inv
+        csrrs x6, 0x801, x0      # read it back
+        addi x7, x0, 0x40
+        csrrw x0, 0x802, x7      # e_bits
+        csrrs x8, 0x802, x0
+        addi x9, x0, 0x01
+        csrrw x0, 0x803, x9      # ld_sel = 1 (R2)
+        csrrs x10, 0x803, x0
+        csrrs x11, 0x807, x0     # status: busy/done must be readable
+        ecall
+    """)
+    h = Harness(dut)
+    await h.startup(); h.clear(); await h.load(words); await h.reset()
+    await h.run(max_cycles=500, stop_on_ecall=True)
+
+    causes = [c for (_, c) in h.traps]
+    assert 2 not in causes, f"modexp CSR access trapped: {causes[:4]}"
+    vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
+    assert vals.get(6) == 0x1234, f"n0inv read back {vals.get(6, -1):#x}, expected 0x1234"
+    assert vals.get(8) == 0x40, f"e_bits read back {vals.get(8, -1):#x}, expected 0x40"
+    assert vals.get(10) == 0x01, f"ld_sel read back {vals.get(10, -1):#x}, expected 0x01"

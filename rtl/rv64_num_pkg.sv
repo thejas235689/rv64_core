@@ -89,6 +89,7 @@ package rv64_num_pkg;
   localparam logic [11:0] CSR_NERR   = 12'h7C2;   // error bound of last operation
 
   // ------------------------------------------------------------- Xcetask CSRs
+  localparam logic [11:0] CSR_MODEXP_BASE = 12'h800;  // 0x800..0x807, 8 registers
   localparam logic [11:0] CSR_TASK_BASE = 12'h7D0;   // 0x7D0..0x7D8, 9 registers
   localparam logic [11:0] CSR_QISA_BASE = 12'h7E0;   // 0x7E0..0x7E6, 7 registers
   localparam logic [11:0] CSR_AIACC_BASE = 12'h7E8;  // 0x7E8..0x7ED, 6 registers
