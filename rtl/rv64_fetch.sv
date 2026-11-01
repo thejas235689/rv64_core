@@ -106,7 +106,10 @@ module rv64_fetch (
                       (!straddle || nxt_v);
   assign insn_pc    = pc_i;
   assign insn       = is_rvc ? cur_insn : insn_raw;
-  assign insn_len   = is_rvc ? 2'd2 : 2'd4;
+  // Default to 4 when the beat is invalid: f_consume is already false then, so the
+  // length is only observed for a real instruction, and it can never be the garbage
+  // value computed from a stale insn_raw.
+  assign insn_len   = !insn_valid ? 2'd4 : (is_rvc ? 2'd2 : 2'd4);
 
   assign fault_valid = fault_q;
   assign fault_pc    = fault_addr_q;
