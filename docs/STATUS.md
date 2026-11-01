@@ -6,11 +6,12 @@ Everything below was run against the published tree; nothing here is inferred.
 
 | Framework | Result | Command |
 | --- | --- | --- |
-| cocotb | **39 / 39 pass** | `sim/run.py --testcase <t>` |
+| cocotb | **40 / 40 pass** | `sim/run.py --testcase <t>` |
 | UVM (xezim) | **22 / 22 pass** | `sim/run_uvm.sh` |
 | Montgomery sweep | **6 / 6 widths** | `ci/sweep_montmul.sh` |
 | Modexp sweep | **4 / 4 widths** | `ci/sweep_modexp.sh` |
 | CSR map | **0 overlaps** | `ci/check_csr_map.py` |
+| CLIC in core | **pass** | `test_clic_in_core` |
 | CLIC (standalone) | **10 / 10 checks** | `tb/tb_clic.sv` |
 
 ### Running the tests
@@ -33,7 +34,7 @@ alu  mdu  regfile  decoder  csr  pmp  fetch  bpu  icache  dcache  l2cache
 lsu  amcce  bootrom  bootauth_hmac  sha256  hmac  plic_lite
 fp_add  fregfile
 vunit  numfile  num_unit  num_csr  xrv512  aiacc  qisa
-clint  uart  montmul  modexp  xcetask
+clint  uart  clic  montmul  modexp  xcetask
 ```
 
 ## CSR map
@@ -70,10 +71,16 @@ window, so a program cannot start an exponentiation.
 
 | Module | Needs |
 | --- | --- |
-| `rv64_clic` | `cause_id`/`cause_valid` wired into the trap logic |
-| `rv64_l2arb` | a real peripheral bus |
-| `rv64_dmi` | a JTAG transport |
+| `rv64_l2arb` | a real peripheral bus — infrastructure that does not exist |
+| `rv64_dmi` | a JTAG transport — infrastructure that does not exist |
 | `rv64_num_wide` | nothing — it is a number-system library, not a peripheral |
+
+CLINT, UART and CLIC are wired. Those three only needed *integration*: their interfaces
+already existed. The two remaining hardware orphans need *new infrastructure*.
+
+The CLIC has no CSR window (the map has no free block), so it is driven through
+top-level ports the way `plic_src` is, and its `cause_id`/`cause_valid` are exposed so
+a handler reads the vector without a claim round-trip.
 
 ## Known gaps
 
