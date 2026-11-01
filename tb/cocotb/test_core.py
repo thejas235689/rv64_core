@@ -37,11 +37,16 @@ def cov(key, n=1):
 
 
 def _i(sig, name):
-    """Convert a sampled signal, failing with the raw bits if it holds X/Z."""
+    """Convert a sampled signal. Returns -1 for X/Z and records it, so a run can
+    complete and report the bad cycle instead of dying inside trace collection."""
     try:
         return int(sig.value)
     except ValueError:
-        raise AssertionError(f"signal {name} sampled with unknown bits: {sig.value.binstr}")
+        _i.bad.append((name, sig.value.binstr))
+        return -1
+
+
+_i.bad = []
 
 
 # --------------------------------------------------------------------------- harness
@@ -50,6 +55,7 @@ class Harness:
         self.dut = dut
         self.trace = []
         self.traps = []
+        self.reset_done = False
 
     async def startup(self):
         d = self.dut
@@ -100,10 +106,12 @@ class Harness:
             await RisingEdge(d.clk)
         d.rst_n.value = 1
         await RisingEdge(d.clk)
+        self.reset_done = True
 
     def clear(self):
         self.trace = []
         self.traps = []
+        self.reset_done = False
 
     async def run(self, max_cycles=20000, stop_on_ecall=True):
         """Step the core, accumulating retirement and trap records."""
@@ -117,9 +125,9 @@ class Harness:
                     _i(d.gpr_we, "gpr_we"), _i(d.gpr_waddr, "gpr_waddr"),
                     _i(d.gpr_wdata, "gpr_wdata"),
                 ))
-            if int(d.trap_valid.value):
-                cause = int(d.trap_cause.value)
-                self.traps.append((int(d.trap_pc.value), cause))
+            if _i(d.trap_valid, "trap_valid") == 1:
+                cause = _i(d.trap_cause, "trap_cause")
+                self.traps.append((_i(d.trap_pc, "trap_pc"), cause))
                 cov(f"trap:{CAUSE.get(cause, hex(cause))}")
                 if stop_on_ecall and cause == 11:
                     return
