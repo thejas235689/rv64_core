@@ -64,6 +64,9 @@ def main():
         toplevel, module = "tb_core_top", "tb_two_store"
     if any(t.startswith("test_alu_matrix") for t in args.testcase):
         toplevel, module = "tb_core_top", "test_alu_matrix"
+    if any(t.startswith(("test_alu_all", "test_lsu_all", "test_posit_quire", "test_coverage_bins"))
+           for t in args.testcase):
+        toplevel, module = "tb_core_top", "test_alu_lsu_num"
     if any(t.startswith("test_pyuvm_") for t in args.testcase):
         toplevel, module = "tb_core_top", "test_pyuvm"
 
