@@ -820,6 +820,11 @@ module riscv_core_top #(
   // msip, status, timer_en). UART occupies 0x7FC..0x7FF (4 registers). Both blocks expose a 4-bit
   // CSR-style interface, so they attach to CSR space directly -- the same approach
   // the accelerator windows use, and no peripheral bus required.
+  // modexp: 0x800 control, 0x801 n0inv, 0x802 e_bits, 0x803 ld_sel,
+  //         0x804 ld_addr, 0x805 ld_wdata, 0x806 r_addr, 0x807 status
+  assign modexp_csr_sel = id_ex_ctrl.is_csr &&
+                          (id_ex_ctrl.csr_addr >= CSR_MODEXP_BASE) &&
+                          (id_ex_ctrl.csr_addr <= (CSR_MODEXP_BASE + 12'd7));
   assign clint_csr_sel = (id_ex_ctrl.csr_addr >= CSR_CLINT_BASE) &&
                          (id_ex_ctrl.csr_addr <= (CSR_CLINT_BASE + 12'd6));
   assign uart_csr_sel  = (id_ex_ctrl.csr_addr >= CSR_UART_BASE) &&

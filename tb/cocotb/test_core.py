@@ -2478,7 +2478,18 @@ async def test_h_instructions(dut):
     words = [addi(10, 0, 0x100), addi(6, 0, 0x2A), HSVD, HLVD, HFVV, HFGV, 0x00000073]
     h = Harness(dut)
     await h.startup(); h.clear(); await h.load(words); await h.reset()
+    seen = []
+    from cocotb.triggers import RisingEdge, Timer
+    async def watch():
+        while True:
+            await RisingEdge(dut.clk); await Timer(1, "ns")
+            seen.append((int(dut.u_core.modexp_csr_sel.value),
+                         int(dut.u_core.accel_csr_sel.value),
+                         int(dut.u_core.csr_valid.value)))
+    cocotb.start_soon(watch())
     await h.run(max_cycles=500, stop_on_ecall=True)
+    hits = [e for e in seen if e[0] == 1]
+    dut._log.warning(f"modexp_sel cycles={len(hits)} first={hits[:3]}")
 
     causes = [c for (_, c) in h.traps]
     if 2 in causes:
@@ -2622,7 +2633,8 @@ async def test_modexp_csr(dut):
     """
     from rv64_asm import assemble
     words, _ = assemble("""
-        addi x5, x0, 0x1234
+        lui x5, 0x1
+        addi x5, x5, 0x234
         csrrw x0, 0x801, x5      # n0inv
         csrrs x6, 0x801, x0      # read it back
         addi x7, x0, 0x40
@@ -2636,9 +2648,23 @@ async def test_modexp_csr(dut):
     """)
     h = Harness(dut)
     await h.startup(); h.clear(); await h.load(words); await h.reset()
+    seen = []
+    from cocotb.triggers import RisingEdge, Timer
+    async def watch():
+        while True:
+            await RisingEdge(dut.clk); await Timer(1, "ns")
+            seen.append((int(dut.u_core.modexp_csr_sel.value),
+                         int(dut.u_core.accel_csr_sel.value),
+                         int(dut.u_core.csr_valid.value)))
+    cocotb.start_soon(watch())
     await h.run(max_cycles=500, stop_on_ecall=True)
+    hits = [e for e in seen if e[0] == 1]
+    dut._log.warning(f"modexp_sel cycles={len(hits)} first={hits[:3]}")
 
     causes = [c for (_, c) in h.traps]
+    if 2 in causes:
+        pcs = [pc for (pc, c) in h.traps if c == 2]
+        dut._log.warning(f"trap pcs: {[hex(p) for p in pcs[:4]]}")
     assert 2 not in causes, f"modexp CSR access trapped: {causes[:4]}"
     vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
     assert vals.get(6) == 0x1234, f"n0inv read back {vals.get(6, -1):#x}, expected 0x1234"
