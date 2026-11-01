@@ -2670,3 +2670,85 @@ async def test_modexp_csr(dut):
     assert vals.get(6) == 0x1234, f"n0inv read back {vals.get(6, -1):#x}, expected 0x1234"
     assert vals.get(8) == 0x40, f"e_bits read back {vals.get(8, -1):#x}, expected 0x40"
     assert vals.get(10) == 0x01, f"ld_sel read back {vals.get(10, -1):#x}, expected 0x01"
+
+@cocotb.test()
+async def test_mixed_workload(dut):
+    """Instructions after every kind of memory operation.
+
+    This shape was missing from the suite and it cost three fetch bugs. No existing
+    test placed an instruction after a load or store and checked that it executed:
+    each either stopped at the memory op or used a program short enough that the
+    corruption never showed. The fetch response was being filed against a moving
+    address, so beat_data held stale data and the instruction stream desynchronised.
+
+    Each block below does a memory op and then depends on a register it just wrote.
+    """
+    from rv64_asm import assemble
+    cases = {
+        "after_load": ("""
+            addi x5, x0, 0x2a
+            sw   x5, 64(x0)
+            lw   x6, 64(x0)
+            addi x7, x6, 1
+            addi x8, x7, 1
+            add  x9, x8, x6
+            ecall
+        """, {6: 0x2A, 7: 0x2B, 8: 0x2C, 9: 0x56}),
+        "after_store": ("""
+            addi x5, x0, 0x11
+            sw   x5, 72(x0)
+            addi x6, x0, 0x22
+            sw   x6, 80(x0)
+            lw   x7, 72(x0)
+            lw   x8, 80(x0)
+            add  x9, x7, x8
+            ecall
+        """, {7: 0x11, 8: 0x22, 9: 0x33}),
+        "load_store_chain": ("""
+            addi x5, x0, 1
+            sw   x5, 88(x0)
+            lw   x6, 88(x0)
+            sw   x6, 96(x0)
+            lw   x7, 96(x0)
+            addi x8, x7, 1
+            ecall
+        """, {6: 1, 7: 1, 8: 2}),
+        "byte_after_load": ("""
+            addi x5, x0, 0x7f
+            sb   x5, 104(x0)
+            lb   x6, 104(x0)
+            addi x7, x6, 1
+            ecall
+        """, {6: 0x7F, 7: 0x80}),
+        "many_mem_ops": ("""
+            addi x5, x0, 1
+            sw   x5, 112(x0)
+            addi x5, x5, 1
+            sw   x5, 120(x0)
+            addi x5, x5, 1
+            sw   x5, 128(x0)
+            lw   x6, 112(x0)
+            lw   x7, 120(x0)
+            lw   x8, 128(x0)
+            add  x9, x6, x7
+            add  x10, x9, x8
+            ecall
+        """, {6: 1, 7: 2, 8: 3, 9: 3, 10: 6}),
+    }
+    h = Harness(dut)
+    await h.startup()
+    for name, (src, checks) in cases.items():
+        words, _ = assemble(src)
+        h.clear()
+        await h.load(words)
+        await h.reset()
+        await h.run(max_cycles=600, stop_on_ecall=True)
+        causes = [c for (_, c) in h.traps]
+        assert 2 not in causes, f"{name}: illegal trap {causes[:3]}"
+        vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
+        for reg, want in checks.items():
+            got = vals.get(reg)
+            if got != want:
+                dut._log.warning(f"{name}: ALL = { {k: (hex(v) if v is not None else None) for k, v in sorted(vals.items())} }")
+            assert got == want, f"{name}: x{reg} = {got if got is None else hex(got)}, want {hex(want)}"
+        dut._log.info(f"{name}: ok")
