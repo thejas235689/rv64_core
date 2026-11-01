@@ -12,6 +12,7 @@ Everything below was run against the published tree; nothing here is inferred.
 | Modexp sweep | **4 / 4 widths** | `ci/sweep_modexp.sh` |
 | CSR map | **0 overlaps** | `ci/check_csr_map.py` |
 | CLIC in core | **pass** | `test_clic_in_core` |
+| Fetch/store interleave | **pass** | `tb_two_store` -- added for the fetch bug below |
 | CLIC (standalone) | **10 / 10 checks** | `tb/tb_clic.sv` |
 
 ### Running the tests
@@ -96,6 +97,28 @@ a handler reads the vector without a claim round-trip.
 - **`misa` advertises H** but there is no VS mode and no two-stage translation. Only
   the CSRs and the `HRET`/`HFENCE`/`HINVAL` decode exist.
 - **Rust DV** — `rust/` has 5 source files that have never been compiled.
+
+## Recent core fixes
+
+Three real defects in the fetch path, all found by instrumented dumps rather than by
+reasoning, and all invisible to the pre-existing suite:
+
+1. **`icache.invalidate` was never connected.** The FSM's `else if (invalidate)` branch
+   sat between the reset and the case statement; with the port floating it had no defined
+   value and the cache could sit in `C_IDLE` forever. Now tied low (a fence.i-driven path
+   is separate work).
+
+2. **`insn_len` was computed from a stale `insn_raw`.** When no valid beat was present the
+   old word was still used, `is_rvc` came out true, and the PC advanced by 2 instead of 4.
+
+3. **The fetch response was matched against a moving address.** `out_addr` is latched at
+   issue, but the response compared it against `aligned`, which is combinational from
+   `pc_i` and moves on. Responses were filed as the second beat and `beat_data` kept stale
+   data. Fixed by latching `out_align` at issue.
+
+Bug 3 is the important one: it corrupted the instruction stream for any program with a
+store followed by more instructions. It survived 43 cocotb and 22 UVM tests because none
+of them had that shape. `tb_two_store` now does.
 
 ## How the bugs were found
 
