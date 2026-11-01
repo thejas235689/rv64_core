@@ -34,10 +34,11 @@ assert raw < 2*N, "CIOS must be < 2N"
 if raw >= N: raw -= N
 print("\n".join([f"{v:016x}" for v in aw+bw+nw+[n0inv]+t+words(raw)]))
 PY
-  sed -i "s/localparam int W = [0-9]*;/localparam int W = $W;/" tb_montmul.sv
-  iverilog -g2012 -o /tmp/sw.vvp -s tb_montmul rv64_montmul.sv tb_montmul.sv 2>&1 | grep -v sorry | grep error | head -1
+  sed -i "s/localparam int W = [0-9]*;/localparam int W = $W;/" tb/tb_montmul.sv
+  iverilog -g2012 -o /tmp/sw.vvp -s tb_montmul rtl/rv64_montmul.sv tb/tb_montmul.sv 2>&1 | grep -v sorry | grep error | head -1
   r=$(timeout 40 vvp /tmp/sw.vvp 2>&1 | grep -oE "errors=[0-9]+" | tail -1)
   if [ "$r" = "errors=0" ]; then pass=$((pass+1)); echo "  W=$W  PASS";
   else fail=$((fail+1)); failed="$failed $W"; echo "  W=$W  FAIL ($r)"; fi
 done
 echo "sweep: $pass passed, $fail failed${failed:+ (failed widths:$failed)}"
+exit $(( fail > 0 ? 1 : 0 ))
