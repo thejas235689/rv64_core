@@ -108,6 +108,16 @@ module riscv_core_top #(
   // ---- CLINT and UART, reached through CSR windows (no peripheral bus) --------
   output logic        uart_tx,
   input  logic        uart_rx,
+  // ---- CLIC (core-local interrupt controller) ------------------------------
+  input  logic [7:0]  clic_src,
+  input  logic        clic_cfg_we,
+  input  logic [3:0]  clic_cfg_addr,
+  input  logic [15:0] clic_cfg_wdata,
+  input  logic        clic_ack,
+  input  logic [3:0]  clic_ack_id,
+  output logic        clic_irq,
+  output logic [3:0]  clic_cause_id,
+  output logic        clic_cause_valid,
   input  logic [3:0]  plic_src,
   input  logic        plic_cfg_we,
   input  logic [4:0]  plic_cfg_addr,
@@ -570,6 +580,20 @@ module riscv_core_top #(
     .probe_state(), .probe_valid()
   );
 
+  rv64_clic #(.NSRC(8)) u_clic (
+    .clk         (clk),
+    .rst_n       (rst_n),
+    .src         (clic_src),
+    .cfg_we      (clic_cfg_we),
+    .cfg_addr    (clic_cfg_addr),
+    .cfg_wdata   (clic_cfg_wdata),
+    .irq         (clic_irq),
+    .cause_id    (clic_cause_id),
+    .cause_valid (clic_cause_valid),
+    .ack         (clic_ack),
+    .ack_id      (clic_ack_id)
+  );
+
   logic plic_irq;
   logic irq_ext_eff;
 
@@ -589,7 +613,9 @@ module riscv_core_top #(
     .irq         (plic_irq)
   );
 
-  assign irq_ext_eff = irq_ext | plic_irq;
+  // CLIC delivers the cause number directly, so its irq joins the external line
+  // while cause_id is exposed for the handler to read.
+  assign irq_ext_eff = irq_ext | plic_irq | clic_irq;
   // The CLINT is the core's own timer: its timer_irq must reach the trap logic, not
   // dangle. irq_timer_eff is what the CSR block sees.
   logic irq_timer_eff, irq_soft_eff;

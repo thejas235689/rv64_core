@@ -41,6 +41,10 @@ module tb_core_top #(
   logic [2:0]  modexp_ld_sel;
   logic [7:0]  modexp_ld_addr, modexp_r_addr;
   logic uart_tx, uart_rx;
+  logic [7:0]  clic_src;
+  logic        clic_cfg_we, clic_ack, clic_irq, clic_cause_valid;
+  logic [3:0]  clic_cfg_addr, clic_ack_id, clic_cause_id;
+  logic [15:0] clic_cfg_wdata;
   logic [3:0]  plic_src;
   logic        plic_cfg_we;
   logic [4:0]  plic_cfg_addr;
@@ -52,6 +56,8 @@ module tb_core_top #(
     plic_cfg_wdata = 32'd0; plic_claim = 1'b0; plic_complete = 1'b0;
     plic_complete_id = 4'd0;
     uart_rx = 1'b1;
+    clic_src = 8'd0; clic_cfg_we = 1'b0; clic_cfg_addr = 4'd0;
+    clic_cfg_wdata = 16'd0; clic_ack = 1'b0; clic_ack_id = 4'd0;
     modexp_start = 1'b0; modexp_n0inv_we = 1'b0; modexp_n0inv = 64'd0;
     modexp_e_bits = 16'd0; modexp_ld_we = 1'b0; modexp_ld_sel = 3'd0;
     modexp_ld_addr = 8'd0; modexp_ld_wdata = 64'd0; modexp_r_addr = 8'd0;
@@ -245,6 +251,15 @@ module tb_core_top #(
     .modexp_r_addr    (modexp_r_addr),
     .uart_tx         (uart_tx),
     .uart_rx         (uart_rx),
+    .clic_src        (clic_src),
+    .clic_cfg_we     (clic_cfg_we),
+    .clic_cfg_addr   (clic_cfg_addr),
+    .clic_cfg_wdata  (clic_cfg_wdata),
+    .clic_ack        (clic_ack),
+    .clic_ack_id     (clic_ack_id),
+    .clic_irq        (clic_irq),
+    .clic_cause_id   (clic_cause_id),
+    .clic_cause_valid(clic_cause_valid),
     .plic_src        (plic_src),
     .plic_cfg_we     (plic_cfg_we),
     .plic_cfg_addr   (plic_cfg_addr),

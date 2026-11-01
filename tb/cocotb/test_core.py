@@ -2569,3 +2569,45 @@ async def test_clint_timer_irq(dut):
     dut._log.warning(f"  traps seen: {causes[:6]}")
     assert 0x80000007 in causes or any((c & 0x7FFFFFFF) == 7 for c in causes), \
         f"no machine timer interrupt: {causes[:6]}"
+
+@cocotb.test()
+async def test_clic_in_core(dut):
+    """CLIC reaches the core's external interrupt line and reports a cause.
+
+    The CLIC has no CSR window (the CSR map has no free block), so it is driven
+    through top-level ports like plic_src. Its irq joins irq_ext_eff and cause_id
+    is exposed for the handler.
+    """
+    from cocotb.triggers import RisingEdge
+    d = dut
+    h = Harness(dut)
+    await h.startup(); h.clear(); await h.reset()
+
+    # no source configured yet: irq must stay low
+    d.clic_src.value = 0xFF
+    await RisingEdge(d.clk)
+    assert int(d.clic_irq.value) == 0, "CLIC raised irq with every source at level 0"
+
+    # configure source 0 with level 3, then assert it
+    d.clic_cfg_we.value = 1
+    d.clic_cfg_addr.value = 0
+    d.clic_cfg_wdata.value = 0x0003          # level = 3, level-sensitive
+    await RisingEdge(d.clk)
+    d.clic_cfg_we.value = 0
+    for _ in range(4):
+        await RisingEdge(d.clk)
+
+    assert int(d.clic_irq.value) == 1, "CLIC did not raise irq for a configured source"
+    assert int(d.clic_cause_id.value) == 0, f"cause_id {int(d.clic_cause_id.value)} != 0"
+    assert int(d.clic_cause_valid.value) == 1, "cause_valid not asserted"
+    assert int(d.u_core.irq_ext_eff.value) == 1, "CLIC irq did not reach irq_ext_eff"
+
+    # acknowledge and deassert the source
+    d.clic_src.value = 0
+    await RisingEdge(d.clk)
+    d.clic_ack.value = 1
+    d.clic_ack_id.value = 0
+    await RisingEdge(d.clk)
+    d.clic_ack.value = 0
+    await RisingEdge(d.clk)
+    assert int(d.clic_irq.value) == 0, "CLIC did not clear after ack"
