@@ -1,76 +1,76 @@
 #!/usr/bin/env bash
-# Every check that has actually caught a bug in this project. Run before publishing.
+# Every check that has actually caught a bug in this project.
 #
-#   ci/check_csr_map.py    three CSR collisions, none visible to a per-block test
-#   ci/sweep_montmul.sh    a width bug that one passing width hid
-#   ci/sweep_modexp.sh     a width bug that one passing width hid
-#   cocotb suite           the CSR collision, the harness X, the NameError
+#   ci/run_all_checks.sh            all sections
+#   ci/run_all_checks.sh static     CSR map only
+#   ci/run_all_checks.sh sweeps     width sweeps only
+#   ci/run_all_checks.sh cocotb     the 43-test suite only
 #
-# The cocotb suite runs in batches: a single loop over all 43 exceeds a 295s window.
+# Sections exist because the whole thing exceeds a 295s command window.
 set -u
 cd "$(dirname "$0")/.."
 OCS=${OCS:-/scratch/work/ocs/oss-cad-suite/bin}
 export PATH="$OCS:$PATH"
-PY=${PY:-/usr/local/bin/python3}   # NOT bare python3 -- with OCS on PATH it resolves
-                                   # to their bundled interpreter and cocotb dies
+# NOT bare python3: with OCS on PATH it resolves to their bundled interpreter and
+# cocotb dies with "Unexpected sys.executable value".
+PY=${PY:-/usr/local/bin/python3}
+
+SECTION=${1:-all}
 pass=0; fail=0; failed=""
 
-step() { printf '%-28s' "$1"; }
+step() { printf '%-24s' "$1"; }
+want() { [ "$SECTION" = "all" ] || [ "$SECTION" = "$1" ]; }
 
-# ---- 1. CSR map --------------------------------------------------------------
-step "csr map"
-if "$PY" ci/check_csr_map.py > /tmp/csrmap.txt 2>&1; then
-  pass=$((pass+1)); echo "PASS  $(tail -1 /tmp/csrmap.txt)"
-else
-  fail=$((fail+1)); failed="$failed csr-map"; echo "FAIL"; cat /tmp/csrmap.txt
+# ---- static: CSR map ---------------------------------------------------------
+if want static; then
+  step "csr map"
+  if "$PY" ci/check_csr_map.py > /tmp/csrmap.txt 2>&1; then
+    pass=$((pass+1)); echo "PASS  $(tail -1 /tmp/csrmap.txt)"
+  else
+    fail=$((fail+1)); failed="$failed csr-map"; echo "FAIL"; cat /tmp/csrmap.txt
+  fi
 fi
 
-# ---- 2. width sweeps ---------------------------------------------------------
-for s in sweep_montmul sweep_modexp; do
-  step "$s"
-  if "./ci/$s.sh" > /tmp/$s.txt 2>&1; then
-    pass=$((pass+1)); echo "PASS  $(tail -1 /tmp/$s.txt)"
-  else
-    fail=$((fail+1)); failed="$failed $s"; echo "FAIL"; tail -5 /tmp/$s.txt
-  fi
-done
+# ---- sweeps ------------------------------------------------------------------
+if want sweeps; then
+  for s in sweep_montmul sweep_modexp; do
+    step "$s"
+    if "./ci/$s.sh" > "/tmp/$s.txt" 2>&1; then
+      pass=$((pass+1)); echo "PASS  $(tail -1 "/tmp/$s.txt")"
+    else
+      fail=$((fail+1)); failed="$failed $s"; echo "FAIL"; tail -4 "/tmp/$s.txt"
+    fi
+  done
+fi
 
-# ---- 3. cocotb, in batches of ten --------------------------------------------
-if ! "$PY" -c "import cocotb" 2>/dev/null; then
-  step "cocotb"; echo "SKIP  cocotb not installed"; 
-else
-TESTS=$("$PY" - <<'PY'
+# ---- cocotb, in batches of ten -----------------------------------------------
+if want cocotb; then
+  if ! "$PY" -c "import cocotb" 2>/dev/null; then
+    step "cocotb"; echo "SKIP  cocotb not installed"
+  else
+    TESTS=$("$PY" - <<'PY'
 import re, pathlib
 src = pathlib.Path("tb/cocotb/test_core.py").read_text()
 print(" ".join(re.findall(r"^async def (test_[a-z0-9_]+)", src, re.M)))
 PY
 )
-batch=""; n=0
-for t in $TESTS; do
-  batch="$batch $t"; n=$((n+1))
-  if [ "$n" -eq 10 ]; then
-    step "cocotb batch"
-    ok=1
-    for b in $batch; do
-      r=$(timeout 100 "$PY" sim/run.py --testcase "$b" 2>&1 | grep -oE "PASS=[0-9]" | tail -1)
-      [ "$r" = "PASS=1" ] || { ok=0; failed="$failed $b"; }
-    done
-    if [ "$ok" = "1" ]; then pass=$((pass+1)); echo "PASS  10 tests"
-    else fail=$((fail+1)); echo "FAIL"; fi
     batch=""; n=0
+    run_batch() {
+      local ok=1 b r
+      for b in $batch; do
+        r=$(timeout 100 "$PY" sim/run.py --testcase "$b" 2>&1 | grep -oE "PASS=[0-9]" | tail -1)
+        [ "$r" = "PASS=1" ] || { ok=0; failed="$failed $b"; }
+      done
+      step "cocotb batch"
+      if [ "$ok" = "1" ]; then pass=$((pass+1)); echo "PASS  $n tests"
+      else fail=$((fail+1)); echo "FAIL"; fi
+    }
+    for t in $TESTS; do
+      batch="$batch $t"; n=$((n+1))
+      if [ "$n" -eq 10 ]; then run_batch; batch=""; n=0; fi
+    done
+    [ -n "$batch" ] && run_batch
   fi
-done
-if [ -n "$batch" ]; then
-  step "cocotb batch"
-  ok=1
-  for b in $batch; do
-    r=$(timeout 100 "$PY" sim/run.py --testcase "$b" 2>&1 | grep -oE "PASS=[0-9]" | tail -1)
-    [ "$r" = "PASS=1" ] || { ok=0; failed="$failed $b"; }
-  done
-  if [ "$ok" = "1" ]; then pass=$((pass+1)); echo "PASS  $n tests"
-  else fail=$((fail+1)); echo "FAIL"; fi
-fi
-
 fi
 
 echo
