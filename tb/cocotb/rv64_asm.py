@@ -363,7 +363,18 @@ def assemble(src):
             for h in line.split()[1:]:
                 stream += (int(h, 0) & 0xFFFF).to_bytes(2, "little")
             continue
-        pending.append((line.split()[0], line.split()[1:], len(stream)))
+        mn0 = line.split()[0]
+        ops0 = [q.strip() for o in line.split()[1:] for q in o.split(",") if q.strip()]
+        if mn0 == "li":
+            # reserve one slot per emitted instruction, not one for the whole pseudo-op
+            raw = ops0[1]
+            val = labels[raw] if labels and raw in labels else int(raw, 0)
+            seq = li_sequence(_reg(ops0[0]), val)
+            for smn, sops in seq:
+                pending.append((smn, sops, len(stream)))
+                stream += b"\x00\x00\x00\x00"
+            continue
+        pending.append((mn0, line.split()[1:], len(stream)))
         stream += b"\x00\x00\x00\x00"   # placeholder, encoded below
 
     # encode the real instructions into their reserved slots
@@ -371,13 +382,6 @@ def assemble(src):
         flat = []
         for o in ops:
             flat.extend([q.strip() for q in o.split(",") if q.strip()])
-        if mn == "li":
-            seq = li_sequence(_reg(flat[0]), _imm(flat[1], labels, off))
-            for smn, sops in seq:
-                sw = encode(smn, sops, labels, off) & 0xFFFFFFFF
-                stream[off:off + 4] = sw.to_bytes(4, "little")
-                off += 4
-            continue
         w = encode(mn, flat, labels, off) & 0xFFFFFFFF
         stream[off:off + 4] = w.to_bytes(4, "little")
 
