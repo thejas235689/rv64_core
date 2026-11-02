@@ -276,6 +276,59 @@ def encode(mn, ops, labels=None, here=0):
     raise ValueError(f"unknown mnemonic {mn!r}")
 
 
+
+def li_sequence(rd, val):
+    """Expand `li rd, val` into instructions that build val exactly.
+
+    lui sign-extends its immediate and addi sign-extends its 12-bit field, so a naive
+    lui+addi pair produces wrong 64-bit values for any constant whose low 12 bits have
+    bit 11 set. That mistake caused four separate bugs in the ALU matrix test. This
+    implementation uses ori (which zero-extends) for the low word and handles the
+    32-bit sign-extension explicitly.
+
+    Returns a list of (mnemonic, operands) pairs.
+    """
+    v = val & ((1 << 64) - 1)
+    out = []
+
+    def word32(x):
+        """lui+ori for a 32-bit word, zero-extended to 64 bits."""
+        x &= 0xFFFFFFFF
+        hi = (x >> 12) & 0xFFFFF
+        lo = x & 0xFFF
+        if hi == 0:
+            out.append(("addi", [f"x{rd}", "x0", str(lo)]))
+        else:
+            out.append(("lui", [f"x{rd}", hex(hi)]))
+            if lo:
+                out.append(("ori", [f"x{rd}", f"x{rd}", hex(lo)]))
+        return x
+
+    top = (v >> 32) & 0xFFFFFFFF
+    low = v & 0xFFFFFFFF
+    if top == 0:
+        word32(low)
+        return out
+    if top == 0xFFFFFFFF and low == 0xFFFFFFFF:
+        out.append(("addi", [f"x{rd}", "x0", "-1"]))
+        return out
+    word32(top)
+    out.append(("slli", [f"x{rd}", f"x{rd}", "32"]))
+    if low:
+        # build the low word in a scratch register and zero-extend before adding
+        word32_into = (low >> 12) & 0xFFFFF
+        lo = low & 0xFFF
+        if word32_into == 0:
+            out.append(("addi", ["x31", "x0", str(lo)]))
+        else:
+            out.append(("lui", ["x31", hex(word32_into)]))
+            if lo:
+                out.append(("ori", ["x31", "x31", hex(lo)]))
+        out.append(("slli", ["x31", "x31", "32"]))
+        out.append(("srli", ["x31", "x31", "32"]))
+        out.append(("add", [f"x{rd}", f"x{rd}", "x31"]))
+    return out
+
 def assemble(src):
     """Assemble a multi-line string.  Returns (list_of_words, labels).
 
@@ -318,6 +371,13 @@ def assemble(src):
         flat = []
         for o in ops:
             flat.extend([q.strip() for q in o.split(",") if q.strip()])
+        if mn == "li":
+            seq = li_sequence(_reg(flat[0]), _imm(flat[1], labels, off))
+            for smn, sops in seq:
+                sw = encode(smn, sops, labels, off) & 0xFFFFFFFF
+                stream[off:off + 4] = sw.to_bytes(4, "little")
+                off += 4
+            continue
         w = encode(mn, flat, labels, off) & 0xFFFFFFFF
         stream[off:off + 4] = w.to_bytes(4, "little")
 
