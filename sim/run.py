@@ -29,6 +29,17 @@ RTL_SRCS = [
     "riscv_core_top.sv",
 ]
 
+# The core-level cache hardening tests live in their own module. Matched by exact
+# name, not by a "test_cache_" prefix: that prefix also catches test_cache_ops in
+# test_core.py, which then selects the wrong module and filters every test out.
+CACHE_HARDENING_TESTS = [
+    "test_cache_1_back_to_back_miss_same_line",
+    "test_cache_2_miss_eviction_index_conflict",
+    "test_cache_3_invalidation_drops_the_line",
+    "test_cache_4_store_then_load_across_miss",
+    "test_cache_5_refill_ordering_two_misses",
+]
+
 ALL_TESTS = [
     "test_alu", "test_muldiv", "test_memory", "test_control", "test_hazards",
     "test_csr", "test_traps", "test_access_fault", "test_random",
@@ -39,9 +50,12 @@ ALL_TESTS = [
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--sim", default=os.environ.get("SIM", "icarus"))
-    ap.add_argument("--suite", default="core", choices=["core", "plic", "pmp"],
+    ap.add_argument("--suite", default="core",
+                    choices=["core", "plic", "pmp", "dcache", "icache", "l2arb", "l2sys"],
                     help="core: full CPU regression; plic: interrupt controller unit test; "
-                         "pmp: PMP matcher unit test")
+                         "pmp: PMP matcher unit test; dcache/icache/l2arb: block-level unit "
+                         "suites that drive the block's own ports; l2sys: the cache "
+                         "subsystem topology (I-cache + D-cache -> L2 arbiter -> memory)")
     ap.add_argument("--testcase", action="append", default=None,
                     help="run only this test (repeatable)")
     ap.add_argument("--clean", action="store_true")
@@ -56,24 +70,48 @@ def main():
         sources = [os.path.join(RTL_DIR, "rv64_plic_lite.sv"),
                    os.path.join(TB_DIR, "tb_plic_top.sv")]
         toplevel, module = "tb_plic_top", "test_plic"
+    elif args.suite == "dcache":
+        # block-level: the D-cache's own request/bus ports, so a test can control
+        # bus backpressure and response timing, which the core cannot reach.
+        sources = [os.path.join(RTL_DIR, "rv64_dcache.sv")]
+        toplevel, module = "rv64_dcache", "test_dcache_unit"
+    elif args.suite == "icache":
+        sources = [os.path.join(RTL_DIR, "rv64_icache.sv")]
+        toplevel, module = "rv64_icache", "test_icache_unit"
+    elif args.suite == "l2arb":
+        sources = [os.path.join(RTL_DIR, "rv64_l2arb.sv")]
+        toplevel, module = "rv64_l2arb", "test_l2arb"
+    elif args.suite == "l2sys":
+        # the arbiter in the topology it was written for: both caches' fill
+        # streams into one memory port through rv64_l2arb.
+        sources = [os.path.join(RTL_DIR, "rv64_l2arb.sv"),
+                   os.path.join(RTL_DIR, "rv64_icache.sv"),
+                   os.path.join(RTL_DIR, "rv64_dcache.sv"),
+                   os.path.join(TB_DIR, "tb_l2sys.sv")]
+        toplevel, module = "tb_l2sys", "test_l2sys"
     else:
         sources = [os.path.join(RTL_DIR, f) for f in RTL_SRCS]
         sources.append(os.path.join(TB_DIR, "tb_core_top.sv"))
         toplevel, module = "tb_core_top", "test_core"
-    if any(t.startswith("test_two_store") for t in args.testcase):
+    # `args.testcase or []`: without it, `run.py` with no --testcase raised
+    # TypeError instead of running the whole suite.
+    tests = args.testcase or []
+    if any(t.startswith("test_two_store") for t in tests):
         toplevel, module = "tb_core_top", "tb_two_store"
-    if any(t.startswith("test_alu_matrix") for t in args.testcase):
+    if any(t.startswith("test_alu_matrix") for t in tests):
         toplevel, module = "tb_core_top", "test_alu_matrix"
     if any(t.startswith(("test_alu_all", "test_lsu_all", "test_posit_quire", "test_coverage_bins"))
-           for t in args.testcase):
+           for t in tests):
         toplevel, module = "tb_core_top", "test_alu_lsu_num"
-    if any(t.startswith("test_scenario") for t in args.testcase):
+    if any(t.startswith("test_scenario") for t in tests):
         toplevel, module = "tb_core_top", "test_scenarios"
-    if any(t.startswith("test_li") for t in args.testcase):
+    if any(t in CACHE_HARDENING_TESTS for t in tests):
+        toplevel, module = "tb_core_top", "test_cache_hardening"
+    if any(t.startswith("test_li") for t in tests):
         toplevel, module = "tb_core_top", "tb_li"
-    if any(t.startswith("test_pss_matrix") for t in args.testcase):
+    if any(t.startswith("test_pss_matrix") for t in tests):
         toplevel, module = "tb_core_top", "test_pss_matrix"
-    if any(t.startswith("test_pyuvm_") for t in args.testcase):
+    if any(t.startswith("test_pyuvm_") for t in tests):
         toplevel, module = "tb_core_top", "test_pyuvm"
 
     build_dir = os.path.join(SIM_DIR, f"sim_build_{args.sim}_{args.suite}")

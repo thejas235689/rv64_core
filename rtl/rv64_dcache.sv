@@ -102,6 +102,15 @@ module rv64_dcache (
   logic        err_q;
   logic        bypass_q;
   logic        hit_pulse_q, miss_pulse_q;
+  // Set when cbo.inval targets the line whose fill is in flight. Without it the
+  // D_FILL branch's `valid_q <= 1` is the later assignment in this always_ff and
+  // reinstates a block the invalidation had just dropped -- measured with
+  // tb/cocotb/test_dcache_unit.py::test_dcache_unit_invalidate_during_fill, which
+  // failed on the previous RTL with the line still valid and holding the stale
+  // beat. The instruction cache already refuses to serve a pending response from
+  // a cleared line (rv64_icache.sv, the `invalidate` branch); this is the same
+  // guarantee for the data side.
+  logic        inval_fill_q;
 
 
   assign req_ready = (dst == D_IDLE);
@@ -139,6 +148,7 @@ module rv64_dcache (
       rdata_q    <= 64'd0;
       err_q      <= 1'b0;
       bypass_q   <= 1'b0;
+      inval_fill_q <= 1'b0;
       hit_pulse_q<= 1'b0;
       miss_pulse_q <= 1'b0;
       hit_count  <= 32'd0;
@@ -153,6 +163,10 @@ module rv64_dcache (
       // cbo.inval completes in the cycle it is asked
       if (mgmt_valid && !mgmt_zero) begin
         if (tag_q[midx] == mtag) valid_q[midx] <= 1'b0;
+        // ...and if that block is the one currently being filled, the fill must
+        // not install it afterwards
+        if ((dst == D_FILL) && (midx == addr_q[8:3]) && (mtag == addr_q[63:9]))
+          inval_fill_q <= 1'b1;
       end
       // cbo.zero: start the eight-beat fill with zeros
       if (mgmt_valid && mgmt_zero && (dst == D_IDLE)) begin
@@ -214,12 +228,15 @@ module rv64_dcache (
         D_FILL: begin
           if (bus_rsp_valid) begin
             // BYPASS means streaming: return the data but do not allocate, so
-            // the scan does not evict the working set
-            if (!bus_rsp_error && !bypass_q) begin
+            // the scan does not evict the working set. inval_fill_q means the
+            // block was invalidated while this fill was outstanding, so the
+            // invalidation wins and the beat is returned but not cached.
+            if (!bus_rsp_error && !bypass_q && !inval_fill_q) begin
               tag_q[addr_q[8:3]]   <= addr_q[63:9];
               data_q[addr_q[8:3]]  <= bus_rsp_rdata;
               valid_q[addr_q[8:3]] <= 1'b1;
             end
+            inval_fill_q <= 1'b0;
             rdata_q <= bus_rsp_rdata;
             err_q   <= bus_rsp_error;
             dst     <= D_DONE;
