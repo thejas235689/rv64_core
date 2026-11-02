@@ -493,6 +493,67 @@ ACCEL_BODY = """
 """
 
 
+
+# ALU / LSU / posit / quire matrix. Constants are built with lui+ori (not addi) so a
+# positive 32-bit value with bit 31 set is not sign-extended, which is the bug that
+# broke the earlier directed test four times.
+from test_core import (num_insn, NUM_QADD, NUM_QSUB, NUM_QMUL, NUM_QCLR,
+                       NUM_QACC, NUM_QGET, NUM_TOINT, NUM_FROMINT)
+
+# posit op codes, from rtl/rv64_num_pkg.sv -- test_core.py only exports the quire ones
+NUM_ADAPT, NUM_ERR = 6, 7
+NUM_PADD, NUM_PSUB, NUM_PMUL, NUM_PDIV = 8, 9, 10, 11
+
+ALU_MATRIX_PROG = """
+    lui   x5, 0x7ffff
+    ori   x5, x5, 0x7ff        # 0x7FFFFFFF  (INT32_MAX)
+    lui   x6, 0x80000          # 0xFFFFFFFF80000000 (INT32_MIN, sign-extended)
+    add   x7, x5, x6
+    sub   x8, x5, x6
+    and   x9, x5, x6
+    or    x10, x5, x6
+    xor   x11, x5, x6
+    slt   x12, x5, x6
+    sltu  x13, x5, x6
+
+    addi  x14, x5, -1
+    andi  x15, x5, 0x7ff
+    ori   x16, x5, 0x001
+    xori  x17, x5, 0x7ff
+    slti  x18, x5, 0
+    sltiu x19, x5, 0
+
+    # LSU: every width, signed and unsigned
+    addi  x20, x0, 0x2a
+    sb    x20, 256(x0)
+    sh    x20, 264(x0)
+    sw    x20, 272(x0)
+    sd    x20, 280(x0)
+    lb    x21, 256(x0)
+    lbu   x22, 256(x0)
+    lh    x23, 264(x0)
+    lhu   x24, 264(x0)
+    lw    x25, 272(x0)
+    lwu   x26, 272(x0)
+    ld    x27, 280(x0)
+
+    # posit: int -> posit -> PADD -> int
+    addi  x1, x0, 3
+    addi  x2, x0, 5
+    .word 0x{fromint1:08x}
+    .word 0x{fromint2:08x}
+    .word 0x{padd:08x}
+    .word 0x{toint:08x}
+
+    # quire: clear, accumulate two products, read back
+    .word 0x{qclr:08x}
+    .word 0x{qacc:08x}
+    .word 0x{qacc:08x}
+    .word 0x{qget:08x}
+
+    ecall
+"""
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     print("generating UVM golden vectors from the Python ISS:")
@@ -514,6 +575,14 @@ def main():
     build("xcetask", pad_to(XCETASK_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
     build("amcce", pad_to(AMCCE_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
     build("accel", pad_to(ACCEL_BODY, 0x1000, ".word 0") + TRAP_HANDLER)
+    build("alu_matrix", ALU_MATRIX_PROG.format(
+        fromint1=num_insn(NUM_FROMINT, rd=1, rs1=1),
+        fromint2=num_insn(NUM_FROMINT, rd=2, rs1=2),
+        padd=num_insn(NUM_PADD, rd=3, rs1=1, rs2=2),
+        toint=num_insn(NUM_TOINT, rd=8, rs1=3),
+        qclr=num_insn(NUM_QCLR),
+        qacc=num_insn(NUM_QACC, rs1=1, rs2=2),
+        qget=num_insn(NUM_QGET, rd=9)))
     print(f"vectors written to {OUT}")
 
 
