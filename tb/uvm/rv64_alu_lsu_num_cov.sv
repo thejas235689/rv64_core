@@ -23,8 +23,7 @@ typedef enum {
   OC_FFFFFFFF, OC_POW2, OC_NEG_POW2, OC_ALL_ONES, OC_OTHER
 } oc_class_e;
 
-class rv64_alu_lsu_num_cov extends uvm_subscriber#(rv64_retire_item);
-  `uvm_component_utils(rv64_alu_lsu_num_cov)
+class rv64_alu_lsu_num_cov;
 
   ac_class_e ac;
   oc_class_e oc;
@@ -82,7 +81,9 @@ class rv64_alu_lsu_num_cov extends uvm_subscriber#(rv64_retire_item);
     cg_alu = new(); cg_lsu = new(); cg_num = new();
   endfunction
 
-  function void write(rv64_retire_item t);
+  // called by rv64_coverage, which owns the analysis export
+  function void sample_item(rv64_retire_item t);
+
     ac = classify_ac(t.insn);
     oc = classify_oc(t.wdata);
     is_load  = classify_load(t.insn);
@@ -151,12 +152,16 @@ class rv64_alu_lsu_num_cov extends uvm_subscriber#(rv64_retire_item);
     endcase
   endfunction
 
-  function void report_phase(uvm_phase phase);
+  function void report();
     // $display, not uvm_info: the regression runner filters simulator output and a
     // coverage number nobody sees is a coverage number nobody acts on.
-    $display("COVERAGE alu  = %0.1f%%  (%0d samples)", cg_alu.get_inst_coverage(), samples);
-    $display("COVERAGE lsu  = %0.1f%%", cg_lsu.get_inst_coverage());
-    $display("COVERAGE num  = %0.1f%%", cg_num.get_inst_coverage());
+    // uvm_info with ID "COV": sim/run_uvm.sh greps for UVM_INFO.*[COV] and drops
+    // everything else, including $display. The log filter, not the simulator, decides
+    // what a reader sees.
+    `uvm_info("COV", $sformatf("alu  = %0.1f%%  (%0d samples)",
+              cg_alu.get_inst_coverage(), samples), UVM_LOW)
+    `uvm_info("COV", $sformatf("lsu  = %0.1f%%", cg_lsu.get_inst_coverage()), UVM_LOW)
+    `uvm_info("COV", $sformatf("num  = %0.1f%%", cg_num.get_inst_coverage()), UVM_LOW)
   endfunction
 endclass
 

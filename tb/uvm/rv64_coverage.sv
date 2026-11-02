@@ -82,9 +82,13 @@ class rv64_coverage extends uvm_subscriber #(rv64_retire_item);
     x_wr_class: cross cp_class, cp_wr;
   endgroup
 
+  // an analysis port has ONE export, so a second subscriber must chain off this one
+  rv64_alu_lsu_num_cov alu_cov;
+
   function new(string name, uvm_component parent);
     super.new(name, parent);
     cg_retire = new();
+    alu_cov = new("alu_cov");
   endfunction
 
   function void write(rv64_retire_item t);
@@ -92,10 +96,12 @@ class rv64_coverage extends uvm_subscriber #(rv64_retire_item);
     we  = t.we;
     rd  = t.waddr;
     cg_retire.sample();
+    alu_cov.sample_item(t);
   endfunction
 
   function void report_phase(uvm_phase phase);
     `uvm_info("COV", $sformatf("retire coverage = %0.1f%%", cg_retire.get_inst_coverage()), UVM_LOW)
+    if (alu_cov != null) alu_cov.report();
   endfunction
 endclass
 
