@@ -154,12 +154,20 @@ async def test_scenario_4_lrsc(dut):
 
 @cocotb.test()
 async def test_scenario_5_tlb_flush(dut):
-    """TLB invalidation during an outstanding translation.
+    """sfence.vma: it must retire, and the access after it must still be correct.
 
-    The core runs Sv39 with an identity mapping in the tests, so the invalidation path
-    is exercised through sfence.vma followed by a translation-dependent access. What
-    must hold: the post-flush access still translates correctly and does not use a
-    stale entry.
+    Reachability, measured rather than assumed. This core has no translation in its
+    datapath: rv64_mmu is not instantiated in riscv_core_top, rv64_lsu never consults
+    satp, and satp resets to 0 (MODE=Bare). So there is no cached translation for an
+    sfence to invalidate and no way for a test to reach the TLB from software -- the
+    previous version of this test claimed to exercise invalidation during a
+    translation, which the design cannot do.
+
+    What was actually broken is the instruction itself: 0x12000073 decoded as illegal
+    and trapped with cause 2 at pc 0x8, so the program never reached its load. The
+    assertions below are the reachable ones and are all real: the sfence appears in
+    the retirement trace, nothing traps illegally, satp still reads Bare afterwards,
+    and the post-fence load observes the value the pre-fence store left in memory.
     """
     from rv64_asm import assemble
     src = """
@@ -167,15 +175,25 @@ async def test_scenario_5_tlb_flush(dut):
         sw   x5, 3072(x0)
         sfence.vma x0, x0
         lw   x6, 3072(x0)
+        csrrs x7, satp, x0     # must still be Bare: there was nothing to invalidate
         ecall
     """
     words, _ = assemble(src)
     h = Harness(dut)
     await h.startup(); h.clear(); await h.load(words); await h.reset()
     await h.run(max_cycles=3000, stop_on_ecall=True)
-    assert 2 not in [c for (_, c) in h.traps], "illegal trap"
-    check_regs(h, {6: 0x33}, "tlb_flush", dut)
+    causes = [c for (_, c) in h.traps]
+    assert 2 not in causes, f"illegal trap: {causes[:3]}"
+    assert causes == [11], f"unexpected trap(s) before the final ecall: {causes}"
+    # the fence itself must have retired, not been swallowed
+    fence_pc = 8
+    retired = [t for t in h.trace if t[0] == fence_pc]
+    assert retired, "sfence.vma never retired"
+    assert retired[0][1] == 0x12000073, (
+        f"pc 8 retired {retired[0][1]:#010x}, expected sfence.vma x0,x0 = 0x12000073")
     cov("scenario.tlb_flush")
+    # x7 = satp: MODE[63:60] = 0 is Bare, which is why the flush has nothing to do
+    check_regs(h, {6: 0x33, 7: 0}, "tlb_flush", dut)
 
 
 @cocotb.test()
@@ -232,22 +250,35 @@ async def test_scenario_7_reset_during_refill(dut):
 
 @cocotb.test()
 async def test_scenario_8_fp_special(dut):
-    """FPU special values: NaN, infinity and subnormal inputs.
+    """FPU special values: +infinity through fadd.d, and a subnormal through it.
 
-    The scalar FPU implements fld/fsd/fadd.d/fsub.d/fmv.*/fcsr. fdiv and fsqrt are not
-    implemented (misa advertises F but those trap), so this test covers the operations
-    that exist and records which special classes were reached.
+    The scalar FPU implements fld/fsd/fadd.d/fsub.d/fcsr. fdiv and fsqrt are not
+    implemented (misa advertises F but those trap), so this covers the operations that
+    exist.
+
+    The constants are built with `li`, not `lui`. The old version used
+    `lui x5, 0x7ff00` for +inf; lui only loads bits 31:12, so that produced
+    0x000000007FF00000 -- a *subnormal*, not 0x7FF0000000000000. Measured: fadd.d of
+    that value with itself returned 0x00000000FFE00000, which is the correct doubling
+    of the subnormal the program had actually stored, and the FP adder returns
+    0x7FF0000000000000 for a real inf + inf. The expectation was right; the constant
+    was not.
     """
     from rv64_asm import assemble
-    # +inf and NaN as raw doubles, loaded through memory then fld
     src = """
-        lui  x5, 0x7ff00
-        sd   x5, 128(x0)          # +inf
+        li   x5, 0x7FF0000000000000   # +inf, as a raw binary64
+        sd   x5, 128(x0)
         fld  f1, 128(x0)
         fld  f2, 128(x0)
-        fadd.d f3, f1, f2         # inf + inf = inf
+        fadd.d f3, f1, f2            # inf + inf = inf
         fsd  f3, 136(x0)
         ld   x6, 136(x0)
+        li   x5, 0x000000007FF00000  # smallest-but-one subnormal class value
+        sd   x5, 144(x0)
+        fld  f4, 144(x0)
+        fadd.d f5, f4, f4            # doubling a subnormal stays exact
+        fsd  f5, 152(x0)
+        ld   x8, 152(x0)
         ecall
     """
     words, _ = assemble(src)
@@ -257,7 +288,8 @@ async def test_scenario_8_fp_special(dut):
     causes = [c for (_, c) in h.traps]
     assert 2 not in causes, f"FP special values trapped as illegal: {causes[:3]}"
     cov("scenario.fp_special.inf")
-    check_regs(h, {6: 0x7FF0000000000000}, "fp_inf", dut)
+    cov("scenario.fp_special.subnormal")
+    check_regs(h, {6: 0x7FF0000000000000, 8: 0x00000000FFE00000}, "fp_special", dut)
 
 
 @cocotb.test()

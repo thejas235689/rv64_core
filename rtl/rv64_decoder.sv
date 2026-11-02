@@ -455,7 +455,20 @@ module rv64_decoder (
       // -------------------------------------------------------------- SYSTEM
       7'b1110011: begin
         if (funct3 == 3'b000) begin
-          unique case (imm12)
+          if (funct7 == 7'b0001001) begin
+            // SFENCE.VMA rs1, rs2 (privileged spec 1.12). It was missing here and
+            // 0x12000073 trapped with cause 2 at pc 0x8 -- measured, not inferred.
+            //
+            // No TLB is in the datapath to invalidate: rv64_mmu is not
+            // instantiated in riscv_core_top, the LSU never consults satp, and
+            // satp resets to 0 (MODE=Bare), so every access is already bare.
+            // Retiring the fence as an ordering no-op is what the spec permits an
+            // implementation with no cached translations to do; trapping it as
+            // illegal is not permitted, since sfence.vma is mandatory once Sv39 is
+            // implemented. When the MMU is wired into the address path this must
+            // pulse its TLB flush instead.
+            ctrl.is_fence = 1'b1;
+          end else unique case (imm12)
             12'h000: ctrl.is_ecall  = 1'b1;
             12'h001: ctrl.is_ebreak = 1'b1;
             12'h302: ctrl.is_mret   = 1'b1;

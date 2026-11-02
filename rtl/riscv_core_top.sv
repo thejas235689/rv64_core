@@ -1423,7 +1423,24 @@ module riscv_core_top #(
     end else if (flush_front) begin
       id_ex_v <= 1'b0;
     end else if (mem_stall || ex_hold) begin
-      // hold the EX stage
+      // Hold the EX stage -- but CAPTURE a forwarded operand first.
+      //
+      // The forward applied in EX (see op_a/op_b above) is valid in exactly the
+      // cycle the producer sits in WB, and mem_wb is bubbled for as long as
+      // mem_stall is high. An instruction held in EX behind a multi-cycle load
+      // therefore sees the forwarded value once and then never again, and it
+      // commits from the stale register-file read it latched in ID.
+      //
+      // Measured on many_mem_ops: `add x9,x6,x7` had op_b=2 at the cycle lw x7
+      // retired (mem_wb rd=7 wd=2), op_b=0 for the 24 cycles it was then held by
+      // the lw x8 in MEM, and committed x9=1 instead of 3 at cycle 88. Latching
+      // the forwarded value into the operand register makes the capture
+      // independent of how long the stall lasts. ex_mem is assigned last so it
+      // keeps the same priority as the EX operand mux.
+      if (memwb_fwd_ok && (mem_wb_rd == id_ex_rs1)) id_ex_rs1_data <= mem_wb_wdata;
+      if (memwb_fwd_ok && (mem_wb_rd == id_ex_rs2)) id_ex_rs2_data <= mem_wb_wdata;
+      if (exmem_fwd_ok && (ex_mem_rd == id_ex_rs1))  id_ex_rs1_data <= ex_mem_wb_val;
+      if (exmem_fwd_ok && (ex_mem_rd == id_ex_rs2))  id_ex_rs2_data <= ex_mem_wb_val;
     end else if (stall_id) begin
       id_ex_v <= 1'b0;                 // bubble while the load completes
     end else if (if_id_v) begin
@@ -1502,7 +1519,11 @@ module riscv_core_top #(
       ex_mem_wb_sel     <= id_ex_ctrl.wb_sel;
       ex_mem_wb_val     <= ex_wb_val;
       ex_mem_addr       <= ex_alu_out;
-      ex_mem_store_data <= op_b;
+      // An FP store takes its data from the FP register file's read port B, not
+      // from the integer file: fsd encodes the SOURCE in the rs2 field, so op_b
+      // held the integer register of the same number. Measured: `fsd f3,136(x0)`
+      // wrote 0 because x3 is 0, while f3 held 0x7FF0000000000000.
+      ex_mem_store_data <= (id_ex_ctrl.is_store && id_ex_is_fp) ? fp_rs2_data : op_b;
       ex_mem_mem_size   <= id_ex_ctrl.mem_size;
       ex_mem_mem_uns    <= id_ex_ctrl.mem_uns;
       ex_mem_is_load    <= id_ex_ctrl.is_load;
