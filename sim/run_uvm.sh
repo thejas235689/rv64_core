@@ -38,10 +38,16 @@ if [ ${#TESTS[@]} -eq 0 ]; then
   TESTS=(rv64_alu_test rv64_mem_test rv64_trap_test rv64_random_test rv64_backpressure_test rv64_isa_small_test rv64_illegal_test rv64_numeric_test rv64_bitmanip_test rv64_csr_test rv64_pmp_test rv64_atomic_test rv64_zifencei_test rv64_memwidth_test rv64_cache_test rv64_frontend_test rv64_sv39_test rv64_debug_test rv64_rvv_test rv64_xcetask_test rv64_amcce_test rv64_accel_test rv64_alu_matrix_test)
 fi
 
+# This list must match sim/run.py's RTL_SRCS: riscv_core_top instantiates every
+# block below, and xezim aborts elaboration on a missing module. The FP sources
+# live in rtl/fpu/, and modexp/clint/uart/clic/rvc_expand/xrv512/vunit/qisa/
+# aiacc/xcetask are all instantiated by the top.
 RTL="rtl/rv64_pkg.sv rtl/rv64_alu.sv rtl/rv64_mdu.sv rtl/rv64_regfile.sv \
 rtl/rv64_decoder.sv rtl/rv64_pmp.sv rtl/rv64_csr.sv rtl/rv64_mmu.sv rtl/rv64_l2arb.sv rtl/rv64_l2cache.sv rtl/rv64_amcce.sv rtl/rv64_dcache.sv rtl/rv64_lsu.sv \
-rtl/rv64_bpu.sv rtl/rv64_predecode.sv rtl/rv64_bootrom.sv rtl/rv64_montmul.sv rtl/rv64_rvc_expand.sv rtl/rv64_fp_add.sv rtl/rv64_fregfile.sv rtl/rv64_sha256.sv rtl/rv64_hmac.sv rtl/rv64_bootauth_hmac.sv rtl/rv64_icache.sv rtl/rv64_fetch.sv rtl/rv64_plic_lite.sv \
+rtl/rv64_bpu.sv rtl/rv64_predecode.sv rtl/rv64_bootrom.sv rtl/rv64_montmul.sv rtl/rv64_modexp.sv rtl/rv64_clint.sv rtl/rv64_uart.sv rtl/rv64_clic.sv \
+rtl/fpu/rv64_fp_add.sv rtl/fpu/rv64_fregfile.sv rtl/rv64_sha256.sv rtl/rv64_hmac.sv rtl/rv64_bootauth_hmac.sv rtl/rv64_icache.sv rtl/rv64_fetch.sv rtl/rv64_plic_lite.sv \
 rtl/rv64_num_pkg.sv rtl/rv64_num_wide.sv rtl/rv64_numfile.sv rtl/rv64_num_unit.sv rtl/rv64_num_csr.sv \
+rtl/rv64_xrv512_file.sv rtl/rv64_xrv512.sv rtl/rv64_vregfile.sv rtl/rv64_vunit.sv rtl/rv64_qisa.sv rtl/rv64_aiacc.sv rtl/rv64_xcetask.sv rtl/rv64_rvc_expand.sv \
 rtl/riscv_core_top.sv"
 
 FAIL=0
@@ -55,6 +61,20 @@ for T in "${TESTS[@]}"; do
       tb/uvm/rv64_uvm_if.sv tb/uvm/rv64_uvm_pkg.sv tb/tb_uvm_top.sv \
       +UVM_TESTNAME="$T" 2>&1)
   echo "$OUT" | grep -E "UVM_(ERROR|FATAL|INFO).*(\[SB\]|\[TEST\]|\[COV\]|\[MEMDRV\])" | tail -8
+  # A simulator-level failure (missing source, elaboration error, abort) leaves no
+  # UVM_ERROR line behind, so grepping the report alone scores it as a pass. Check
+  # the tool itself first: a run that never started is not a run that passed.
+  if echo "$OUT" | grep -qE "^(Simulation error|Error):|not found|Simulation aborted"; then
+    echo "$OUT" | grep -E "^(Simulation error|Error):|not found|Simulation aborted" | head -3
+    echo "  RESULT: FAIL (simulator did not complete the run)"
+    FAIL=$((FAIL+1))
+    continue
+  fi
+  if ! echo "$OUT" | grep -q "UVM Report Summary"; then
+    echo "  RESULT: FAIL (no UVM report summary -- the test did not run to report_phase)"
+    FAIL=$((FAIL+1))
+    continue
+  fi
   if echo "$OUT" | grep -qE "UVM_ERROR :|UVM_FATAL :"; then
     NERR=$(echo "$OUT" | grep -E "UVM_ERROR :" | tail -1 | awk '{print $NF}')
     NFAT=$(echo "$OUT" | grep -E "UVM_FATAL :" | tail -1 | awk '{print $NF}')

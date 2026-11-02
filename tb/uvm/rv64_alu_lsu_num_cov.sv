@@ -76,8 +76,11 @@ class rv64_alu_lsu_num_cov;
     cp_wide: coverpoint is_wide;
   endgroup
 
-  function new(string name, uvm_component parent);
-    super.new(name, parent);
+  // Plain class, not a uvm_component: it hangs off rv64_coverage's write() rather
+  // than subscribing to the analysis port itself. (It used to declare
+  // new(string, uvm_component parent) and call super.new(name, parent), which a
+  // class with no base class does not have.)
+  function new(string name = "alu_cov");
     cg_alu = new(); cg_lsu = new(); cg_num = new();
   endfunction
 
