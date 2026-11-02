@@ -31,6 +31,7 @@ class rv64_alu_lsu_num_cov extends uvm_subscriber#(rv64_retire_item);
   bit        is_load, is_store, is_wide;
   bit [2:0]  width;          // 1,2,4,8 bytes
   bit [3:0]  align_off;      // 0,1,2,4,8
+  int        samples = 0;
 
   covergroup cg_alu;
     cp_ac: coverpoint ac {
@@ -89,6 +90,7 @@ class rv64_alu_lsu_num_cov extends uvm_subscriber#(rv64_retire_item);
     width    = classify_width(t.insn);
     align_off= 4'(t.wdata & 4'hF);
     is_wide  = (t.wdata[63:32] != 0);
+    samples++;
     cg_alu.sample(); cg_lsu.sample(); cg_num.sample();
   endfunction
 
@@ -150,9 +152,11 @@ class rv64_alu_lsu_num_cov extends uvm_subscriber#(rv64_retire_item);
   endfunction
 
   function void report_phase(uvm_phase phase);
-    `uvm_info("COV", $sformatf("alu  = %0.1f%%", cg_alu.get_inst_coverage()), UVM_LOW)
-    `uvm_info("COV", $sformatf("lsu  = %0.1f%%", cg_lsu.get_inst_coverage()), UVM_LOW)
-    `uvm_info("COV", $sformatf("num  = %0.1f%%", cg_num.get_inst_coverage()), UVM_LOW)
+    // $display, not uvm_info: the regression runner filters simulator output and a
+    // coverage number nobody sees is a coverage number nobody acts on.
+    $display("COVERAGE alu  = %0.1f%%  (%0d samples)", cg_alu.get_inst_coverage(), samples);
+    $display("COVERAGE lsu  = %0.1f%%", cg_lsu.get_inst_coverage());
+    $display("COVERAGE num  = %0.1f%%", cg_num.get_inst_coverage());
   endfunction
 endclass
 
