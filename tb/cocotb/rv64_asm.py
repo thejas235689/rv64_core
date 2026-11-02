@@ -95,6 +95,51 @@ BRANCHES = {"beq": 0, "bne": 1, "blt": 4, "bge": 5, "bltu": 6, "bgeu": 7}
 CSR_OPS = {"csrrw": 1, "csrrs": 2, "csrrc": 3, "csrrwi": 5, "csrrsi": 6, "csrrci": 7}
 
 
+
+# ---- atomics, sfence, and scalar F ------------------------------------------
+# funct5 << 27 | rs2 << 20 | rs1 << 15 | funct3 << 12 | rd << 7 | 0x2F
+AMO_FUNCT5 = {
+    "lr.w": 0x02, "sc.w": 0x03,
+    "amoswap.w": 0x01, "amoadd.w": 0x00, "amoxor.w": 0x04,
+    "amoand.w": 0x0C, "amoor.w": 0x08, "amomin.w": 0x10,
+    "amomax.w": 0x14, "amominu.w": 0x18, "amomaxu.w": 0x1C,
+    "lr.d": 0x02, "sc.d": 0x03,
+    "amoswap.d": 0x01, "amoadd.d": 0x00, "amoxor.d": 0x04,
+    "amoand.d": 0x0C, "amoor.d": 0x08, "amomin.d": 0x10,
+    "amomax.d": 0x14, "amominu.d": 0x18, "amomaxu.d": 0x1C,
+}
+
+# F/D loads and stores: opcode 0x07 / 0x27, funct3 selects width
+FLOADS  = {"flw": 2, "fld": 3}
+FSTORES = {"fsw": 2, "fsd": 3}
+
+# F/D arithmetic: opcode 0x53, funct7 selects the operation, fmt bit 0 = double
+F_ARITH = {
+    "fadd.s": 0x00, "fadd.d": 0x01,
+    "fsub.s": 0x04, "fsub.d": 0x05,
+    "fmul.s": 0x08, "fmul.d": 0x09,
+    "fdiv.s": 0x0C, "fdiv.d": 0x0D,
+    "fsqrt.s": 0x2C, "fsqrt.d": 0x2D,
+    "fsgnj.s": 0x10, "fsgnj.d": 0x11,
+    "fsgnjn.s": 0x10, "fsgnjn.d": 0x11,
+    "fsgnjx.s": 0x10, "fsgnjx.d": 0x11,
+    "fmin.s": 0x14, "fmin.d": 0x15,
+    "fmax.s": 0x14, "fmax.d": 0x15,
+}
+FSGNJ_F3 = {"fsgnj": 0, "fsgnjn": 1, "fsgnjx": 2}
+FMINMAX_F3 = {"fmin": 0, "fmax": 1}
+
+# moves between integer and FP register files
+FMV_X_F = {"fmv.x.w": (0x70, 0), "fmv.x.d": (0x71, 0),
+           "fmv.w.x": (0x78, 0), "fmv.d.x": (0x79, 0)}
+
+def _freg(tok):
+    """f0..f31 -> index."""
+    t = tok.strip()
+    if not t.startswith("f"):
+        raise ValueError(f"expected an f-register, got {t!r}")
+    return int(t[1:])
+
 def _reg(tok):
     t = tok.strip()
     if t in REGS:
@@ -188,6 +233,46 @@ def encode(mn, ops, labels=None, here=0):
         return 0x0100000F
     if mn == "nop":
         return _i(0, 0, 0, 0, 0x13)
+    if mn in AMO_FUNCT5:
+        f5 = AMO_FUNCT5[mn]
+        f3 = 2 if mn.endswith(".w") else 3
+        if mn.startswith("lr"):
+            return (f5 << 27) | (0 << 20) | (_reg(ops[1].split("(")[1].rstrip(")")) << 15) \
+                   | (f3 << 12) | (_reg(ops[0]) << 7) | 0x2F
+        if mn.startswith("sc"):
+            rs2 = _reg(ops[1])
+            rs1 = _reg(ops[2].split("(")[1].rstrip(")"))
+        else:
+            rs2 = _reg(ops[1])
+            rs1 = _reg(ops[2].split("(")[1].rstrip(")"))
+        return (f5 << 27) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (_reg(ops[0]) << 7) | 0x2F
+    if mn == "sfence.vma":
+        rs1 = _reg(ops[0]) if len(ops) > 0 else 0
+        rs2 = _reg(ops[1]) if len(ops) > 1 else 0
+        return (0x09 << 25) | (rs2 << 20) | (rs1 << 15) | (0 << 12) | 0x73
+    if mn in FLOADS:
+        off = ops[1].split("(")[0] or "0"
+        base = _reg(ops[1].split("(")[1].rstrip(")"))
+        return _i(_imm(off, labels, here), base, FLOADS[mn], _freg(ops[0]), 0x07)
+    if mn in FSTORES:
+        off = ops[1].split("(")[0] or "0"
+        base = _reg(ops[1].split("(")[1].rstrip(")"))
+        return _s(_imm(off, labels, here), _freg(ops[0]), base, FSTORES[mn], 0x27)
+    if mn in F_ARITH:
+        f7 = F_ARITH[mn]
+        base = mn.split(".")[0]
+        if base in FSGNJ_F3:
+            return _r(f7, _freg(ops[2]), _freg(ops[1]), FSGNJ_F3[base], _freg(ops[0]), op=0x53)
+        if base in FMINMAX_F3:
+            return _r(f7, _freg(ops[2]), _freg(ops[1]), FMINMAX_F3[base], _freg(ops[0]), op=0x53)
+        if base in ("fsqrt",):
+            return _r(f7, 0, _freg(ops[1]), 0, _freg(ops[0]), op=0x53)
+        return _r(f7, _freg(ops[2]), _freg(ops[1]), 0, _freg(ops[0]), op=0x53)
+    if mn in FMV_X_F:
+        f7, f3 = FMV_X_F[mn]
+        if mn.startswith("fmv.x"):
+            return _r(f7, 0, _freg(ops[1]), f3, _reg(ops[0]), op=0x53)
+        return _r(f7, 0, _reg(ops[1]), f3, _freg(ops[0]), op=0x53)
     raise ValueError(f"unknown mnemonic {mn!r}")
 
 
