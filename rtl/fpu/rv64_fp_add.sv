@@ -155,25 +155,38 @@ module rv64_fp_add (
     flag_invalid = 1'b0;
     flag_inexact = inexact;
 
+    // Every special case clears flag_inexact: the datapath's inexact is computed
+    // from whatever was in the alignment field, which for an infinity or a zero
+    // operand is stale rather than meaningful.  fp_add_model.py returns inexact
+    // = 0 for all of these, and the unit test compares the flag as well as the
+    // result, which is how this was found.
     if (a_is_nan || b_is_nan) begin
       result       = QNAN;
       flag_invalid = 1'b0;                    // a quiet NaN propagates silently
+      flag_inexact = 1'b0;
     end else if (a_is_inf && b_is_inf && (sa != sb_eff)) begin
       result       = QNAN;                    // inf + -inf
       flag_invalid = 1'b1;
+      flag_inexact = 1'b0;
     end else if (a_is_inf) begin
-      result = {sa, 11'h7FF, 52'd0};
+      result       = {sa, 11'h7FF, 52'd0};
+      flag_inexact = 1'b0;
     end else if (b_is_inf) begin
-      result = {sb_eff, 11'h7FF, 52'd0};
+      result       = {sb_eff, 11'h7FF, 52'd0};
+      flag_inexact = 1'b0;
     end else if (a_is_zero && b_is_zero) begin
       // -0 + -0 = -0; any other zero combination is +0
-      result = ((sa && sb_eff) ? 64'h8000_0000_0000_0000 : 64'd0);
+      result       = ((sa && sb_eff) ? 64'h8000_0000_0000_0000 : 64'd0);
+      flag_inexact = 1'b0;
     end else if (a_is_zero) begin
-      result = {sb_eff, eb, fb};
+      result       = {sb_eff, eb, fb};
+      flag_inexact = 1'b0;
     end else if (b_is_zero) begin
-      result = a;
+      result       = a;
+      flag_inexact = 1'b0;
     end else if (norm == 59'd0) begin
-      result = 64'd0;                         // exact cancellation gives +0
+      result       = 64'd0;                         // exact cancellation gives +0
+      flag_inexact = 1'b0;
     end else if (exp_norm >= 11'h7FF) begin
       result       = {sign_out, 11'h7FF, 52'd0};   // overflow saturates to infinity
       flag_inexact = 1'b1;

@@ -528,12 +528,18 @@ module riscv_core_top #(
   logic        dec_is_fp;
   logic [63:0] fp_rs1_data, fp_rs2_data;
   logic [63:0] ex_fp_out, ex_fp_a, ex_fp_b;
-  logic        ex_fp_sub;
+  logic [4:0]  ex_fp_flags;
   logic        id_ex_is_fp, ex_mem_is_fp, mem_wb_is_fp;
   logic [63:0] mem_wb_fp_wdata;
   logic        fp_flag_invalid, fp_flag_inexact;
-  logic        id_ex_fp_sub, ex_mem_fp_sub, mem_wb_fp_sub;
+  logic [4:0]  id_ex_fp_op;
+  logic [2:0]  id_ex_fp_f3;
   logic        id_ex_fp_src, ex_mem_fp_src, mem_wb_fp_src;
+  logic [2:0]  csr_frm;
+  // EX-stage integer operands, with forwarding.  Declared here rather than in the
+  // EX section because fcvt.d.* feeds the FPU from the integer file and that
+  // instantiation sits above the EX stage in the file.
+  logic [63:0] op_a, op_b;
 
   // ===========================================================================
   // Interrupt controller. Was verified standalone and instantiated nowhere; the
@@ -713,14 +719,123 @@ module riscv_core_top #(
     .rdata_b (fp_rs2_data)
   );
 
+  // ===========================================================================
+  // Scalar double-precision datapath.
+  //
+  // Every block is combinational and they all see the operands at once; the
+  // result is selected by id_ex_fp_op at the bottom.  That costs area (a
+  // synthesizer will not merge the five datapaths) but it keeps the EX stage
+  // single-cycle, which is what the pipeline in this core already assumes.  The
+  // divider and the square root take an `enable` so their 55/56-step iterative
+  // chains do not re-evaluate on every cycle the operands happen to change.
+  //
+  // Rounding mode: funct3 for the instruction, or frm from fcsr when funct3 is
+  // 7 (DYN).  fadd.d/fsub.d ignore it -- rv64_fp_add is round-to-nearest-even
+  // only and is left untouched, since it is the one verified block here.
+  // ===========================================================================
+  logic [2:0]  fp_rm_eff;
+  logic [63:0] fp_mul_out, fp_div_out, fp_sqrt_out, fp_cvt_out, fp_cmp_out;
+  logic [4:0]  fp_mul_flags, fp_div_flags, fp_sqrt_flags, fp_cvt_flags, fp_cmp_flags;
+  logic [4:0]  fp_add_flags;
+
+  assign fp_rm_eff = (id_ex_fp_f3 == 3'd7) ? csr_frm : id_ex_fp_f3;
+
   rv64_fp_add u_fp_add (
-    .sub          (id_ex_fp_sub),
+    .sub          (id_ex_fp_op == rv64_pkg::FP_SUB),
     .a            (fp_rs1_data),
     .b            (fp_rs2_data),
-    .result       (ex_fp_out),
+    .result       (ex_fp_a),          // adder result, muxed into ex_fp_out below
     .flag_invalid (fp_flag_invalid),
     .flag_inexact (fp_flag_inexact)
   );
+
+  rv64_fp_mul u_fp_mul (
+    .rm     (fp_rm_eff),
+    .a      (fp_rs1_data),
+    .b      (fp_rs2_data),
+    .result (fp_mul_out),
+    .flags  (fp_mul_flags)
+  );
+
+  rv64_fp_div u_fp_div (
+    .enable (id_ex_fp_op == rv64_pkg::FP_DIV),
+    .rm     (fp_rm_eff),
+    .a      (fp_rs1_data),
+    .b      (fp_rs2_data),
+    .result (fp_div_out),
+    .flags  (fp_div_flags)
+  );
+
+  rv64_fp_sqrt u_fp_sqrt (
+    .enable (id_ex_fp_op == rv64_pkg::FP_SQRT),
+    .rm     (fp_rm_eff),
+    .a      (fp_rs1_data),
+    .result (fp_sqrt_out),
+    .flags  (fp_sqrt_flags)
+  );
+
+  // fcvt: to_int selects the direction, and the operand comes from the FP file
+  // for double->int and from the integer file for int->double.
+  logic fp_cvt_to_int, fp_cvt_uns, fp_cvt_32;
+  always_comb begin
+    fp_cvt_to_int = (id_ex_fp_op == rv64_pkg::FP_CVT_W_D)  ||
+                    (id_ex_fp_op == rv64_pkg::FP_CVT_WU_D) ||
+                    (id_ex_fp_op == rv64_pkg::FP_CVT_L_D)  ||
+                    (id_ex_fp_op == rv64_pkg::FP_CVT_LU_D);
+    fp_cvt_uns    = (id_ex_fp_op == rv64_pkg::FP_CVT_WU_D) ||
+                    (id_ex_fp_op == rv64_pkg::FP_CVT_LU_D) ||
+                    (id_ex_fp_op == rv64_pkg::FP_CVT_D_WU) ||
+                    (id_ex_fp_op == rv64_pkg::FP_CVT_D_LU);
+    fp_cvt_32     = (id_ex_fp_op == rv64_pkg::FP_CVT_W_D)  ||
+                    (id_ex_fp_op == rv64_pkg::FP_CVT_WU_D) ||
+                    (id_ex_fp_op == rv64_pkg::FP_CVT_D_W)  ||
+                    (id_ex_fp_op == rv64_pkg::FP_CVT_D_WU);
+  end
+
+  rv64_fp_cvt u_fp_cvt (
+    .to_int      (fp_cvt_to_int),
+    .is_unsigned (fp_cvt_uns),
+    .is_32       (fp_cvt_32),
+    .rm          (fp_rm_eff),
+    .src         (fp_cvt_to_int ? fp_rs1_data : op_a),
+    .result      (fp_cvt_out),
+    .flags       (fp_cvt_flags)
+  );
+
+  rv64_fp_cmp u_fp_cmp (
+    .f3     (id_ex_fp_f3),
+    .a      (fp_rs1_data),
+    .b      (fp_rs2_data),
+    .result (fp_cmp_out),
+    .flags  (fp_cmp_flags)
+  );
+
+  // fflags for the adder, which reports invalid and inexact only
+  assign fp_add_flags = {fp_flag_invalid, 3'b000, fp_flag_inexact};
+
+  always_comb begin
+    ex_fp_out   = 64'd0;
+    ex_fp_flags = 5'd0;
+    unique case (id_ex_fp_op)
+      rv64_pkg::FP_ADD,
+      rv64_pkg::FP_SUB:     begin ex_fp_out = ex_fp_a;      ex_fp_flags = fp_add_flags;  end
+      rv64_pkg::FP_MUL:     begin ex_fp_out = fp_mul_out;   ex_fp_flags = fp_mul_flags;  end
+      rv64_pkg::FP_DIV:     begin ex_fp_out = fp_div_out;   ex_fp_flags = fp_div_flags;  end
+      rv64_pkg::FP_SQRT:    begin ex_fp_out = fp_sqrt_out;  ex_fp_flags = fp_sqrt_flags; end
+      rv64_pkg::FP_CVT_W_D,
+      rv64_pkg::FP_CVT_WU_D,
+      rv64_pkg::FP_CVT_L_D,
+      rv64_pkg::FP_CVT_LU_D,
+      rv64_pkg::FP_CVT_D_W,
+      rv64_pkg::FP_CVT_D_WU,
+      rv64_pkg::FP_CVT_D_L,
+      rv64_pkg::FP_CVT_D_LU: begin ex_fp_out = fp_cvt_out;  ex_fp_flags = fp_cvt_flags; end
+      rv64_pkg::FP_FEQ,
+      rv64_pkg::FP_FLT,
+      rv64_pkg::FP_FLE:     begin ex_fp_out = fp_cmp_out;   ex_fp_flags = fp_cmp_flags; end
+      default:              begin ex_fp_out = 64'd0;         ex_fp_flags = 5'd0;         end
+    endcase
+  end
 
   // Write-through on the ID read: the register file write and this read land in
   // the same cycle, so a producer retiring in WB must bypass into ID.  Without
@@ -941,7 +1056,6 @@ module riscv_core_top #(
   // ===========================================================================
   // EX stage
   // ===========================================================================
-  logic [63:0] op_a, op_b;
   logic [63:0] alu_a, alu_b, alu_y;
   logic [63:0] csr_rdata;
   logic [63:0] main_csr_rdata;
@@ -1087,13 +1201,14 @@ module riscv_core_top #(
       WB_PC4:  ex_wb_val = id_ex_pc + (id_ex_rvc ? 64'd2 : 64'd4);
       default: ex_wb_val = ex_alu_out;
     endcase
-    // OP-FP writeback:
-    //   fadd.d / fsub.d  -> adder result  (fp_src=1, is_fp=1)
-    //   fmv.x.d          -> FP operand    (fp_src=1, is_fp=0)
-    //   fmv.d.x          -> integer operand (fp_src=0, is_fp=1)
-    if (id_ex_is_fp && id_ex_fp_src)      ex_wb_val = ex_fp_out;
-    else if (id_ex_fp_src)                ex_wb_val = fp_rs1_data;
-    else if (id_ex_is_fp)                 ex_wb_val = id_ex_rs1_data;
+    // OP-FP writeback.  Anything the FPU datapath computed wins, whichever file
+    // the result goes to -- fcmp and fcvt.*.d write an INTEGER register.
+    //   fadd/fsub/fmul/fdiv/fsqrt/fcvt/fcmp -> FPU result
+    //   fmv.x.d  (fp_op = NONE, fp_src=1)   -> the FP operand, unchanged
+    //   fmv.d.x  (fp_op = NONE, fp_src=0)   -> the integer operand, unchanged
+    if (id_ex_fp_op != rv64_pkg::FP_NONE)  ex_wb_val = ex_fp_out;
+    else if (id_ex_fp_src)                 ex_wb_val = fp_rs1_data;
+    else if (id_ex_is_fp)                  ex_wb_val = op_a;
   end
 
   // ===========================================================================
@@ -1188,6 +1303,14 @@ module riscv_core_top #(
     .accel_csr_rdata(accel_csr_rdata),
     .mstatus_mie    (csr_mstatus_mie),
     .irq_pending    (csr_irq_pending),
+    // The sticky flags are written from EX, the same stage that performs a
+    // csrw fflags.  Doing it at WB would be three cycles late, so a csrw fflags
+    // that immediately follows an FP operation would clear the register and then
+    // have that operation's flags OR'd back in afterwards.
+    .fp_flags_we    (id_ex_v && (id_ex_fp_op != rv64_pkg::FP_NONE) &&
+                     !ex_exc && !trap_taken),
+    .fp_flags       (ex_fp_flags),
+    .frm_o          (csr_frm),
     .retire_valid   (mem_wb_v),
     .mcycle_o       (csr_mcycle),
     .minstret_o     (csr_minstret),
@@ -1453,7 +1576,8 @@ module riscv_core_top #(
       id_ex_rs1      <= dec_rs1;
       id_ex_is_fp   <= dec_ctrl.is_fp;
       id_ex_fp_src  <= dec_ctrl.fp_src;
-      id_ex_fp_sub  <= dec_ctrl.fp_sub;
+      id_ex_fp_op   <= dec_ctrl.fp_op;
+      id_ex_fp_f3   <= dec_ctrl.fp_f3;
       id_ex_rs2      <= dec_rs2;
       id_ex_rd       <= dec_rd;
       id_ex_rs1_data <= rs1_data;

@@ -204,6 +204,28 @@ package rv64_pkg;
   localparam logic [63:0] CAUSE_M_TIMER_INT    = 64'h8000_0000_0000_0007;
   localparam logic [63:0] CAUSE_M_EXT_INT      = 64'h8000_0000_0000_000B;
 
+  // ------------------------------------------------------------------ FPU ops
+  // One hot-ish encoding for the scalar double-precision operations.  FP_NONE
+  // means "not an FPU datapath operation" -- fld/fsd/fmv.* set it, so the
+  // FPU blocks are not asked to compute anything for them.
+  localparam logic [4:0] FP_NONE     = 5'd0;
+  localparam logic [4:0] FP_ADD      = 5'd1;
+  localparam logic [4:0] FP_SUB      = 5'd2;
+  localparam logic [4:0] FP_MUL      = 5'd3;
+  localparam logic [4:0] FP_DIV      = 5'd4;
+  localparam logic [4:0] FP_SQRT     = 5'd5;
+  localparam logic [4:0] FP_CVT_W_D  = 5'd6;
+  localparam logic [4:0] FP_CVT_WU_D = 5'd7;
+  localparam logic [4:0] FP_CVT_L_D  = 5'd8;
+  localparam logic [4:0] FP_CVT_LU_D = 5'd9;
+  localparam logic [4:0] FP_CVT_D_W  = 5'd10;
+  localparam logic [4:0] FP_CVT_D_WU = 5'd11;
+  localparam logic [4:0] FP_CVT_D_L  = 5'd12;
+  localparam logic [4:0] FP_CVT_D_LU = 5'd13;
+  localparam logic [4:0] FP_FEQ      = 5'd14;
+  localparam logic [4:0] FP_FLT      = 5'd15;
+  localparam logic [4:0] FP_FLE      = 5'd16;
+
   // ------------------------------------------------------------------ control
   // Everything the decoder produces for one instruction, carried down the pipe.
   typedef struct packed {
@@ -235,7 +257,8 @@ package rv64_pkg;
     logic        is_ecall;
     logic        is_ebreak;
     logic        is_fp;       // OP-FP: operands and result live in the FP file
-    logic        fp_sub;      // 1 = fsub.d rather than fadd.d
+    logic [4:0]  fp_op;       // FPU operation; FP_NONE for fld/fsd/fmv
+    logic [2:0]  fp_f3;       // raw funct3: rounding mode, or fcmp selector
     logic        fp_src;      // operands come from the FP file
     // ---- hypervisor instructions (H) --------------------------------------
     logic        is_hret;     // 0x20200073

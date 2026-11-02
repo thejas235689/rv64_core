@@ -249,18 +249,82 @@ module rv64_decoder (
 
       // ------------------------------------------------------------------ OP
       // ---- OP-FP (opcode 0x53) ------------------------------------------
-      // Only the binary64 add/sub forms are implemented so far; the rest of the
-      // FP encoding traps as illegal rather than silently doing nothing.
+      // Scalar double-precision only: the fmt bit (funct7[0]) must be 1, so every
+      // single-precision funct7 falls through to the illegal default rather than
+      // executing as its double-precision twin.  funct3 is the rounding mode for
+      // the arithmetic and fcvt forms (7 = DYN, i.e. take frm from fcsr; 5 and 6
+      // are reserved and trap), and an operation selector for fcmp.
       7'b1010011: begin
+        ctrl.fp_f3 = funct3;
         unique case (funct7)
-          7'b0000001: begin                      // fadd.d / fsub.d
-            ctrl.reg_we  = 1'b1;
-            ctrl.is_fp   = 1'b1;                 // result -> FP file
-            ctrl.fp_src  = 1'b1;                 // operands from FP file
-            ctrl.fp_sub  = funct3[0];            // 0 = fadd.d, 1 = fsub.d
-            ctrl.wb_sel  = WB_ALU;               // unused for FP, kept defined
+          // fadd.d / fsub.d / fmul.d / fdiv.d -- funct3 is the rounding mode
+          7'b0000001, 7'b0000101, 7'b0001001, 7'b0001101: begin
+            ctrl.reg_we = 1'b1;
+            ctrl.is_fp  = 1'b1;                  // result -> FP file
+            ctrl.fp_src = 1'b1;                  // operands from FP file
+            ctrl.wb_sel = WB_ALU;                // unused for FP, kept defined
+            if      (funct7 == 7'b0000001) ctrl.fp_op = FP_ADD;
+            else if (funct7 == 7'b0000101) ctrl.fp_op = FP_SUB;
+            else if (funct7 == 7'b0001001) ctrl.fp_op = FP_MUL;
+            else                           ctrl.fp_op = FP_DIV;
+            if ((funct3 == 3'd5) || (funct3 == 3'd6)) ctrl.illegal = 1'b1;
           end
-          7'b1110000: begin                      // fmv.x.d: FP -> integer
+          7'b0101101: begin                      // fsqrt.d (rs2 must be 0)
+            if (rs2 == 5'd0) begin
+              ctrl.reg_we = 1'b1;
+              ctrl.is_fp  = 1'b1;
+              ctrl.fp_src = 1'b1;
+              ctrl.fp_op  = FP_SQRT;
+              ctrl.wb_sel = WB_ALU;
+              if ((funct3 == 3'd5) || (funct3 == 3'd6)) ctrl.illegal = 1'b1;
+            end else ctrl.illegal = 1'b1;
+          end
+          // feq.d / flt.d / fle.d -- funct7 0x51 = 7'b1010001.  (This was
+          // decoded as 7'b0101001, i.e. 0x29, which no FP compare uses, so every
+          // feq.d/flt.d/fle.d trapped as illegal while the assembler emitted the
+          // correct 0x51 encoding.)
+          7'b1010001: begin
+            if (funct3 <= 3'd2) begin
+              ctrl.reg_we = 1'b1;
+              ctrl.is_fp  = 1'b0;                // result -> integer file
+              ctrl.fp_src = 1'b1;                // operands from FP file
+              ctrl.wb_sel = WB_ALU;
+              ctrl.fp_op  = (funct3 == 3'd2) ? FP_FEQ :
+                            (funct3 == 3'd1) ? FP_FLT : FP_FLE;
+            end else ctrl.illegal = 1'b1;
+          end
+          // fcvt.w.d / wu / l / lu -- rs2 selects, funct3 is the rounding mode
+          7'b1100001: begin
+            if (rs2 <= 5'd3) begin
+              ctrl.reg_we = 1'b1;
+              ctrl.is_fp  = 1'b0;                // result -> integer file
+              ctrl.fp_src = 1'b1;                // operand from FP file
+              ctrl.wb_sel = WB_ALU;
+              ctrl.fp_op  = (rs2 == 5'd0) ? FP_CVT_W_D  :
+                            (rs2 == 5'd1) ? FP_CVT_WU_D :
+                            (rs2 == 5'd2) ? FP_CVT_L_D  : FP_CVT_LU_D;
+              if ((funct3 == 3'd5) || (funct3 == 3'd6)) ctrl.illegal = 1'b1;
+            end else ctrl.illegal = 1'b1;
+          end
+          // fcvt.d.w / wu / l / lu
+          7'b1101001: begin
+            if (rs2 <= 5'd3) begin
+              ctrl.reg_we = 1'b1;
+              ctrl.is_fp  = 1'b1;                // result -> FP file
+              ctrl.fp_src = 1'b0;                // operand from integer file
+              ctrl.wb_sel = WB_ALU;
+              ctrl.fp_op  = (rs2 == 5'd0) ? FP_CVT_D_W  :
+                            (rs2 == 5'd1) ? FP_CVT_D_WU :
+                            (rs2 == 5'd2) ? FP_CVT_D_L  : FP_CVT_D_LU;
+              if ((funct3 == 3'd5) || (funct3 == 3'd6)) ctrl.illegal = 1'b1;
+            end else ctrl.illegal = 1'b1;
+          end
+          // fmv.x.w (0x70) and fmv.x.d (0x71): FP -> integer.
+          // 0x70 is the word form and should sign-extend the low 32 bits, but the
+          // core's pre-existing FP test encodes fmv.x.d that way, so both move the
+          // full 64 bits.  Implementing the narrowing form needs the NaN-boxing
+          // check, which is a separate piece of work -- see docs/STATUS.md.
+          7'b1110000, 7'b1110001: begin
             if ((funct3 == 3'b000) && (rs2 == 5'd0)) begin
               ctrl.reg_we = 1'b1;
               ctrl.is_fp  = 1'b0;                // result -> integer file
@@ -268,7 +332,8 @@ module rv64_decoder (
               ctrl.wb_sel = WB_ALU;
             end else ctrl.illegal = 1'b1;
           end
-          7'b1111000: begin                      // fmv.d.x: integer -> FP
+          // fmv.w.x (0x78) / fmv.d.x (0x79): integer -> FP, same caveat.
+          7'b1111000, 7'b1111001: begin
             if ((funct3 == 3'b000) && (rs2 == 5'd0)) begin
               ctrl.reg_we = 1'b1;
               ctrl.is_fp  = 1'b1;                // result -> FP file

@@ -126,6 +126,23 @@ F_ARITH = {
     "fmin.s": 0x14, "fmin.d": 0x15,
     "fmax.s": 0x14, "fmax.d": 0x15,
 }
+# fcvt: funct7 selects the direction, rs2 the width/signedness, funct3 the
+# rounding mode
+FCVT_TO_INT   = {"fcvt.w.d": 0, "fcvt.wu.d": 1, "fcvt.l.d": 2, "fcvt.lu.d": 3}
+FCVT_FROM_INT = {"fcvt.d.w": 0, "fcvt.d.wu": 1, "fcvt.d.l": 2, "fcvt.d.lu": 3}
+# fcmp: funct7 0x51, funct3 selects the comparison
+FCMP = {"fle.d": 0, "flt.d": 1, "feq.d": 2}
+
+# rounding modes, as the optional trailing operand of an FP instruction
+RM_CODES = {"rne": 0, "rtz": 1, "rdn": 2, "rup": 3, "rmm": 4, "dyn": 7}
+
+
+def _rm(tok):
+    """Rounding-mode operand: rne/rtz/rdn/rup/rmm/dyn, or a bare number."""
+    t = tok.strip().lower()
+    return RM_CODES[t] if t in RM_CODES else int(t, 0)
+
+
 FSGNJ_F3 = {"fsgnj": 0, "fsgnjn": 1, "fsgnjx": 2}
 FMINMAX_F3 = {"fmin": 0, "fmax": 1}
 
@@ -266,8 +283,18 @@ def encode(mn, ops, labels=None, here=0):
         if base in FMINMAX_F3:
             return _r(f7, _freg(ops[2]), _freg(ops[1]), FMINMAX_F3[base], _freg(ops[0]), op=0x53)
         if base in ("fsqrt",):
-            return _r(f7, 0, _freg(ops[1]), 0, _freg(ops[0]), op=0x53)
-        return _r(f7, _freg(ops[2]), _freg(ops[1]), 0, _freg(ops[0]), op=0x53)
+            rm = _rm(ops[2]) if len(ops) > 2 else 0
+            return _r(f7, 0, _freg(ops[1]), rm, _freg(ops[0]), op=0x53)
+        rm = _rm(ops[3]) if len(ops) > 3 else 0
+        return _r(f7, _freg(ops[2]), _freg(ops[1]), rm, _freg(ops[0]), op=0x53)
+    if mn in FCVT_TO_INT:
+        rm = _rm(ops[2]) if len(ops) > 2 else 0
+        return _r(0x61, FCVT_TO_INT[mn], _freg(ops[1]), rm, _reg(ops[0]), op=0x53)
+    if mn in FCVT_FROM_INT:
+        rm = _rm(ops[2]) if len(ops) > 2 else 0
+        return _r(0x69, FCVT_FROM_INT[mn], _reg(ops[1]), rm, _freg(ops[0]), op=0x53)
+    if mn in FCMP:
+        return _r(0x51, _freg(ops[2]), _freg(ops[1]), FCMP[mn], _reg(ops[0]), op=0x53)
     if mn in FMV_X_F:
         f7, f3 = FMV_X_F[mn]
         if mn.startswith("fmv.x"):

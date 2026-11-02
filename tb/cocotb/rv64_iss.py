@@ -192,7 +192,10 @@ class ISS:
         self.insn_len = 4
         self.csr = {
             0x300: 0x3800,       # mstatus: MPP=M, FS=Initial (bit 13)
-            0x301: (2 << 62) | (1 << 0) | (1 << 2) | (1 << 8) | (1 << 12) | (1 << 18) | (1 << 20) | (1 << 5) | (1 << 7),  # RV64IMA + C + F + H + S + U
+            # MXL=2 | A(0) C(2) F(5) I(8) M(12) S(18) U(20) = 0x8000000000141125.
+            # F is advertised (scalar double-precision is implemented); H is NOT
+            # (H CSRs exist but guest mode does not). Must match rtl/rv64_csr.sv.
+            0x301: (2 << 62) | (1 << 0) | (1 << 2) | (1 << 5) | (1 << 8) | (1 << 12) | (1 << 18) | (1 << 20),  # RV64IMAFDC + S + U
             0x304: 0,            # mie
             0x305: 0,            # mtvec
             0x306: 0,            # mcounteren

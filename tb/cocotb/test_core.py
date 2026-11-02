@@ -1971,7 +1971,12 @@ async def test_misa_bits(dut):
     # actually returned; reading the register file hierarchically did not work
     got = h.trace[0][4]
     dut._log.info(f"misa = {got:#x}")
-    assert got == 0x80000000001411A5, f"misa should be 0x80000000001411A5, got {got:#x}"
+    # A C F I M S U = A(0)1 + C(2)4 + F(5)32 + I(8)256 + M(12)4096
+    #                 + S(18)262144 + U(20)1048576 = 0x141125, MXL=2 on top.
+    assert got == 0x8000000000141125, f"misa should be 0x8000000000141125, got {got:#x}"
+    assert (got >> 5) & 1, f"misa {got:#x} does not advertise F (bit 5)"
+    assert not (got >> 7) & 1, f"misa {got:#x} advertises H (bit 7) but guest mode is not implemented"
+    assert not (got >> 21) & 1, f"misa {got:#x} advertises V (bit 21)"
 
 
 @cocotb.test()
@@ -2421,12 +2426,15 @@ async def test_crypto_in_core(dut):
 
 @cocotb.test()
 async def test_h_extension_csrs(dut):
-    """Hypervisor CSRs exist, are readable/writable, and misa advertises H.
+    """Hypervisor CSRs exist and are readable/writable, and misa does NOT advertise H.
 
-    This is the first step of the H extension: the CSR file. Guest-mode execution
-    (VS/VU privilege, two-stage translation via hgatp, trap delegation through
-    hedeleg/hideleg) is not implemented -- this proves the state exists and is
-    addressable, which is the foundation the rest needs.
+    This is only the CSR file of the H extension. Guest-mode execution (VS/VU
+    privilege, two-stage translation via hgatp, trap delegation through
+    hedeleg/hideleg) is not implemented: is_hret/is_hfence are decoded and
+    consumed nowhere, priv never enters VS/VU, and hgatp never reaches the MMU.
+    misa therefore must report H as clear -- advertising it would tell an OS that
+    guest mode works. This test proves the state exists and is addressable, and
+    that misa is honest about the fact that nothing else does.
     """
     CSRRW = lambda rd, csr, rs1: (csr << 20) | (rs1 << 15) | (1 << 12) | (rd << 7) | 0x73
     CSRRS = lambda rd, csr:      (csr << 20) | (2 << 12) | (rd << 7) | 0x73
@@ -2458,7 +2466,9 @@ async def test_h_extension_csrs(dut):
         if t[3] == 9:
             misa = t[4]
     assert misa is not None, "misa never read"
-    assert (misa >> 7) & 1, f"misa {misa:#x} does not advertise H (bit 7)"
+    assert not (misa >> 7) & 1, (
+        f"misa {misa:#x} advertises H (bit 7), but only the H CSRs exist: "
+        "hret/hfence are consumed nowhere and hgatp never reaches the MMU")
 
 @cocotb.test()
 async def test_h_instructions(dut):
