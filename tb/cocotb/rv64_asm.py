@@ -280,11 +280,12 @@ def encode(mn, ops, labels=None, here=0):
 def li_sequence(rd, val):
     """Expand `li rd, val` into instructions that build val exactly.
 
-    lui sign-extends its immediate and addi sign-extends its 12-bit field, so a naive
-    lui+addi pair produces wrong 64-bit values for any constant whose low 12 bits have
-    bit 11 set. That mistake caused four separate bugs in the ALU matrix test. This
-    implementation uses ori (which zero-extends) for the low word and handles the
-    32-bit sign-extension explicitly.
+    Every RISC-V immediate is SIGN-extended, including ori's and andi's. Using ori with
+    a 0xFFF low word therefore ORs in -1 and produces all-ones -- that is what the
+    previous version did, and the retirement trace showed it directly. The correct idiom
+    is lui + addiw, because addiw truncates its result to 32 bits and sign-extends that,
+    which is exactly the wrap needed to build a 32-bit constant from a rounded-up high
+    half.
 
     Returns a list of (mnemonic, operands) pairs.
     """
@@ -292,17 +293,21 @@ def li_sequence(rd, val):
     out = []
 
     def word32(x):
-        """lui+ori for a 32-bit word, zero-extended to 64 bits."""
+        """lui + addiw for a 32-bit word, sign-extended to 64 bits."""
         x &= 0xFFFFFFFF
-        hi = (x >> 12) & 0xFFFFF
         lo = x & 0xFFF
+        if lo & 0x800:
+            lo -= 0x1000                    # signed 12-bit immediate
+        hi = ((x - (lo & 0xFFFFFFFF)) & 0xFFFFFFFF) >> 12
+        hi &= 0xFFFFF
         if hi == 0:
             out.append(("addi", [f"x{rd}", "x0", str(lo)]))
         else:
             out.append(("lui", [f"x{rd}", hex(hi)]))
             if lo:
-                out.append(("ori", [f"x{rd}", f"x{rd}", hex(lo)]))
-        return x
+                # addiw wraps to 32 bits, so a hi rounded up by 1 still lands right
+                out.append(("addiw", [f"x{rd}", f"x{rd}", str(lo)]))
+        return ((hi << 12) + lo) & 0xFFFFFFFF
 
     top = (v >> 32) & 0xFFFFFFFF
     low = v & 0xFFFFFFFF
@@ -315,19 +320,23 @@ def li_sequence(rd, val):
     word32(top)
     out.append(("slli", [f"x{rd}", f"x{rd}", "32"]))
     if low:
-        # build the low word in a scratch register and zero-extend before adding
-        word32_into = (low >> 12) & 0xFFFFF
+        # build the low word in a scratch register, zero-extend it, then add
         lo = low & 0xFFF
-        if word32_into == 0:
+        if lo & 0x800:
+            lo -= 0x1000
+        hi = ((low - (lo & 0xFFFFFFFF)) & 0xFFFFFFFF) >> 12
+        hi &= 0xFFFFF
+        if hi == 0:
             out.append(("addi", ["x31", "x0", str(lo)]))
         else:
-            out.append(("lui", ["x31", hex(word32_into)]))
+            out.append(("lui", ["x31", hex(hi)]))
             if lo:
-                out.append(("ori", ["x31", "x31", hex(lo)]))
+                out.append(("addiw", ["x31", "x31", str(lo)]))
         out.append(("slli", ["x31", "x31", "32"]))
         out.append(("srli", ["x31", "x31", "32"]))
         out.append(("add", [f"x{rd}", f"x{rd}", "x31"]))
     return out
+
 
 def assemble(src):
     """Assemble a multi-line string.  Returns (list_of_words, labels).
