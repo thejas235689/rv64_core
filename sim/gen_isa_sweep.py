@@ -360,6 +360,9 @@ def emit(name, src, max_retire):
         if iss.trap_log:
             traps.append(iss.trap_log[-1])
             iss.trap_log.clear()
+        if iss.halted:
+            # EBREAK entered Debug Mode: the core stops after retiring it
+            break
 
     lines = []
     for i in range(0, len(words), 2):

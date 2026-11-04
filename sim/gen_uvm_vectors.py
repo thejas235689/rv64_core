@@ -210,6 +210,11 @@ def build(name, src):
             iss.trap_log.clear()
             if traps[-1][1] == CAUSE_ECALL_M:
                 break
+        if iss.halted:
+            # EBREAK entered Debug Mode: the core retires it and stops, so the
+            # golden window ends here rather than running on into instructions
+            # the halted DUT will never execute.
+            break
 
     write_prog(os.path.join(OUT, f"{name}.prog.hex"), words)
 
