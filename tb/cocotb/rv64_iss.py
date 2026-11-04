@@ -204,10 +204,14 @@ class ISS:
             0x64A: 0, 0x680: 0,
             0x200: 0, 0x204: 0, 0x205: 0, 0x240: 0,
             0x241: 0, 0x242: 0, 0x243: 0, 0x244: 0,
-            0x001: 0,            # fflags
-            0x002: 0,            # frm
-            0x003: 0,            # fcsr  -- {frm, fflags}; without these a CSR-heavy
-                                 # program traps as illegal and the ISS loops
+            # fflags (0x001), frm (0x002) and fcsr (0x003) are NOT three
+            # registers: privileged spec 3.1.11 makes them three views of one
+            # register, and rtl/rv64_csr.sv keeps exactly one (fcsr_q). Only the
+            # fcsr entry exists here; the other two addresses are bitfield views
+            # of it, decoded in _csr_get/_csr_set. Storing them independently made
+            # `csrrw fcsr, 5` followed by `csrrs fflags` read 0 where the DUT
+            # reads 5.
+            0x003: 0,            # fcsr = {frm[7:5], fflags[4:0]}
             0x340: 0,            # mscratch
             0x341: 0,            # mepc
             0x342: 0,            # mcause
@@ -243,6 +247,33 @@ class ISS:
         self.cycle = 0
         self.fault_addr = None      # address that raises an access fault
         self.halted = False
+
+        # ------------------------------------------------------------ custom CSRs
+        # The custom accelerator windows are real CSRs of this design: the top
+        # decodes them (rtl/rv64_num_pkg.sv CSR_*_BASE) and rv64_csr.sv treats
+        # them as implemented, so a program that touches one retires. Leaving
+        # them out of the whitelist made the ISS raise illegal-instruction (cause
+        # 2) on the first access and jump to mtvec, after which every retirement
+        # mismatched. The windows are modelled only as far as software can
+        # observe them: the control/status registers a test reads back into a GPR.
+        # Occupancy (from riscv_core_top.sv): 0x780-0x78F RVV, 0x7C0-0x7C2
+        # numeric, 0x7D0-0x7D8 Xcetask, 0x7D9-0x7DF CLINT, 0x7E0-0x7E6 QISA,
+        # 0x7E8-0x7ED AIACC, 0x7F0-0x7F7 XRV512, 0x7FC-0x7FF UART,
+        # 0x800-0x807 modexp.
+        self.custom_csr = set()
+        for base, nregs in ((0x780, 16), (0x7D0, 9), (0x7D9, 7), (0x7E0, 7),
+                            (0x7E8, 6), (0x7F0, 8), (0x7FC, 4), (0x800, 8)):
+            for a in range(base, base + nregs):
+                self.custom_csr.add(a)
+                self.csr.setdefault(a, 0)
+        # accelerator control/status, reset values from the RTL
+        self.xctask_ctrl = 0     # 0x7D0: [0] enable, [1] irq enable
+        self.qisa_ctrl = 0       # 0x7E0: [0] enable
+        self.qisa_cmd = 0        # 0x7E1: echoes the last command
+        self.aiacc_done = 0      # 0x7E8: {overflow, done, busy}
+        self.aiacc_count = 0     # 0x7EB
+        self.xrv512_busy = 0     # 0x7F0: {done, busy, 1'b0}
+        self.xrv512_done = 0
         self.trap_log = []
         self.write_log = []
 
@@ -284,7 +315,12 @@ class ISS:
 
     def take_trap(self, cause, tval, epc):
         self._set_mstatus_bits(mpie=self.mstatus_mie(), mie=0, mpp=3)
-        self.csr[0x341] = epc & ~3
+        # mepc records the address of the instruction that trapped. This core
+        # implements C, so a trapping 16-bit instruction leaves bit 1 SET: the
+        # DUT stores trap_pc unmasked (riscv_core_top.sv mepc_q <= trap_pc) and
+        # masking to 4-byte alignment here made mepc differ by 2 from the DUT for
+        # every trap taken on a compressed encoding.
+        self.csr[0x341] = epc & ~1
         self.csr[0x342] = u64(cause)
         self.csr[0x343] = u64(tval)
         self.pc = self.csr[0x305] & ~3
@@ -420,7 +456,11 @@ class ISS:
             return None, 0
         if op == 0x2F:                                    # AMO / LR / SC
             f5 = (insn >> 27) & 0x1F
-            size = {2: 4, 3: 8}
+            # 000/001 are Zabha byte and halfword AMOs, which this core
+            # implements (rtl/rv64_decoder.sv, opcode 0101111: MSZ_B/MSZ_H).
+            # Leaving them out made the ISS call amoswap.h illegal where the DUT
+            # retired it. The AMO result is sign-extended to XLEN for .b/.h.
+            size = {0: 1, 1: 2, 2: 4, 3: 8}
             if f3 not in size:
                 raise Trap(CAUSE_ILLEGAL, insn)
             n = size[f3]
@@ -492,15 +532,46 @@ class ISS:
             return None, 0
         if op == 0x73:                                    # SYSTEM
             if f3 == 0:
+                # Decode the same way rtl/rv64_decoder.sv does: funct7 == 0b0001001
+                # is SFENCE.VMA regardless of the rd/rs1 fields, and only then
+                # does the imm12 field select the privileged instruction. Reading
+                # 0x12000073 as "csrrw CSR 0x120" is a decode error -- funct3 is
+                # 0, so the 12-bit field is funct7|rs2, not a CSR address.
+                f7z = (insn >> 25) & 0x7F
+                imm12 = (insn >> 20) & 0xFFF
+                if f7z == 0x09:                           # sfence.vma rs1, rs2
+                    # No TLB is modelled, so there is no translation to
+                    # invalidate: retiring it as an ordering no-op is what the
+                    # spec permits and what the DUT does.
+                    self.pc = npc
+                    return None, 0
                 if insn == 0x00000073:                    # ecall
                     raise Trap(CAUSE_ECALL_M, 0)
                 if insn == 0x00100073:                    # ebreak
-                    raise Trap(CAUSE_BREAKPOINT, 0)
+                    # EBREAK_ENTERS_DEBUG = 1 (the design default, and
+                    # docs/ARCHITECTURE_FEATURE_CONTRACT.md section 4): ebreak
+                    # retires as a normal instruction and halts the core in Debug
+                    # Mode. It does NOT raise breakpoint (cause 3) unless the
+                    # parameter is 0, which the UVM testbench does not set.
+                    self.halted = True
+                    self.pc = npc
+                    return None, 0
                 if insn == 0x30200073:                    # mret
                     self._set_mstatus_bits(mie=(self.csr[0x300] >> 7) & 1, mpie=1, mpp=3)
-                    self.pc = self.csr[0x341] & ~3
+                    # the DUT redirects to csr_mepc unmasked; mepc is already
+                    # 2-byte aligned by every writer
+                    self.pc = self.csr[0x341] & ~1
                     return None, 0
-                if insn == 0x10500073:                    # wfi
+                if insn == 0x10200073:                    # sret
+                    self.pc = self.csr.get(0x141, 0) & ~1
+                    return None, 0
+                if insn == 0x20200073:                    # hret: no guest mode, retire
+                    self.pc = npc
+                    return None, 0
+                if imm12 in (0x105, 0x00D, 0x01D):        # wfi, wrs.nto, wrs.sto
+                    self.pc = npc
+                    return None, 0
+                if imm12 in (0x220, 0x620, 0x260, 0x660): # hfence / hinval
                     self.pc = npc
                     return None, 0
                 raise Trap(CAUSE_ILLEGAL, insn)
@@ -725,6 +796,69 @@ class ISS:
         raise Trap(CAUSE_ILLEGAL, 0)
 
     # ---------------------------------------------------------------- CSR
+    # fflags / frm / fcsr are bitfields of the one register stored at 0x003.
+    _FCSR_VIEWS = {0x001: (0, 0x1F),    # fflags = fcsr[4:0]
+                   0x002: (5, 0x07),    # frm    = fcsr[7:5]
+                   0x003: (0, 0xFF)}    # fcsr
+
+    def _csr_impl(self, addr):
+        return addr in self.csr or addr in self._FCSR_VIEWS or addr in self.custom_csr
+
+    def _csr_get(self, addr):
+        if addr in self._FCSR_VIEWS:
+            sh, mask = self._FCSR_VIEWS[addr]
+            return (self.csr[0x003] >> sh) & mask
+        # accelerator control/status: only what the RTL drives on read
+        if addr == 0x7D0:                       # Xcetask CTRL {irq_en, enable}
+            return (self.xctask_ctrl >> 1) << 1 | (self.xctask_ctrl & 1)
+        if addr == 0x7E0:                       # QISA CTRL {enable}
+            return self.qisa_ctrl & 1
+        if addr == 0x7E1:                       # QISA CMD echoes the last command
+            return self.qisa_cmd
+        if addr == 0x7E8:                       # AIACC CTRL {overflow, done, busy}
+            return (self.aiacc_done & 1) << 1
+        if addr == 0x7EB:                       # AIACC COUNT
+            return self.aiacc_count
+        if addr == 0x7F0:                       # XRV512 CTRL {done, busy, 1'b0}
+            return (self.xrv512_done << 2) | (self.xrv512_busy << 1)
+        if addr == 0x7F7:                       # XRV512 STATUS {done, busy}
+            return (self.xrv512_done << 1) | self.xrv512_busy
+        return self.csr.get(addr, 0)
+
+    def _csr_set(self, addr, val):
+        if addr in self._FCSR_VIEWS:
+            sh, mask = self._FCSR_VIEWS[addr]
+            keep = self.csr[0x003] & ~(mask << sh)
+            self.csr[0x003] = u64(keep | ((val & mask) << sh))
+            return
+        if addr == 0x7D0:                       # Xcetask CTRL
+            self.xctask_ctrl = val & 0x3
+            return
+        if addr == 0x7E0:                       # QISA CTRL
+            self.qisa_ctrl = val & 0x3
+            return
+        if addr == 0x7E1:                       # QISA CMD
+            self.qisa_cmd = val & 0xFFFF
+            return
+        if addr == 0x7E8:                       # AIACC CTRL: start / clear done
+            if val & 1:
+                # one product per start; the matrices are all zero unless the
+                # program loaded them, and no test compares a product
+                self.aiacc_done = 1
+                self.aiacc_count = (self.aiacc_count + 1) & M32
+            if val & 2:
+                self.aiacc_done = 0
+            return
+        if addr == 0x7F0:                       # XRV512 CTRL: execute
+            if val & 1:
+                # The whole register is computed combinationally, so the busy
+                # pulse lasts one clock and has already cleared by the next
+                # instruction: the DUT reads {done,busy,0} = 4 afterwards, not 6.
+                self.xrv512_busy = 0
+                self.xrv512_done = 1
+            return
+        self.csr[addr] = u64(val)
+
     def _csr(self, f3, insn, rd, rs1):
         addr = (insn >> 20) & 0xFFF
         src = rs1 if (f3 >> 2) else self.x[rs1]
@@ -732,9 +866,9 @@ class ISS:
         if addr == 0xB00 or addr == 0xB02 or addr == 0xB80 or addr == 0xB82:
             # counters: read-only for verification purposes
             return rd, 0
-        if addr not in self.csr:
+        if not self._csr_impl(addr):
             raise Trap(CAUSE_ILLEGAL, insn)
-        old = self.csr[addr]
+        old = self._csr_get(addr)
         op = f3 & 3
         if op == 1:
             new = src
@@ -745,7 +879,14 @@ class ISS:
         else:
             raise Trap(CAUSE_ILLEGAL, insn)
         if op == 1 or src:
-            if addr == 0x300:
+            # The accelerator windows are command ports, not read-modify-write
+            # CSRs: riscv_core_top hands each block the core's raw csr_wdata, not
+            # the CSR file's csr_wval, so a csrrs writes exactly the rs1 operand
+            # and does not OR in the old status bits. Measured: `csrrs 0x7D0, x7`
+            # with CTRL=1 and x7=0x22 leaves CTRL reading 2, not 3.
+            if addr in self.custom_csr and addr != 0x7C1:
+                self._csr_set(addr, src)
+            elif addr == 0x300:
                 self._set_mstatus_bits(mie=(new >> 3) & 1, mpie=(new >> 7) & 1,
                                        mpp=(new >> 11) & 3)
             elif addr == 0x305:
@@ -758,7 +899,7 @@ class ISS:
             elif addr == 0x344:
                 pass
             else:
-                self.csr[addr] = u64(new)
+                self._csr_set(addr, new)
         return rd, old
 
     @staticmethod

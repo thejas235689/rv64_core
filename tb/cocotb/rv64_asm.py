@@ -365,6 +365,26 @@ def li_sequence(rd, val):
     return out
 
 
+def li_value(lit):
+    """The exact 64-bit value `li rd, lit` leaves in rd.
+
+    `li` follows the assembler convention for literals: a literal that fits a 32-bit
+    word (the signed range [-2^31, 2^31) and the unsigned range up to 2^32-1) denotes
+    a 32-bit constant and is SIGN-extended to 64 bits.  Anything outside that range is
+    a full 64-bit constant and is built exactly.  A caller that wants a particular
+    64-bit register value must therefore pass the value it means, not the 32-bit word
+    that happens to be its low half: `li x5, 0x80000000` yields 0xffffffff80000000,
+    and 0x0000000080000000 has no 32-bit literal form at all.
+
+    Kept next to li_sequence so the two stay in step; tb_li.py checks li_sequence
+    against hardware, and the ALU tests use this to derive the operand they model.
+    """
+    if -0x80000000 <= lit <= 0xFFFFFFFF:
+        w = lit & 0xFFFFFFFF
+        return (w | 0xFFFFFFFF00000000) if w >> 31 else w
+    return lit & ((1 << 64) - 1)
+
+
 def assemble(src):
     """Assemble a multi-line string.  Returns (list_of_words, labels).
 

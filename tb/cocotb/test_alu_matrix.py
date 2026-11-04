@@ -6,15 +6,18 @@ Operand set: 0, 1, -1, 2, -2, INT32_MAX/MIN, INT64_MAX/MIN, 0x7FFFFFFF, 0x800000
 Expectations come from a Python model, not from the RTL and not from the in-repo ISS,
 so an RTL bug cannot agree with itself.
 
-Constants are built with a generator that is verified against Python before use: every
-value it emits is re-evaluated through the same arithmetic the RISC-V instructions
-perform, and the test asserts they match. Getting this wrong is what made the first
-version of this test report 1864 spurious mismatches.
+Constants are built with rv64_asm's `li` pseudo-op, the one constant builder in this
+tree that is checked against hardware (tb_li.py).  The operand list is passed through
+li_value() -- li's own literal rules -- so the model is given exactly the value the
+instruction loads.  The hand-rolled builder this replaced assumed ori zero-extends its
+immediate; it sign-extends, so ori with 0xfff ORed in -1 and every constant whose low
+word had bit 11 set came out all-ones.
 """
 import cocotb
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_core import Harness
+from rv64_asm import li_value
 
 M64 = (1 << 64) - 1
 INT32_MAX = 0x7FFFFFFF
@@ -34,6 +37,12 @@ REG_OPERANDS = [
     -1, -2, -4, -8, -16, -1024, -(1 << 20),
     M64,
 ]
+# Every operand is what `li` actually loads, deduplicated on that value.  Two entries
+# collapse and are removed rather than silently tested twice: 0xFFFFFFFF sign-extends
+# to -1, and 0x80000000 sign-extends to 0xFFFFFFFF80000000, which is INT32_MIN.  The
+# zero-extended words 0x00000000FFFFFFFF and 0x0000000080000000 have no 32-bit literal
+# form, so li cannot build them and they are not in this matrix.
+REG_OPERANDS = [li_value(v) for v in REG_OPERANDS]
 _seen = set()
 REG_OPERANDS = [v for v in REG_OPERANDS
                 if not ((v & M64) in _seen or _seen.add(v & M64))]
@@ -56,67 +65,17 @@ def model(op, a, b):
     raise ValueError(op)
 
 
-def build64(rd, val, scratch=28):
+def build64(rd, val):
     """Instructions producing `val` in x{rd}, and the value they are expected to give.
 
-    Uses lui+addi for 32-bit constants and lui+addi+slli+add for 64-bit ones. The
-    returned expectation is recomputed from the emitted instruction sequence, so a
-    generator bug shows up as a mismatch here rather than as a false RTL failure.
+    One `li` pseudo-op, expanded by rv64_asm.  The returned expectation comes from
+    li_value(), which states what li leaves in the register, so the model is always
+    given the value the sequence actually loads.  rv64_asm's li uses x31 as its scratch
+    register for the low half of a 64-bit constant; nothing in these tests holds a live
+    value in x31.
     """
-    v = val & M64
-    out = []
-    acc = 0
-
-    def emit32(x):
-        """lui+addi of a 32-bit value, sign-extended to 64 bits."""
-        x &= 0xFFFFFFFF
-        sx = x - (1 << 32) if x >> 31 else x
-        # lui sign-extends its immediate, and addi sign-extends its 12-bit one, so
-        # neither can express a positive 32-bit value with bit 31 set. ori zero-extends,
-        # so lui+ori builds the word exactly.
-        hi = (x >> 12) & 0xFFFFF
-        lo = x & 0xFFF
-        if hi:
-            out.append(f"lui x{rd}, 0x{hi:x}")
-            if lo:
-                out.append(f"ori x{rd}, x{rd}, 0x{lo:x}")
-        else:
-            out.append(f"addi x{rd}, x0, {lo}")
-        return (((hi << 12) | lo) & 0xFFFFFFFF) | (0xFFFFFFFF00000000 if hi & 0x80000 else 0)
-
-    top = (v >> 32) & 0xFFFFFFFF
-    low = v & 0xFFFFFFFF
-    if top == 0:
-        acc = emit32(low)
-    else:
-        acc = emit32(top)
-        out.append(f"slli x{rd}, x{rd}, 32")
-        acc = (acc << 32) & M64
-        if low:
-            save = rd
-            out.append(f"addi x{scratch}, x0, 0")
-            acc_s = emit32_into(scratch, low, out)
-            # zero-extend the low word: addi sign-extends, so 0xFFFFFFFF would add -1
-            out.append(f"slli x{scratch}, x{scratch}, 32")
-            out.append(f"srli x{scratch}, x{scratch}, 32")
-            out.append(f"add x{save}, x{save}, x{scratch}")
-            acc = (acc + (acc_s & 0xFFFFFFFF)) & M64
-    return out, acc
-
-
-def emit32_into(rd, x, out):
-    x &= 0xFFFFFFFF
-    sx = x - (1 << 32) if x >> 31 else x
-    hi = (x >> 12) & 0xFFFFF
-    lo = x & 0xFFF
-    if hi:
-        out.append(f"lui x{rd}, 0x{hi:x}")
-        if lo:
-            out.append(f"ori x{rd}, x{rd}, 0x{lo:x}")
-    else:
-        out.append(f"addi x{rd}, x0, {lo}")
-    val = ((hi << 12) | lo) & 0xFFFFFFFF
-    return (val | 0xFFFFFFFF00000000) & M64 if hi & 0x80000 else val
+    v = li_value(val)
+    return [f"li x{rd}, {hex(v)}"], v
 
 
 def check_sequence(h, expects, label, dut):

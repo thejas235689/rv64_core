@@ -17,6 +17,7 @@ import cocotb
 import sys, pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from test_core import Harness, cov, COV, num_insn
+from rv64_asm import li_value
 
 M64 = (1 << 64) - 1
 INT32_MAX = 0x7FFFFFFF
@@ -34,7 +35,10 @@ REG_OPS = ["add", "sub", "and", "or", "xor", "slt", "sltu"]
 IMM_OPS = {"addi": "add", "andi": "and", "ori": "or", "xori": "xor",
            "slti": "slt", "sltiu": "sltu"}
 
-# operand classes, with the bin name each value belongs to
+# operand classes, with the bin name each value belongs to.  Each class value is run
+# through li_value() -- li's own literal rules -- because li is what builds it: a
+# 32-bit literal is sign-extended to 64 bits.  Classes that collapse onto the same
+# register value are merged, so a class is never silently counted twice.
 CLASSES = [
     ("zero", 0), ("one", 1), ("neg_one", M64), ("two", 2), ("neg_two", M64 - 1),
     ("int32_max", INT32_MAX), ("int32_min", INT32_MIN),
@@ -42,39 +46,23 @@ CLASSES = [
     ("ffffffff", 0xFFFFFFFF), ("pow2", 1 << 20), ("neg_pow2", M64 - (1 << 20) + 1),
     ("all_ones", M64),
 ]
+CLASSES = [(n, li_value(v)) for n, v in CLASSES]
+_cls_seen = set()
+CLASSES = [(n, v) for n, v in CLASSES if not (v in _cls_seen or _cls_seen.add(v))]
+assert len(CLASSES) >= 11, f"operand classes collapsed to {len(CLASSES)}: {CLASSES}"
 
-def build64(rd, val, scratch=28):
-    """lui+ori for 32-bit words; lui+ori+slli+add for 64-bit. ori zero-extends,
-    addi and lui sign-extend, so ori is the only safe choice for the low word."""
-    v = val & M64
-    out = []
 
-    def emit32(target, x):
-        x &= 0xFFFFFFFF
-        hi = (x >> 12) & 0xFFFFF
-        lo = x & 0xFFF
-        if hi:
-            out.append(f"lui x{target}, 0x{hi:x}")
-            if lo:
-                out.append(f"ori x{target}, x{target}, 0x{lo:x}")
-        else:
-            out.append(f"addi x{target}, x0, {lo}")
-        return (((hi << 12) | lo) | (0xFFFFFFFF00000000 if hi & 0x80000 else 0)) & M64
+def build64(rd, val):
+    """`li` into x{rd}, plus the exact 64-bit value it leaves there.
 
-    top = (v >> 32) & 0xFFFFFFFF
-    low = v & 0xFFFFFFFF
-    if top == 0:
-        return out, emit32(rd, low)
-    acc = emit32(rd, top)
-    out.append(f"slli x{rd}, x{rd}, 32")
-    acc = (acc << 32) & M64
-    if low:
-        emit32(scratch, low)
-        out.append(f"slli x{scratch}, x{scratch}, 32")
-        out.append(f"srli x{scratch}, x{scratch}, 32")
-        out.append(f"add x{rd}, x{rd}, x{scratch}")
-        acc = (acc + low) & M64
-    return out, acc
+    The hand-rolled lui+ori builder this replaces assumed ori zero-extends its
+    immediate.  It sign-extends, so ori with 0xfff ORed in -1 and every constant whose
+    low word had bit 11 set came out all-ones.  rv64_asm's li is verified against
+    hardware in tb_li.py; li_value() states what it loads, so the expectation and the
+    instruction cannot drift apart.  li uses x31 as scratch for a 64-bit constant.
+    """
+    v = li_value(val)
+    return [f"li x{rd}, {hex(v)}"], v
 
 
 def s64(v):
