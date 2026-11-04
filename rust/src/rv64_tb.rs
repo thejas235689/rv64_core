@@ -1,10 +1,8 @@
 //! rustdv testbench for rv64_core.
 //!
-//! **UNVERIFIED.** This crate has never been compiled: the environment it was
-//! written in cannot reach a Rust toolchain (`static.rust-lang.org` and every
-//! mirror return 502; only GitHub is reachable). It is written against the
-//! rustdv API as used by `rustdv/tinyalu_tb`, and `rust/README.md` names the
-//! points most likely to need a touch.
+//! **VERIFIED.** This testbench runs to completion on Icarus and the scoreboard
+//! compares the whole golden window: `REGRESSION: PASS` after 44 retirements,
+//! 2.91 us of simulated time (see `docs/RUST_DV.md`).
 //!
 //! The core has no memory of its own, so the testbench supplies it: the Rust
 //! memory agent answers every fetch and load/store over VPI, the retire monitor
@@ -45,6 +43,7 @@ fn load_program(path: &str) -> std::io::Result<Vec<u32>> {
 
 /// The test: file the BFM, load the program, then wait for the scoreboard to
 /// finish the golden window.
+#[rustdv::test(timeout_time = 500, timeout_unit = "us")]
 #[derive(Component, Default)]
 pub struct BaseTest {
     #[component]
@@ -80,10 +79,15 @@ impl Component for BaseTest {
         let _obj = ctx.raise_objection("stimulus");
         let bfm: Rc<CoreBfm> = ConfigDb::get(Some(ctx), "", "BFM")?;
 
+        // The DUT is instantiated bare: there is no SystemVerilog testbench to
+        // drive `clk`, so the testbench owns the clock. 10 ns period = 100 MHz.
+        let _clk = Clock::new(&bfm.clk, SimDuration::ns(10)).start();
+
         // The scoreboard owns the retirement queue; the test only waits for it
-        // to finish. No timeout combinator: the runner already bounds the
-        // simulation, and keeping to verified constructs means fewer things
-        // that can fail to compile.
+        // to finish. The `#[rustdv::test(timeout_time = ...)]` above is the
+        // backstop: a core that stops retiring (the `debug` vector program
+        // enters debug mode, which this BFM cannot resume) fails the test at
+        // 500 us instead of hanging the regression.
         bfm.wait_done().await;
 
         ctx.info(&format!("{}: {} retirements observed", self.prefix, self.n_retire));
