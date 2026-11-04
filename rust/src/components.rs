@@ -31,6 +31,7 @@ pub struct MemoryAgent;
 impl Component for MemoryAgent {
     async fn run(&mut self, ctx: &mut RustdvCtx) -> Result<(), TestError> {
         let bfm: Rc<CoreBfm> = ConfigDb::get(Some(ctx), "", "BFM")?;
+        bfm.tie_off_idle_inputs();
         bfm.reset().await;
 
         bfm.if_req_ready.set_u64(1);
@@ -47,14 +48,14 @@ impl Component for MemoryAgent {
             bfm.clk.rising_edge().await;
 
             if if_pend {
-                bfm.if_rsp_data.set_u64(bfm.read_word(if_addr) as u64);
+                bfm.if_rsp_data.set_u64(bfm.read_beat(if_addr));
                 bfm.if_rsp_valid.set_u64(1);
             } else {
                 bfm.if_rsp_valid.set_u64(0);
             }
 
             if d_pend {
-                bfm.d_rsp_rdata.set_u64(bfm.read_word(d_addr) as u64);
+                bfm.d_rsp_rdata.set_u64(bfm.read_beat(d_addr));
                 bfm.d_rsp_valid.set_u64(1);
             } else {
                 bfm.d_rsp_valid.set_u64(0);
@@ -69,19 +70,9 @@ impl Component for MemoryAgent {
             if d_pend {
                 d_addr = u(&bfm.d_req_addr);
                 if b(&bfm.d_req_we) {
-                    let word = (d_addr >> 2) as usize;
                     let wstrb = u(&bfm.d_req_wstrb) as u8;
-                    let wdata = u(&bfm.d_req_wdata) as u32;
-                    if let Some(slot) = bfm.mem.borrow_mut().get_mut(word) {
-                        let mut merged = *slot;
-                        for lane in 0..4u32 {
-                            if wstrb & (1 << lane) != 0 {
-                                let sh = lane * 8;
-                                merged = (merged & !(0xFFu32 << sh)) | (wdata & (0xFFu32 << sh));
-                            }
-                        }
-                        *slot = merged;
-                    }
+                    let wdata = u(&bfm.d_req_wdata);
+                    bfm.write_beat(d_addr, wdata, wstrb);
                     bfm.served
                         .put(MemBeat { addr: d_addr, we: true, wdata: u(&bfm.d_req_wdata), wstrb })
                         .await;
@@ -141,6 +132,7 @@ pub struct Scoreboard {
     exp: Vec<u64>,
     n_compared: usize,
     errors: usize,
+    n_exp: usize,
 }
 
 impl Scoreboard {
@@ -161,18 +153,28 @@ impl Component for Scoreboard {
         if let Err(e) = self.load_vectors(&prefix) {
             ctx.error(&format!("cannot read vectors for {prefix}: {e}"));
         }
+        self.n_exp = self.exp.len() / 5; // pc, insn, we, waddr, wdata
     }
 
     async fn run(&mut self, ctx: &mut RustdvCtx) -> Result<(), TestError> {
         let bfm: Rc<CoreBfm> = ConfigDb::get(Some(ctx), "", "BFM")?;
-        let n_exp = self.exp.len() / 5; // pc, insn, we, waddr, wdata
+        let n_exp = self.n_exp;
+
+        // An empty golden window is already over. Without this the test would
+        // wait on `done` forever, because nothing here would ever set it.
+        if n_exp == 0 {
+            ctx.warning("no golden retirements: nothing to compare");
+            bfm.done.set();
+            return Ok(());
+        }
+
         loop {
             let item = bfm.get_retire().await;
             if self.n_compared >= n_exp {
-                continue;
-            }
-            if self.n_compared + 1 == n_exp {
-                bfm.done.set();
+                // The window is compared. Returning is the whole point: the
+                // old code `continue`d here, which re-armed a wait for an item
+                // it could never use and left the run phase with no exit.
+                break;
             }
             let i = self.n_compared * 5;
             let (pc, insn, we, waddr, wdata) =
@@ -195,6 +197,41 @@ impl Component for Scoreboard {
                 }
             }
             self.n_compared += 1;
+
+            // Release the test only once the *last* comparison is done. Setting
+            // `done` one item early (the old `n_compared + 1 == n_exp`) both
+            // reported a result nobody had checked and, because the loop never
+            // exited, hung the regression right after a passing run.
+            if self.n_compared == n_exp {
+                bfm.done.set();
+            }
         }
+        Ok(())
+    }
+
+    /// A mismatch logged in `run` must also *fail* the test: the runner scores
+    /// this sink, and a scoreboard that only printed would be the vacuous pass
+    /// this testbench started out as.
+    fn check(&mut self, ctx: &mut RustdvCtx, errors: &mut CheckSink) {
+        let _ = ctx;
+        if self.errors > 0 {
+            errors.error(format!(
+                "{} of {} compared retirements did not match the golden vectors",
+                self.errors, self.n_compared
+            ));
+        }
+        if self.n_compared < self.n_exp {
+            errors.error(format!(
+                "only {} of {} golden retirements were observed: the core stopped short",
+                self.n_compared, self.n_exp
+            ));
+        }
+    }
+
+    fn report(&mut self, ctx: &mut RustdvCtx) {
+        ctx.info(&format!(
+            "scoreboard: {}/{} retirements compared, {} mismatch(es)",
+            self.n_compared, self.n_exp, self.errors
+        ));
     }
 }

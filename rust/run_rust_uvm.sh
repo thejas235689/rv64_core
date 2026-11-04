@@ -17,6 +17,14 @@ REPO_ROOT="$(cd .. && pwd)"
 PROFILE="${1:-release}"
 PREFIX="${2:-sim/uvm_vectors/alu}"
 
+# The vector prefix is repo-relative but this script runs from rust/, so it has
+# to be made absolute before the testbench reads it -- otherwise every run
+# fails with "program image: No such file or directory".
+case "$PREFIX" in
+  /*) ;;
+  *) PREFIX="$REPO_ROOT/$PREFIX" ;;
+esac
+
 BUILD="${SIM_BUILD_DIR:-/tmp/rv64-tb-$(id -u)}"
 mkdir -p "$BUILD"
 
@@ -36,5 +44,24 @@ export RUSTDV_RANDOM_SEED="${RUSTDV_RANDOM_SEED:-1}"
 export RUSTDV_RESULTS_XML="${RUSTDV_RESULTS_XML:-$BUILD/results.xml}"
 
 # No SV testbench: the DUT alone, driven entirely from Rust over VPI.
-iverilog -g2012 -o "$BUILD/rv64_rustdv.vvp" -s riscv_core_top "$REPO_ROOT"/rtl/*.sv
+#
+# Two things about this line are load-bearing and were both wrong:
+#
+#   * Packages must be compiled *before* the modules that import them. Icarus
+#     parses in command-line order, and a bare `rtl/*.sv` glob sorts
+#     riscv_core_top.sv ahead of rv64_pkg.sv, so the top is elaborated before
+#     its package exists. Name the packages first and skip them in the glob.
+#   * rtl/fpu/*.sv is a subdirectory, which `rtl/*.sv` never matches. Left out,
+#     elaboration dies with eight "Unknown module type" errors for the FPU
+#     blocks instantiated by the core.
+PKGS=("$REPO_ROOT"/rtl/rv64_pkg.sv "$REPO_ROOT"/rtl/rv64_num_pkg.sv)
+MODULES=()
+for f in "$REPO_ROOT"/rtl/*.sv; do
+  case "$(basename "$f")" in
+    rv64_pkg.sv|rv64_num_pkg.sv) continue ;;
+  esac
+  MODULES+=("$f")
+done
+iverilog -g2012 -o "$BUILD/rv64_rustdv.vvp" -s riscv_core_top \
+  "${PKGS[@]}" "${MODULES[@]}" "$REPO_ROOT"/rtl/fpu/*.sv
 vvp -M "$BUILD" -m rv64_tb "$BUILD/rv64_rustdv.vvp"
