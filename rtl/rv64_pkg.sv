@@ -205,26 +205,41 @@ package rv64_pkg;
   localparam logic [63:0] CAUSE_M_EXT_INT      = 64'h8000_0000_0000_000B;
 
   // ------------------------------------------------------------------ FPU ops
-  // One hot-ish encoding for the scalar double-precision operations.  FP_NONE
-  // means "not an FPU datapath operation" -- fld/fsd/fmv.* set it, so the
-  // FPU blocks are not asked to compute anything for them.
-  localparam logic [4:0] FP_NONE     = 5'd0;
-  localparam logic [4:0] FP_ADD      = 5'd1;
-  localparam logic [4:0] FP_SUB      = 5'd2;
-  localparam logic [4:0] FP_MUL      = 5'd3;
-  localparam logic [4:0] FP_DIV      = 5'd4;
-  localparam logic [4:0] FP_SQRT     = 5'd5;
-  localparam logic [4:0] FP_CVT_W_D  = 5'd6;
-  localparam logic [4:0] FP_CVT_WU_D = 5'd7;
-  localparam logic [4:0] FP_CVT_L_D  = 5'd8;
-  localparam logic [4:0] FP_CVT_LU_D = 5'd9;
-  localparam logic [4:0] FP_CVT_D_W  = 5'd10;
-  localparam logic [4:0] FP_CVT_D_WU = 5'd11;
-  localparam logic [4:0] FP_CVT_D_L  = 5'd12;
-  localparam logic [4:0] FP_CVT_D_LU = 5'd13;
-  localparam logic [4:0] FP_FEQ      = 5'd14;
-  localparam logic [4:0] FP_FLT      = 5'd15;
-  localparam logic [4:0] FP_FLE      = 5'd16;
+  // The operation, WITHOUT the precision: `fp_single` in ctrl_t carries the
+  // format bit, so fadd.s and fadd.d are the same FP_ADD through the same
+  // datapath and only the fmt input to the FPU blocks differs.  That is the
+  // whole point of the extension: one FPU, two formats.
+  //
+  // FP_NONE means "not an FPU datapath operation" -- fld/fsd/flw/fsw set it, so
+  // the FPU blocks are not asked to compute anything for them.  The fcvt family
+  // keeps the source/destination width and signedness in fp_op because they are
+  // part of the instruction encoding (rs2), not the format bit.
+  localparam logic [4:0] FP_NONE       = 5'd0;
+  localparam logic [4:0] FP_ADD        = 5'd1;
+  localparam logic [4:0] FP_SUB        = 5'd2;
+  localparam logic [4:0] FP_MUL        = 5'd3;
+  localparam logic [4:0] FP_DIV        = 5'd4;
+  localparam logic [4:0] FP_SQRT       = 5'd5;
+  localparam logic [4:0] FP_FEQ        = 5'd6;
+  localparam logic [4:0] FP_FLT        = 5'd7;
+  localparam logic [4:0] FP_FLE        = 5'd8;
+  // fp -> integer: fp_single is the SOURCE format
+  localparam logic [4:0] FP_CVT_W      = 5'd9;
+  localparam logic [4:0] FP_CVT_WU     = 5'd10;
+  localparam logic [4:0] FP_CVT_L      = 5'd11;
+  localparam logic [4:0] FP_CVT_LU     = 5'd12;
+  // integer -> fp: fp_single is the DESTINATION format
+  localparam logic [4:0] FP_CVT_FROM_W  = 5'd13;
+  localparam logic [4:0] FP_CVT_FROM_WU = 5'd14;
+  localparam logic [4:0] FP_CVT_FROM_L  = 5'd15;
+  localparam logic [4:0] FP_CVT_FROM_LU = 5'd16;
+  // fp -> fp: fp_single is the DESTINATION format (fcvt.s.d is fmt=0)
+  localparam logic [4:0] FP_CVT_FP     = 5'd17;
+  // moves: fp_single says which half-width form is in use
+  localparam logic [4:0] FP_MV_X_W     = 5'd18;
+  localparam logic [4:0] FP_MV_X_D     = 5'd19;
+  localparam logic [4:0] FP_MV_W_X     = 5'd20;
+  localparam logic [4:0] FP_MV_D_X     = 5'd21;
 
   // ------------------------------------------------------------------ control
   // Everything the decoder produces for one instruction, carried down the pipe.
@@ -257,9 +272,10 @@ package rv64_pkg;
     logic        is_ecall;
     logic        is_ebreak;
     logic        is_fp;       // OP-FP: operands and result live in the FP file
-    logic [4:0]  fp_op;       // FPU operation; FP_NONE for fld/fsd/fmv
+    logic [4:0]  fp_op;       // FPU operation; FP_NONE for fld/fsd/flw/fsw
     logic [2:0]  fp_f3;       // raw funct3: rounding mode, or fcmp selector
     logic        fp_src;      // operands come from the FP file
+    logic        fp_single;   // 1 = binary32 (fmt bit 0), 0 = binary64
     // ---- hypervisor instructions (H) --------------------------------------
     logic        is_hret;     // 0x20200073
     logic        is_hfence;   // hfence.vvma / hfence.gvma -- guest TLB maintenance
