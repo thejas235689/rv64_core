@@ -1,0 +1,270 @@
+# =============================================================================
+# isa/rv64_profile.yaml -- the ISA profile of rv64_core, in one machine-readable
+# place.
+#
+# THIS FILE IS THE SINGLE SOURCE OF TRUTH for what the core claims to be.
+# Nothing else may state the profile independently:
+#
+#   * rtl/rv64_csr.sv       must return the misa value computed from this file
+#   * tb/cocotb/rv64_iss.py must agree with it
+#   * README.md and docs/ARCHITECTURE_FEATURE_CONTRACT.md must quote it
+#
+# tb/cocotb/test_isa_conformance.py reads this file and fails the build when any
+# of the three disagree, when an advertised extension does not execute, or when
+# an extension this file marks as not claimed does not behave as recorded.
+#
+# Why the file exists: before it, the README said "misa advertises RV64IM", the
+# feature contract said the same, the RTL said 0x8000000000141125, and the README
+# also said "C, F, D and V are rejected as illegal" while C and A were
+# implemented. Nothing tested the documents against the hardware, so all five
+# contradictions lived in the tree at once.
+#
+# Rule for editing: change the profile here first, then make the RTL, the ISS and
+# the documents agree. The conformance test is what enforces the order.
+# =============================================================================
+
+schema: 1
+
+profile:
+  name: rv64_core
+  revision: "1.0"
+  status: pinned
+  pinned_on: "2026-11-05"
+  summary: >-
+    RV64I base with M, A, C, D, F, S and U; M/S/U privilege; Sv39 translation;
+    Zicsr, Zifencei, Zihintpause, Zicclsm, Zawrs, Zba, Zbb, Zbc, Zbs and Zicond.
+    Vector (RVV), the custom numeric ABI, XRV512, QISA, AIACC, Xcetask, CLINT,
+    UART and modexp are present as separate units behind their own CSR windows
+    and are deliberately NOT advertised through misa.
+
+# -----------------------------------------------------------------------------
+# Width
+# -----------------------------------------------------------------------------
+xlen: 64
+
+mxl:
+  encoding: 2          # misa[63:62] == 2 means RV64
+  bits: [63, 62]
+  meaning: RV64
+
+# -----------------------------------------------------------------------------
+# misa -- the advertised extension letters.
+#
+# The value is NOT written here as a literal: it is computed from `extensions`
+# (MXL in [63:62], one bit per letter) by the conformance test, and by nothing
+# else. A literal in this file as well would be a second place to get it wrong.
+# For reference, the current value is 0x800000000014112D = A C D F I M S U.
+# -----------------------------------------------------------------------------
+misa:
+  csr: 0x301
+  writable: false
+  mxl_bits: 2
+  extensions:
+    - {letter: A, bit: 0,  claimed: true, name: atomics,           note: "lr/sc + all nine AMOs in .w and .d, plus Zabha byte/halfword AMOs"}
+    - {letter: C, bit: 2,  claimed: true, name: compressed,        note: "rv64_rvc_expand widens RV64C to 32-bit equivalents; pc advances by insn length"}
+    - {letter: D, bit: 3,  claimed: true, name: double-float,      note: "requires F; fadd/fsub/fmul/fdiv/fsqrt/fcvt/fcmp/fmin/fmax in .d"}
+    - {letter: F, bit: 5,  claimed: true, name: single-float,      note: "single precision must execute, not trap: misa.F is a promise that fadd.s works"}
+    - {letter: I, bit: 8,  claimed: true, name: base-integer,      note: "RV64I integer, loads/stores, branches, jumps, system"}
+    - {letter: M, bit: 12, claimed: true, name: muldiv,            note: "mul/mulh/mulhsu/mulhu/div/divu/rem/remu"}
+    - {letter: S, bit: 18, claimed: true, name: supervisor,        note: "S-mode, sret, sstatus/sie/stvec/sscratch/sepc/scause/stval/sip/satp, medeleg/mideleg"}
+    - {letter: U, bit: 20, claimed: true, name: user,              note: "U-mode reachable by mret with mstatus.MPP=0"}
+
+# -----------------------------------------------------------------------------
+# Privilege
+# -----------------------------------------------------------------------------
+privilege:
+  modes: [M, S, U]
+  encoding: {M: 2'b11, S: 2'b01, U: 2'b00}
+  reset_mode: M
+  delegation: {medeleg: true, mideleg: true}
+  sret: true
+  mret: true
+  csr_privilege_check: "csr_addr[9:8] must be <= current privilege, else illegal instruction (cause 2)"
+  # Recorded, not waived. Each entry is asserted by the conformance test, so if
+  # the RTL is fixed the profile has to be updated in the same commit.
+  deviations:
+    - name: ecall_cause
+      observed_cause: 11
+      observed: "ecall raises cause 11 (ECALL_M) from every privilege mode"
+      spec_requires: "11 from M, 9 from S, 8 from U"
+      evidence: >-
+        rtl/riscv_core_top.sv assigns CAUSE_ECALL_M unconditionally at the ecall
+        decode; CAUSE_ECALL_S and CAUSE_ECALL_U are declared in rv64_pkg.sv and
+        used nowhere. Measured: an ecall executed in S-mode or U-mode reports
+        cause 11.
+      pinned_by: >-
+        test_isa_s_executes and test_isa_u_executes assert this cause, and prove
+        the mode really was entered from mstatus.MPP after the trap instead.
+
+# -----------------------------------------------------------------------------
+# Extensions that are implemented but are NOT misa letters. These are claimed,
+# but a misa check cannot see them; the conformance test exercises each of them
+# through the ISA they actually belong to.
+# -----------------------------------------------------------------------------
+named_extensions_claimed:
+  - {name: Zicsr,       evidence: "csrrs/csrrw/csrrc + immediate forms retire"}
+  - {name: Zifencei,    evidence: "fence.i invalidates the whole I-cache"}
+  - {name: Zicntr,      evidence: "mcycle/minstret and their *h halves"}
+  - {name: Zihintpause, evidence: "pause retires as an ordering no-op"}
+  - {name: Zicclsm,     evidence: "misaligned loads/stores are split in the LSU, never trap"}
+  - {name: Zawrs,       evidence: "wrs.nto/wrs.sto retire immediately (single hart)"}
+  - {name: Zba,         evidence: "add.uw sh1add sh2add sh3add slli.uw"}
+  - {name: Zbb,         evidence: "andn orn xnor clz ctz cpop min max minu maxu sext.b sext.h zext.h rol ror rori rolw rorw rev8 orc.b"}
+  - {name: Zbc,         evidence: "clmul clmulh clmulr"}
+  - {name: Zbs,         evidence: "bset bclr binv bext + immediate forms"}
+  - {name: Zicond,      evidence: "czero.eqz czero.nez"}
+
+# -----------------------------------------------------------------------------
+# CSR address map
+#
+# The custom windows are decoded in rtl/riscv_core_top.sv and the bases live in
+# rtl/rv64_pkg.sv and rtl/rv64_num_pkg.sv. ci/check_csr_map.py checks that no two
+# windows overlap; the conformance test checks that this list and the RTL decode
+# describe the same windows.
+#
+# Nine windows. (ci/check_csr_map.py reports eight: its regex only matches the
+# "<base> + 12'dN" form and the numeric window is decoded as
+# ">= CSR_NCFG && <= CSR_NERR". The conformance test parses both forms.)
+# -----------------------------------------------------------------------------
+csr_map:
+  standard:
+    - {name: mstatus,  csr: 0x300, priv: M, note: "MIE/MPIE/MPP/FS/SUM/MXR"}
+    - {name: misa,     csr: 0x301, priv: M, note: "read-only, see the misa section"}
+    - {name: medeleg,  csr: 0x302, priv: M}
+    - {name: mideleg,  csr: 0x303, priv: M}
+    - {name: mie,      csr: 0x304, priv: M}
+    - {name: mtvec,    csr: 0x305, priv: M, note: "direct mode only, low 2 bits forced 0"}
+    - {name: mepc,     csr: 0x341, priv: M, note: "low 2 bits forced 0"}
+    - {name: mcause,   csr: 0x342, priv: M}
+    - {name: mtval,    csr: 0x343, priv: M}
+    - {name: satp,     csr: 0x180, priv: S, note: "MODE 0 (Bare) or 8 (Sv39) only"}
+  custom_windows:
+    - {name: RVV,      block: rv64_vunit,    base: 0x780, top: 0x78F, size: 16, rtl_const: CSR_RVV_BASE}
+    - {name: numeric,  block: rv64_num_csr,  base: 0x7C0, top: 0x7C2, size: 3,  rtl_const: "CSR_NCFG..CSR_NERR", note: "ncfg 0x7C0, nflags 0x7C1, nerr 0x7C2"}
+    - {name: Xcetask,  block: rv64_xcetask,  base: 0x7D0, top: 0x7D8, size: 9,  rtl_const: CSR_TASK_BASE}
+    - {name: CLINT,    block: rv64_clint,    base: 0x7D9, top: 0x7DF, size: 7,  rtl_const: CSR_CLINT_BASE}
+    - {name: QISA,     block: rv64_qisa,     base: 0x7E0, top: 0x7E6, size: 7,  rtl_const: CSR_QISA_BASE}
+    - {name: AIACC,    block: rv64_aiacc,    base: 0x7E8, top: 0x7ED, size: 6,  rtl_const: CSR_AIACC_BASE}
+    - {name: XRV512,   block: rv64_xrv512,   base: 0x7F0, top: 0x7F7, size: 8,  rtl_const: CSR_XRV512_BASE}
+    - {name: UART,     block: rv64_uart,     base: 0x7FC, top: 0x7FF, size: 4,  rtl_const: CSR_UART_BASE}
+    - {name: modexp,   block: rv64_modexp,   base: 0x800, top: 0x807, size: 8,  rtl_const: CSR_MODEXP_BASE}
+  unimplemented:
+    rule: "any CSR address outside the lists above raises illegal instruction (cause 2)"
+    example: 0x999
+
+# -----------------------------------------------------------------------------
+# Bus interface contract
+# -----------------------------------------------------------------------------
+bus:
+  # The signal names are the contract. The conformance test asserts each one is
+  # present on riscv_core_top, so a renamed port fails the build instead of
+  # quietly invalidating this section.
+  ports:
+    - name: instruction
+      outstanding: 1
+      request:  [if_req_valid, if_req_addr, if_req_ready]
+      response: [if_rsp_valid, if_rsp_data, if_rsp_error]
+    - name: data
+      outstanding: 1
+      request:  [d_req_valid, d_req_addr, d_req_we, d_req_wdata, d_req_wstrb, d_req_ready]
+      response: [d_rsp_valid, d_rsp_rdata, d_rsp_error]
+    - name: vector
+      outstanding: 1
+      note: "the RVV unit has its own port; it is not spliced onto the data port"
+      request:  [v_req_valid, v_req_addr, v_req_we, v_req_wdata, v_req_wstrb, v_req_ready]
+      response: [v_rsp_valid, v_rsp_data, v_rsp_error]
+  ordering: "strongly ordered; a port accepts one request at a time"
+  request_channel:
+    handshake: "req_valid && req_ready on the same rising edge accepts exactly one beat"
+    stability: "req_valid, req_addr, req_we, req_wdata and req_wstrb are held stable until req_ready"
+  response_channel:
+    separate: true
+    fields: [rsp_valid, rsp_data, rsp_error]
+    beat_bits: 64
+    latency: "one or more cycles after the request is accepted"
+    strobes: "data port only (wstrb); the response channel carries no strobes"
+    store_completion: "a store completes when req_ready is seen; it gets no response beat"
+    load_completion: "a load completes on rsp_valid; rsp_data is one 64-bit beat"
+    error_flag: "rsp_error on a fetch -> cause 1 (instruction access fault); on a load -> cause 5 (load access fault)"
+  alignment: "misaligned accesses never reach the bus: the LSU splits them (Zicclsm); instruction-address misalignment traps"
+
+# -----------------------------------------------------------------------------
+# Reset and clocking
+# -----------------------------------------------------------------------------
+clocking:
+  clock_domains: 1
+  clock: clk
+  reset:
+    name: rst_n
+    active_low: true
+    style: synchronous
+    effect: "all architectural state returns to its reset value; priv = M; pc = reset vector"
+  cdc_paths: 0
+  note: "one clock domain, no CDC, no reset synchroniser inside the core"
+
+# -----------------------------------------------------------------------------
+# What this core deliberately does NOT claim, and why.
+#
+# `probe` is an instruction a program can execute to test the claim. `expect` is
+# what the conformance test requires:
+#   traps            -- the instruction must raise cause 2 (illegal instruction).
+#                       This is the default; an entry that omits `expect` is
+#                       held to it.
+#   retires_as_noop  -- a recorded deviation from `traps`, with the reason and
+#                       the test that pins it. The conformance test then asserts
+#                       the instruction does NOT trap, so the deviation cannot
+#                       drift either: if the RTL changes, the profile must.
+# -----------------------------------------------------------------------------
+not_claimed:
+  - letter: H
+    misa_bit: 7
+    name: hypervisor
+    reason: >-
+      No VS/VU mode, no two-stage address translation, no guest trap routing and
+      no hgatp in the address path. Advertising H would tell software that guest
+      mode works when it does not.
+    probe: {name: hret, word: 0x20200073}
+    expect: retires_as_noop
+    deviation: >-
+      rv64_decoder.sv decodes hret, hfence.vvma, hfence.gvma, hinval.*, hlv.* and
+      hsv.* and executes them as no-ops or ordinary accesses, and
+      test_core.py::test_hypervisor_decode_and_execute asserts exactly that. So a
+      program cannot detect H's absence by trapping. The misa bit is still clear,
+      which is the claim this profile makes; the trap behaviour is recorded here
+      so that neither side can move silently.
+
+  - letter: V
+    misa_bit: 21
+    name: vector
+    reason: >-
+      An RVV unit exists (32x64 vector file, vsetvli-equivalent control, add/sub/
+      and/or/xor/min/max/vmv, masking, reductions, widening, narrowing, slides,
+      vle/vse, binary32 vfadd/vfsub/vfmul) but it is driven through its own CSR
+      window at 0x780-0x78F, not through RVV instruction encodings. misa.V would
+      promise that rv64gcv binaries run; they do not.
+    probe: {name: vadd.vv v1,v2,v3, word: 0x02208057}
+    expect: traps
+
+  - letter: Q
+    misa_bit: 16
+    name: quad-float
+    reason: "No quad-precision datapath at all; the scalar FPU is double at the widest."
+    probe: {name: fadd.q f0,f0,f0, word: 0x06000053}
+    expect: traps
+
+  - letter: Zfh
+    misa_bit: null
+    name: half-float
+    reason: >-
+      No half-precision format in the scalar FPU. Half precision exists only as a
+      posit/binary32 entry inside the separate numeric unit, which is not the
+      scalar FP register file.
+    probe: {name: fadd.h f0,f0,f0, word: 0x04000053}
+    expect: traps
+
+  - letter: Zacas
+    misa_bit: null
+    name: atomic-compare-and-swap
+    reason: "AMOCAS.* is not implemented; only the A-extension LR/SC and AMO pairs are."
+    probe: {name: amocas.d a0,a1,(a2), word: 0x28B5352F}
+    expect: traps
