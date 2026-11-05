@@ -25,7 +25,7 @@ RTL_SRCS = [
     "rv64_decoder.sv", "rv64_pmp.sv", "rv64_csr.sv", "rv64_mmu.sv", "rv64_l2arb.sv", "rv64_l2cache.sv", "rv64_amcce.sv", "rv64_dcache.sv", "rv64_lsu.sv",
     "rv64_bpu.sv", "rv64_predecode.sv", "rv64_bootrom.sv", "rv64_rvc_expand.sv", "rv64_montmul.sv", "rv64_modexp.sv", "rv64_clint.sv", "rv64_uart.sv", "rv64_clic.sv", "fpu/rv64_fp_add.sv", "fpu/rv64_fp_round.sv", "fpu/rv64_fp_mul.sv",
     "fpu/rv64_fp_div.sv", "fpu/rv64_fp_sqrt.sv", "fpu/rv64_fp_cvt.sv",
-    "fpu/rv64_fp_cmp.sv", "fpu/rv64_fregfile.sv", "rv64_sha256.sv", "rv64_hmac.sv", "rv64_bootauth_hmac.sv", "rv64_icache.sv", "rv64_fetch.sv", "rv64_plic_lite.sv",
+    "fpu/rv64_fp_cmp.sv", "fpu/rv64_fp_nanbox.sv", "fpu/rv64_fregfile.sv", "rv64_sha256.sv", "rv64_hmac.sv", "rv64_bootauth_hmac.sv", "rv64_icache.sv", "rv64_fetch.sv", "rv64_plic_lite.sv",
     "rv64_num_pkg.sv", "rv64_num_wide.sv", "rv64_numfile.sv", "rv64_num_unit.sv", "rv64_num_csr.sv",
     "rv64_xrv512_file.sv", "rv64_xrv512.sv", "rv64_vregfile.sv", "rv64_vunit.sv", "rv64_qisa.sv" , "rv64_aiacc.sv" , "rv64_xcetask.sv",
     "riscv_core_top.sv",
@@ -47,7 +47,7 @@ CACHE_HARDENING_TESTS = [
 FPU_SRCS = [
     "fpu/rv64_fp_add.sv", "fpu/rv64_fp_round.sv", "fpu/rv64_fp_mul.sv",
     "fpu/rv64_fp_div.sv", "fpu/rv64_fp_sqrt.sv", "fpu/rv64_fp_cvt.sv",
-    "fpu/rv64_fp_cmp.sv",
+    "fpu/rv64_fp_cmp.sv", "fpu/rv64_fp_nanbox.sv",
 ]
 
 ALL_TESTS = [
@@ -64,20 +64,27 @@ def main():
         _p = _ap.ArgumentParser(add_help=False)
         _p.add_argument("--list-rtl", action="store_true")
         _p.parse_known_args()
+        # Paths relative to the repository root, not bare filenames. CI consumes
+        # this list from the root (`iverilog ... "${RTL[@]}"`) and a bare
+        # "rv64_pkg.sv" does not exist there, so the lint step failed with
+        # "rv64_pkg.sv: No such file or directory" and linted nothing.
         for f in RTL_SRCS:
-            print(f)
+            print(os.path.join("rtl", f))
         return
     ap = argparse.ArgumentParser()
     ap.add_argument("--sim", default=os.environ.get("SIM", "icarus"))
     ap.add_argument("--list-rtl", action="store_true",
                     help="print the RTL source list and exit (used by CI lint)")
     ap.add_argument("--suite", default="core",
-                    choices=["core", "plic", "pmp", "fpu", "dcache", "icache", "l2arb", "l2sys"],
+                    choices=["core", "plic", "pmp", "fpu", "dcache", "icache", "l2arb", "l2sys",
+                             "conformance"],
                     help="core: full CPU regression; plic: interrupt controller unit test; "
                          "pmp: PMP matcher unit test; fpu: scalar FPU unit test; "
                          "dcache/icache/l2arb: block-level unit suites that drive the "
                          "block's own ports; l2sys: the cache subsystem topology "
-                         "(I-cache + D-cache -> L2 arbiter -> memory)")
+                         "(I-cache + D-cache -> L2 arbiter -> memory); conformance: "
+                         "the ISA profile (isa/rv64_profile.yaml) checked against "
+                         "the RTL, the ISS and the docs")
     ap.add_argument("--testcase", action="append", default=None,
                     help="run only this test (repeatable)")
     ap.add_argument("--clean", action="store_true")
@@ -119,6 +126,12 @@ def main():
                    os.path.join(RTL_DIR, "rv64_dcache.sv"),
                    os.path.join(TB_DIR, "tb_l2sys.sv")]
         toplevel, module = "tb_l2sys", "test_l2sys"
+    elif args.suite == "conformance":
+        # The whole core is needed: the profile is checked by executing
+        # instructions on riscv_core_top, not by inspecting files alone.
+        sources = [os.path.join(RTL_DIR, f) for f in RTL_SRCS]
+        sources.append(os.path.join(TB_DIR, "tb_core_top.sv"))
+        toplevel, module = "tb_core_top", "test_isa_conformance"
     else:
         sources = [os.path.join(RTL_DIR, f) for f in RTL_SRCS]
         sources.append(os.path.join(TB_DIR, "tb_core_top.sv"))

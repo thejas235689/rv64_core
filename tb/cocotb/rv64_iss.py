@@ -192,10 +192,13 @@ class ISS:
         self.insn_len = 4
         self.csr = {
             0x300: 0x3800,       # mstatus: MPP=M, FS=Initial (bit 13)
-            # MXL=2 | A(0) C(2) F(5) I(8) M(12) S(18) U(20) = 0x8000000000141125.
-            # F is advertised (scalar double-precision is implemented); H is NOT
-            # (H CSRs exist but guest mode does not). Must match rtl/rv64_csr.sv.
-            0x301: (2 << 62) | (1 << 0) | (1 << 2) | (1 << 5) | (1 << 8) | (1 << 12) | (1 << 18) | (1 << 20),  # RV64IMAFDC + S + U
+            # MXL=2 | A(0) C(2) D(3) F(5) I(8) M(12) S(18) U(20)
+            #   = 0x800000000014112D.
+            # D is advertised (binary64 is implemented) and F with it (binary32
+            # runs through the same datapath, selected by the fmt bit); D implies
+            # F, so the two are set together. H is NOT (H CSRs exist but guest
+            # mode does not). Must match rtl/rv64_csr.sv.
+            0x301: (2 << 62) | (1 << 0) | (1 << 2) | (1 << 3) | (1 << 5) | (1 << 8) | (1 << 12) | (1 << 18) | (1 << 20),  # RV64IMAFDC + S + U
             0x304: 0,            # mie
             0x305: 0,            # mtvec
             0x306: 0,            # mcounteren
