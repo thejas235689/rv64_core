@@ -24,8 +24,15 @@ RTL_SRCS := \
   $(RTL_DIR)/rv64_bpu.sv \
   $(RTL_DIR)/rv64_predecode.sv \
   $(RTL_DIR)/rv64_bootrom.sv \
-  $(RTL_DIR)/rv64_fp_add.sv \
-  $(RTL_DIR)/rv64_fregfile.sv \
+  $(RTL_DIR)/fpu/rv64_fp_add.sv \
+  $(RTL_DIR)/fpu/rv64_fp_round.sv \
+  $(RTL_DIR)/fpu/rv64_fp_mul.sv \
+  $(RTL_DIR)/fpu/rv64_fp_div.sv \
+  $(RTL_DIR)/fpu/rv64_fp_sqrt.sv \
+  $(RTL_DIR)/fpu/rv64_fp_cvt.sv \
+  $(RTL_DIR)/fpu/rv64_fp_cmp.sv \
+  $(RTL_DIR)/fpu/rv64_fp_nanbox.sv \
+  $(RTL_DIR)/fpu/rv64_fregfile.sv \
   $(RTL_DIR)/rv64_rvc_expand.sv \
   $(RTL_DIR)/rv64_sha256.sv \
   $(RTL_DIR)/rv64_hmac.sv \
