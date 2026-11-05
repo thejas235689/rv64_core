@@ -109,25 +109,32 @@ module rv64_decoder (
       end
 
       // ---------------------------------------------------------------- LOAD
-      // ---- LOAD-FP (0x07): fld -> FP register file ----------------------
+      // ---- LOAD-FP (0x07): flw / fld -> FP register file -----------------
+      // funct3 = 2 is flw (binary32) and 3 is fld (binary64).  flw loads with a
+      // ZERO-extending access and lets the register file NaN-box the result --
+      // sign-extending would put ones in the upper half for a negative float and
+      // turn a legal binary32 into a bad box.
       7'b0000111: begin
-        if (funct3 == 3'b011) begin            // fld: 64-bit
-          ctrl.reg_we = 1'b1;
-          ctrl.is_load = 1'b1;
-          ctrl.is_fp   = 1'b1;                 // result -> FP file
-          ctrl.wb_sel  = WB_MEM;
-          ctrl.mem_size = MSZ_D;
-          ctrl.imm_sel = IMM_I;
+        if ((funct3 == 3'b010) || (funct3 == 3'b011)) begin
+          ctrl.reg_we    = 1'b1;
+          ctrl.is_load   = 1'b1;
+          ctrl.is_fp     = 1'b1;               // result -> FP file
+          ctrl.wb_sel    = WB_MEM;
+          ctrl.mem_size  = (funct3 == 3'b010) ? MSZ_W : MSZ_D;
+          ctrl.mem_uns   = (funct3 == 3'b010);  // flw: zero-extend the 32 bits
+          ctrl.fp_single = (funct3 == 3'b010);
+          ctrl.imm_sel   = IMM_I;
         end else ctrl.illegal = 1'b1;
       end
 
-      // ---- STORE-FP (0x27): fsd ----------------------------------------
+      // ---- STORE-FP (0x27): fsw / fsd -----------------------------------
       7'b0100111: begin
-        if (funct3 == 3'b011) begin            // fsd: 64-bit
-          ctrl.is_store = 1'b1;
-          ctrl.is_fp    = 1'b1;                // store data from FP file
-          ctrl.mem_size = MSZ_D;
-          ctrl.imm_sel  = IMM_S;
+        if ((funct3 == 3'b010) || (funct3 == 3'b011)) begin
+          ctrl.is_store  = 1'b1;
+          ctrl.is_fp     = 1'b1;               // store data from FP file
+          ctrl.mem_size  = (funct3 == 3'b010) ? MSZ_W : MSZ_D;
+          ctrl.fp_single = (funct3 == 3'b010);
+          ctrl.imm_sel   = IMM_S;
         end else ctrl.illegal = 1'b1;
       end
 
@@ -249,27 +256,36 @@ module rv64_decoder (
 
       // ------------------------------------------------------------------ OP
       // ---- OP-FP (opcode 0x53) ------------------------------------------
-      // Scalar double-precision only: the fmt bit (funct7[0]) must be 1, so every
-      // single-precision funct7 falls through to the illegal default rather than
-      // executing as its double-precision twin.  funct3 is the rounding mode for
-      // the arithmetic and fcvt forms (7 = DYN, i.e. take frm from fcsr; 5 and 6
-      // are reserved and trap), and an operation selector for fcmp.
+      // The fmt bit is funct7[0]: 0 = binary32, 1 = binary64.  Decoding on
+      // funct7[6:1] rather than on the whole funct7 means fadd.s and fadd.d
+      // share one case arm and differ only in ctrl.fp_single -- which is also
+      // what the datapath does, so the decoder cannot drift from it.
+      //
+      // funct3 is the rounding mode for the arithmetic and fcvt forms (7 = DYN,
+      // i.e. take frm from fcsr; 5 and 6 are reserved and trap), and an
+      // operation selector for fcmp.
+      //
+      // For the conversions the fmt bit names the FP format involved: the SOURCE
+      // for fp->integer, the DESTINATION for integer->fp and for fcvt.s.d /
+      // fcvt.d.s.  That is what the ISA specifies and it is why fp_single alone
+      // is enough to describe every fcvt form.
       7'b1010011: begin
-        ctrl.fp_f3 = funct3;
-        unique case (funct7)
-          // fadd.d / fsub.d / fmul.d / fdiv.d -- funct3 is the rounding mode
-          7'b0000001, 7'b0000101, 7'b0001001, 7'b0001101: begin
+        ctrl.fp_f3     = funct3;
+        ctrl.fp_single = ~funct7[0];
+        unique case (funct7[6:1])
+          // fadd / fsub / fmul / fdiv -- funct3 is the rounding mode
+          6'b000000, 6'b000010, 6'b000100, 6'b000110: begin
             ctrl.reg_we = 1'b1;
             ctrl.is_fp  = 1'b1;                  // result -> FP file
             ctrl.fp_src = 1'b1;                  // operands from FP file
             ctrl.wb_sel = WB_ALU;                // unused for FP, kept defined
-            if      (funct7 == 7'b0000001) ctrl.fp_op = FP_ADD;
-            else if (funct7 == 7'b0000101) ctrl.fp_op = FP_SUB;
-            else if (funct7 == 7'b0001001) ctrl.fp_op = FP_MUL;
-            else                           ctrl.fp_op = FP_DIV;
+            if      (funct7[6:1] == 6'b000000) ctrl.fp_op = FP_ADD;
+            else if (funct7[6:1] == 6'b000010) ctrl.fp_op = FP_SUB;
+            else if (funct7[6:1] == 6'b000100) ctrl.fp_op = FP_MUL;
+            else                               ctrl.fp_op = FP_DIV;
             if ((funct3 == 3'd5) || (funct3 == 3'd6)) ctrl.illegal = 1'b1;
           end
-          7'b0101101: begin                      // fsqrt.d (rs2 must be 0)
+          6'b010110: begin                       // fsqrt (rs2 must be 0)
             if (rs2 == 5'd0) begin
               ctrl.reg_we = 1'b1;
               ctrl.is_fp  = 1'b1;
@@ -279,11 +295,11 @@ module rv64_decoder (
               if ((funct3 == 3'd5) || (funct3 == 3'd6)) ctrl.illegal = 1'b1;
             end else ctrl.illegal = 1'b1;
           end
-          // feq.d / flt.d / fle.d -- funct7 0x51 = 7'b1010001.  (This was
-          // decoded as 7'b0101001, i.e. 0x29, which no FP compare uses, so every
-          // feq.d/flt.d/fle.d trapped as illegal while the assembler emitted the
+          // feq / flt / fle -- funct7 0x50/0x51.  (This was decoded as
+          // 7'b0101001, i.e. 0x29, which no FP compare uses, so every
+          // feq/flt/fle trapped as illegal while the assembler emitted the
           // correct 0x51 encoding.)
-          7'b1010001: begin
+          6'b101000: begin
             if (funct3 <= 3'd2) begin
               ctrl.reg_we = 1'b1;
               ctrl.is_fp  = 1'b0;                // result -> integer file
@@ -293,52 +309,63 @@ module rv64_decoder (
                             (funct3 == 3'd1) ? FP_FLT : FP_FLE;
             end else ctrl.illegal = 1'b1;
           end
-          // fcvt.w.d / wu / l / lu -- rs2 selects, funct3 is the rounding mode
-          7'b1100001: begin
+          // fcvt.w/wu/l/lu.{s,d} -- rs2 selects width and signedness, funct3 is
+          // the rounding mode, and fp_single is the SOURCE format
+          6'b110000: begin
             if (rs2 <= 5'd3) begin
               ctrl.reg_we = 1'b1;
               ctrl.is_fp  = 1'b0;                // result -> integer file
               ctrl.fp_src = 1'b1;                // operand from FP file
               ctrl.wb_sel = WB_ALU;
-              ctrl.fp_op  = (rs2 == 5'd0) ? FP_CVT_W_D  :
-                            (rs2 == 5'd1) ? FP_CVT_WU_D :
-                            (rs2 == 5'd2) ? FP_CVT_L_D  : FP_CVT_LU_D;
+              ctrl.fp_op  = (rs2 == 5'd0) ? FP_CVT_W  :
+                            (rs2 == 5'd1) ? FP_CVT_WU :
+                            (rs2 == 5'd2) ? FP_CVT_L  : FP_CVT_LU;
               if ((funct3 == 3'd5) || (funct3 == 3'd6)) ctrl.illegal = 1'b1;
             end else ctrl.illegal = 1'b1;
           end
-          // fcvt.d.w / wu / l / lu
-          7'b1101001: begin
+          // fcvt.{s,d}.w/wu/l/lu -- fp_single is the DESTINATION format
+          6'b110100: begin
             if (rs2 <= 5'd3) begin
               ctrl.reg_we = 1'b1;
               ctrl.is_fp  = 1'b1;                // result -> FP file
               ctrl.fp_src = 1'b0;                // operand from integer file
               ctrl.wb_sel = WB_ALU;
-              ctrl.fp_op  = (rs2 == 5'd0) ? FP_CVT_D_W  :
-                            (rs2 == 5'd1) ? FP_CVT_D_WU :
-                            (rs2 == 5'd2) ? FP_CVT_D_L  : FP_CVT_D_LU;
+              ctrl.fp_op  = (rs2 == 5'd0) ? FP_CVT_FROM_W  :
+                            (rs2 == 5'd1) ? FP_CVT_FROM_WU :
+                            (rs2 == 5'd2) ? FP_CVT_FROM_L  : FP_CVT_FROM_LU;
               if ((funct3 == 3'd5) || (funct3 == 3'd6)) ctrl.illegal = 1'b1;
             end else ctrl.illegal = 1'b1;
           end
-          // fmv.x.w (0x70) and fmv.x.d (0x71): FP -> integer.
-          // 0x70 is the word form and should sign-extend the low 32 bits, but the
-          // core's pre-existing FP test encodes fmv.x.d that way, so both move the
-          // full 64 bits.  Implementing the narrowing form needs the NaN-boxing
-          // check, which is a separate piece of work -- see docs/STATUS.md.
-          7'b1110000, 7'b1110001: begin
+          // fcvt.s.d (0x20) / fcvt.d.s (0x21): rs2 must be 0 or 1 (the two
+          // source widths), fp_single is the destination format
+          6'b010000: begin
+            if (rs2 <= 5'd1) begin
+              ctrl.reg_we = 1'b1;
+              ctrl.is_fp  = 1'b1;
+              ctrl.fp_src = 1'b1;                // operand from FP file
+              ctrl.wb_sel = WB_ALU;
+              ctrl.fp_op  = FP_CVT_FP;
+              if ((funct3 == 3'd5) || (funct3 == 3'd6)) ctrl.illegal = 1'b1;
+            end else ctrl.illegal = 1'b1;
+          end
+          // fmv.x.w (0x70) / fmv.x.d (0x71): FP -> integer
+          6'b111000: begin
             if ((funct3 == 3'b000) && (rs2 == 5'd0)) begin
               ctrl.reg_we = 1'b1;
               ctrl.is_fp  = 1'b0;                // result -> integer file
               ctrl.fp_src = 1'b1;                // operand from FP file
               ctrl.wb_sel = WB_ALU;
+              ctrl.fp_op  = ctrl.fp_single ? FP_MV_X_W : FP_MV_X_D;
             end else ctrl.illegal = 1'b1;
           end
-          // fmv.w.x (0x78) / fmv.d.x (0x79): integer -> FP, same caveat.
-          7'b1111000, 7'b1111001: begin
+          // fmv.w.x (0x78) / fmv.d.x (0x79): integer -> FP
+          6'b111100: begin
             if ((funct3 == 3'b000) && (rs2 == 5'd0)) begin
               ctrl.reg_we = 1'b1;
               ctrl.is_fp  = 1'b1;                // result -> FP file
               ctrl.fp_src = 1'b0;                // operand from integer file
               ctrl.wb_sel = WB_ALU;
+              ctrl.fp_op  = ctrl.fp_single ? FP_MV_W_X : FP_MV_D_X;
             end else ctrl.illegal = 1'b1;
           end
           default: ctrl.illegal = 1'b1;

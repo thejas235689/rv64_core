@@ -115,19 +115,21 @@ module rv64_csr (
     csr_impl  = 1'b1;
     unique case (csr_addr)
       CSR_MSTATUS:    csr_rdata = {49'd0, mstatus_fs_q, mstatus_mpp_q, 3'd0, mstatus_mpie_q, 3'd0, mstatus_mie_q, 3'd0};
-      // MXL=2 (RV64), then A(0), C(2), F(5), I(8), M(12), S(18), U(20).
-      //   A(0)=1 + C(2)=4 + F(5)=32 + I(8)=256 + M(12)=4096 + S(18)=262144
-      //   + U(20)=1048576  = 0x141125, plus MXL 0x8000000000000000
-      //   = 0x8000000000141125.
-      // F is advertised because the scalar double-precision datapath is
-      // implemented (add/sub/mul/div/sqrt/cvt/cmp). H is NOT: the H CSRs exist
-      // and are addressable, but is_hret/is_hfence are decoded and consumed
-      // nowhere, priv never enters VS/VU and hgatp never reaches the MMU, so
-      // advertising H would tell software guest mode works when it does not.
+      // MXL=2 (RV64), then A(0), C(2), D(3), F(5), I(8), M(12), S(18), U(20).
+      //   A(0)=1 + C(2)=4 + D(3)=8 + F(5)=32 + I(8)=256 + M(12)=4096
+      //   + S(18)=262144 + U(20)=1048576  = 0x14112D, plus MXL
+      //   0x8000000000000000 = 0x800000000014112D.
+      // D is advertised because the scalar FPU implements binary64, and F because
+      // it implements binary32: BOTH precisions run through the one datapath in
+      // rtl/fpu/, selected by the fmt bit. The ISA requires D to imply F, so the
+      // two bits are set together. H is NOT: the H CSRs exist and are
+      // addressable, but is_hret/is_hfence are decoded and consumed nowhere, priv
+      // never enters VS/VU and hgatp never reaches the MMU, so advertising H
+      // would tell software guest mode works when it does not.
       // V is deliberately NOT set: the vector unit takes RVV semantics but not
       // RVV encoding, so a program reading misa must not be told rv64gcv
       // binaries will run.
-      CSR_MISA:       csr_rdata = {2'b10, 36'd0, 26'h141125};   // A C F I M S U
+      CSR_MISA:       csr_rdata = {2'b10, 36'd0, 26'h14112D};   // A C D F I M S U
       CSR_HSTATUS:    csr_rdata = hstatus_q;
       CSR_HEDELEG:    csr_rdata = hedeleg_q;
       CSR_HIDELEG:    csr_rdata = hideleg_q;
