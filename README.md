@@ -8,10 +8,28 @@ to a private repository as-is.
 
 ## 1. Design contract
 
-1. **ISA profile** — RV64I base, machine mode only, plus **M** (integer
-   multiply/divide), **Zicsr**, **Zihintpause**, and the ratified bit-manipulation
-   subsets **Zba, Zbb, Zbc, Zbs**, plus **Zicond**. `misa` advertises RV64IM.
-   Standard C, F, D and V instructions are rejected as illegal.
+1. **ISA profile** — RV64I base, plus **M** (integer multiply/divide), **A**
+   (atomics incl. LR/SC and the Zabha byte/halfword AMOs), **C** (compressed),
+   **F** (single- and double-precision scalar FP), **S** and **U** privilege,
+   **Zicsr**, **Zihintpause**, and the ratified bit-manipulation subsets
+   **Zba, Zbb, Zbc, Zbs**, plus **Zicond**.
+   `misa` = `0x8000000000141125`, i.e. **A C F I M S U** with MXL=2.
+   **H is deliberately not advertised** — the H CSRs and the hret/hfence decode
+   exist, but there is no VS/VU mode and no two-stage address translation, so
+   claiming it would be false.
+
+   **Known non-conformance in the F/D bits, not yet fixed.** The scalar FPU
+   implements *double* precision (`fadd.d`, `fmul.d`, `fdiv.d`, `fsqrt.d`, `fcvt.*`,
+   `fcmp.*`) and `fadd.s` traps as illegal — `test_fpu_core_single_precision_traps`
+   asserts exactly that. Per the ISA, F is the single-precision extension and D
+   requires F. So the current `misa` is wrong in both directions: **F is set but
+   single-precision traps, and D is implemented but its bit is clear.** Making this
+   honest means either implementing single-precision and setting D, or clearing F
+   and documenting the core as double-only (itself non-conformant, since D requires
+   F). Until that is resolved, treat the F bit as unearned.
+
+   **V is not advertised.** RVV is present as a separate unit driven through its own
+   CSR window, not via `misa`.
 2. **Microarchitecture** — in-order IF/ID/EX/MEM/WB pipeline. Full EX/MEM and
    MEM/WB operand forwarding plus a WB→ID write-through bypass, load-use
    interlock, branch resolution in EX, tournament branch prediction in IF, a

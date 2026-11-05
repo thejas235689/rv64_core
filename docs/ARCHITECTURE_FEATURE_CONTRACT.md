@@ -8,7 +8,7 @@ and must trap or be absent.
 
 ```
 ISA profile    : RV64I + M + Zicsr + Zihintpause + Zba + Zbb + Zbc + Zbs + Zicond
-                 machine mode only, misa = RV64IM (MXL=2, I and M bits set)
+                 M/S/U privilege, misa = 0x8000000000141125 (MXL=2, A C F I M S U set, H clear)
 Microarchitecture: in-order 5-stage IF/ID/EX/MEM/WB, 1 instruction per cycle peak
                  forwarding: EX/MEM and MEM/WB into EX, plus WB->ID write-through
                  interlock: load-use (1 cycle), MDU busy, CSR-vs-MRET
@@ -27,7 +27,7 @@ Clock/reset    : one clock, synchronous active-low reset, single domain
 | `x0`–`x31` | 64 | `x0` reads 0, writes suppressed |
 | `pc` | 64 | |
 | `mstatus` | MIE(3), MPIE(7), MPP(12:11) | MPP reads 11 (M is the only mode) |
-| `misa` | 64 | read-only, RV64IM |
+| `misa` | 64 | read-only, 0x8000000000141125 = A C F I M S U, MXL=2 |
 | `mie` / `mip` | MSIE(3), MTIE(7), MEIE(11) | `mip` is read-only from the platform |
 | `mtvec` | 64 | direct mode only, low 2 bits forced 0 |
 | `mepc` | 64 | low 2 bits forced 0 (IALIGN=32) |
@@ -68,7 +68,7 @@ is strongly ordered with a single hart.
 
 | Cause | Source | `mtval` |
 | --- | --- | --- |
-| 0 instruction address misaligned | not reachable (IALIGN=32, no C) | — |
+| 0 instruction address misaligned | not reachable (IALIGN=16; C is implemented, so 2-byte alignment is legal) | — |
 | 1 instruction access fault | fetch response error or PMP deny | faulting address |
 | 2 illegal instruction | decoder, or unimplemented CSR | instruction word |
 | 3 breakpoint | `ebreak` when `EBREAK_ENTERS_DEBUG=0` | 0 |
