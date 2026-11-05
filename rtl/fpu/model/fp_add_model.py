@@ -1,124 +1,60 @@
-"""Bit-exact model of the binary64 adder, to be transcribed to RTL line for line.
+"""Bit-exact model of the binary32/binary64 adder (fadd / fsub).
 
-Working format, 57 bits:
-    [56] carry out
-    [55] implicit leading one
-    [54:3] fraction (52 bits)
-    [2]  round
-    [1]  guard
-    [0]  sticky
+The model computes the sum EXACTLY with Python integers at a common scale and
+only then rounds, so it is an independent oracle rather than a transcription of
+the RTL's alignment/normalise stages.  That matters: the original version of
+this file mirrored the RTL stage by stage and therefore reproduced the RTL's
+three-ulp defect instead of catching it (see README.md).
 
-Three guard bits, not two: with {round, sticky} the normalisation shift pushes the
-alignment sticky into the round position, so an EXACT result is read as needing a
-round-up. That is the bug that cost six failed patches.
+History kept deliberately: the defect was an alignment sticky collapsed to one
+bit at weight zero, while the low bit of `b` sat at exactly one ulp of the FINAL
+result -- the result exponent drops during normalisation, so that bit is
+representable and must not be turned into a sticky.  Computing the exact sum
+first makes that class of bug impossible to write down.
+
+The special-case order below mirrors rtl/fpu/rv64_fp_add.sv one for one, because
+the RTL's override order is observable (inf + -inf is invalid, a NaN wins over
+everything, x + 0 is exact).
 """
 
-M52 = (1 << 52) - 1
-QNAN = 0x7FF8000000000000
-INF = 0x7FF0000000000000
+from fp_common import (FMT, FFL_NV, exact_add, fmt_of)
 
 
-def fp_add(a: int, b: int, sub: int = 0):
-    """Return (result_bits, invalid, inexact)."""
-    sa, ea, fa = a >> 63, (a >> 52) & 0x7FF, a & M52
-    sb, eb, fb = b >> 63, (b >> 52) & 0x7FF, b & M52
+def fp_add(a, b, sub=0, rm=0, fmt=1):
+    """Return (result_bits, flags) for a + b (sub=1: a - b)."""
+    F = fmt_of(fmt)
+    a &= (1 << F.width) - 1
+    b &= (1 << F.width) - 1
 
-    a_nan = ea == 0x7FF and fa != 0
-    b_nan = eb == 0x7FF and fb != 0
-    a_inf = ea == 0x7FF and fa == 0
-    b_inf = eb == 0x7FF and fb == 0
-    a_zero = ea == 0 and fa == 0
-    b_zero = eb == 0 and fb == 0
-    sb_eff = sb ^ sub
+    sa, ea, fa = F.fields(a)
+    sb, eb, fb = F.fields(b)
+    sb_eff = sb ^ (sub & 1)
 
-    # ---- specials first, exactly as the RTL overrides at the end ----------
+    a_nan, b_nan = F.is_nan(a), F.is_nan(b)
+    a_inf, b_inf = F.is_inf(a), F.is_inf(b)
+    a_zero, b_zero = F.is_zero(a), F.is_zero(b)
+
+    # ---- specials, in the RTL's override order ---------------------------
     if a_nan or b_nan:
-        return QNAN, 0, 0
+        return F.qnan(), FFL_NV if (F.is_snan(a) or F.is_snan(b)) else 0
     if a_inf and b_inf and sa != sb_eff:
-        return QNAN, 1, 0
+        return F.qnan(), FFL_NV                       # inf + -inf
     if a_inf:
-        return (sa << 63) | INF, 0, 0
+        return F.inf(sa), 0
     if b_inf:
-        return (sb_eff << 63) | INF, 0, 0
+        return F.inf(sb_eff), 0
     if a_zero and b_zero:
-        return (0x8000000000000000 if (sa and sb_eff) else 0), 0, 0
+        return F.zero(1 if (sa and sb_eff) else 0), 0
     if a_zero:
-        return (sb_eff << 63) | (eb << 52) | fb, 0, 0
+        return F.make(sb_eff, eb, fb), 0
     if b_zero:
-        return a, 0, 0
+        return a, 0
 
-    # ---- order by magnitude ------------------------------------------------
-    a_bigger = (ea > eb) or (ea == eb and fa >= fb)
-    if a_bigger:
-        e_big, f_big, s_big = ea, fa, sa
-        e_sml, f_sml, s_sml = eb, fb, sb_eff
-    else:
-        e_big, f_big, s_big = eb, fb, sb_eff
-        e_sml, f_sml, s_sml = ea, fa, sa
+    # ---- exact sum -------------------------------------------------------
+    _, ma, ea_v = F.decompose(a)
+    _, mb, eb_v = F.decompose(b)
+    return exact_add(sa, ma, ea_v, sb_eff, mb, eb_v, rm, F)
 
-    sig_big = (1 << 52) | f_big          # implicit one included; denormals not
-    sig_sml = (1 << 52) | f_sml          # handled below
-    if e_big == 0:
-        sig_big = f_big
-    if e_sml == 0:
-        sig_sml = f_sml
 
-    diff = e_big - e_sml
-
-    # Align into a field WIDER than the 53-bit significand so the low bits are
-    # KEPT, not collapsed into a sticky. The result exponent can drop below e_big
-    # during normalisation, which makes those low bits representable -- collapsing
-    # them is what made vec140's exact sum look like it needed rounding.
-    #   aligned = sig_sml * 2**ALIGN_EXT / 2**diff
-    ALIGN_EXT = 3
-    if diff > 53 + ALIGN_EXT:
-        aligned = 0
-        sticky = sig_sml != 0
-    else:
-        aligned = (sig_sml << ALIGN_EXT) >> diff
-        lost = diff - ALIGN_EXT
-        sticky = (sig_sml & ((1 << lost) - 1)) != 0 if lost > 0 else False
-
-    # mag layout, 59 bits: [58]=carry [57]=implicit [56:5]=frac [4:3]=extra
-    #                     [2]=round [1]=guard [0]=sticky
-    mag_big = sig_big << 5
-    mag_sml = (aligned << 2) | (1 if sticky else 0)
-
-    if s_big == s_sml:
-        mag = mag_big + mag_sml
-        sign = s_big
-    else:
-        mag = mag_big - mag_sml
-        sign = s_big
-
-    exp = e_big
-    inexact = 0
-
-    # ---- normalise so the implicit one sits at bit 57 ---------------------
-    if mag >> 58:
-        inexact |= mag & 1
-        mag >>= 1
-        exp += 1
-    else:
-        while not (mag >> 57) and exp > 1:
-            mag <<= 1
-            exp -= 1
-        if mag == 0:
-            return 0, 0, 0
-
-    frac = (mag >> 5) & M52
-    rnd = (mag >> 4) & 1
-    guard = (mag >> 3) & 1
-    stk = 1 if (mag & 0x7) else 0
-
-    up = rnd and (guard or stk or (frac & 1))
-    inexact |= rnd | guard | stk
-    if up:
-        frac += 1
-        if frac >> 52:
-            frac = 0
-            exp += 1
-
-    if exp >= 0x7FF:
-        return (sign << 63) | INF, 0, 1
-    return (sign << 63) | (exp << 52) | (frac & M52), 0, inexact
+def fp_sub(a, b, rm=0, fmt=1):
+    return fp_add(a, b, 1, rm, fmt)
