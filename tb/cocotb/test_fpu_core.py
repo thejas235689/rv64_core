@@ -364,22 +364,47 @@ async def test_fpu_core_flags_sticky(dut):
 
 
 @cocotb.test()
-async def test_fpu_core_single_precision_traps(dut):
-    """Single-precision and the unimplemented OP-FP forms must still trap.
+async def test_fpu_core_single_precision_executes(dut):
+    """fadd.s must EXECUTE, not trap.
 
-    The decoder is what decides this, and widening it to the whole double
-    encoding is exactly the change that could accidentally start accepting
-    fadd.s (funct7 0x00) as fadd.d.  misa advertises F, not D-only-plus-noise, so
-    a silent wrong answer here would be worse than a trap.
+    This test used to assert the opposite, because the core implemented only double
+    precision while misa claimed F. That was the defect Phase 1 existed to fix: misa
+    advertised F (single precision) and fadd.s raised cause 2. Single precision is now
+    implemented, and D is advertised alongside it, so the assertion inverts.
+
+    The failure mode this still guards against is the opposite one: a decoder widened to
+    the whole OP-FP encoding that accepts fadd.s but routes it to the double-precision
+    datapath and returns a silently wrong answer. So the check is not merely "no trap",
+    it is "no trap AND the right result".
+
+    1.0 + 2.0 = 3.0 in single precision is 0x40400000.
     """
     from test_core import Harness as H
-    words = [0x00000053,          # fadd.s f0, f0, f0  (funct7 = 0x00)
-             0x00000073]          # ecall
+    src = """
+        li   x5, 0x3f800000      # 1.0f
+        li   x6, 0x40000000      # 2.0f
+        sw   x5, 64(x0)
+        sw   x6, 68(x0)
+        flw  f1, 64(x0)
+        flw  f2, 68(x0)
+        fadd.s f3, f1, f2
+        fsw  f3, 72(x0)
+        lw   x7, 72(x0)
+        ecall
+    """
+    from rv64_asm import assemble
+    words, _ = assemble(src)
     h = H(dut)
     await h.startup()
     h.clear()
     await h.load(words)
     await h.reset()
-    await h.run(max_cycles=400, stop_on_ecall=False)
+    await h.run(max_cycles=2000, stop_on_ecall=True)
     causes = [c for (_, c) in h.traps]
-    assert 2 in causes, f"fadd.s did not trap: causes={causes}"
+    assert 2 not in causes, f"fadd.s still traps as illegal: {causes[:3]}"
+    vals = {t[3]: t[4] for t in h.trace if t[3] is not None}
+    got = vals.get(7)
+    assert got is not None, "fadd.s produced no value"
+    assert (got & 0xFFFFFFFF) == 0x40400000, \
+        f"1.0f + 2.0f = {got & 0xFFFFFFFF:#x}, want 0x40400000 (3.0f)"
+
