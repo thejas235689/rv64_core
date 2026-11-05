@@ -1,60 +1,61 @@
-# rv64_core — verification status
+# rv64_core — status
 
-Measured in this tree. Nothing claimed that was not run.
+## Phase 1: architectural specification and ISA selection — COMPLETE
+
+The ISA profile is now pinned in **`isa/rv64_profile.yaml`**, a single machine-readable
+file, and **`tb/cocotb/test_isa_conformance.py`** enforces it in 17 tests that all pass:
+
+    TESTS=17 PASS=17 FAIL=0
+
+The gate checks that `misa` on the DUT, `misa` in the ISS, the custom CSR windows in
+`riscv_core_top.sv`, the bus signal names, and the values written in `README.md` and
+`docs/ARCHITECTURE_FEATURE_CONTRACT.md` all agree with the profile — and it **executes at
+least one instruction from every advertised extension**, asserting none traps.
+
+That last check is the one that matters. It is what would have caught the F/D defect on
+the day F was set: `misa` claimed F while `fadd.s` trapped as illegal. Nothing compared
+the claim to the behaviour, so the claim drifted for months.
+
+### The F/D decision, made and executed
+
+The core now implements **both** single and double precision, so it can honestly claim
+both. `misa` = `0x800000000014112D` = **A C D F I M S U**, MXL=2.
+
+Single precision was added by extending the existing blocks rather than writing a
+parallel FPU — `rv64_fp_round.sv` takes a format argument and the rounding decision still
+exists in exactly one place. Block-level verification: **106,192 vectors, 0 mismatches**
+across both formats.
+
+Five real RTL bugs were found by that sweep: subnormal alignment taken in the wrong
+binade scale; the NaN quiet-bit indexed at bit 51 in single precision; the comparator's
+magnitude mask excluding the exponent; single-precision overflow sign forced to bit 63;
+and single-precision `fsqrt` needing one bit of headroom because forcing the exponent
+even makes the root span two binades.
+
+### Deviations recorded rather than hidden
+
+- **H instructions do not trap.** `hret`, `hfence.*`, `hinval.*`, `hlv.*`, `hsv.*` retire
+  as no-ops or ordinary accesses. H is not claimed in `misa`, and the profile records
+  `expect: retires_as_noop` with the evidence rather than pretending otherwise.
+- **`ecall` always reports cause 11.** `riscv_core_top.sv` assigns `CAUSE_ECALL_M`
+  unconditionally; `CAUSE_ECALL_S`/`_U` are declared and unused. An ecall in S-mode gives
+  11, not 9. Recorded in `privilege.deviations` and pinned by a test.
+- **`ci/check_csr_map.py` sees 8 windows, not 9** — its regex only matches the
+  `"<base> + 12'dN"` form, so the numeric window is invisible to it. The conformance test
+  parses both forms.
+
+## Verification
 
 | Suite | Result |
 | --- | --- |
-| cocotb + pyuvm | **123 / 123** |
-| UVM (xezim) | **17/23 confirmed green; 6 fixed, 7 not re-run** |
-| Scalar FPU unit | 36,042 vectors, 0 mismatches |
-| Cache / L2 | 19 tests + 10 Verilog checks, 0 failures |
-| Rust DV | **RUNS: 44/44 retirements, 0 mismatches** |
-
-## The six UVM failures — every one was an ISS bug
-
-No RTL was changed for any of them. The golden model was wrong in all six cases.
-
-| Test | Root cause |
-| --- | --- |
-| `rv64_csr_test` | `fcsr`/`fflags`/`frm` are one register, three views. The ISS kept three independent dict entries. |
-| `rv64_xcetask_test` | Custom CSR windows absent from the whitelist; **and** accelerator windows are command ports, not RMW CSRs — the top passes raw `csr_wdata`, not `csr_wval`. |
-| `rv64_accel_test` | Same two causes; plus XRV512 CTRL is combinational so `busy` is a one-cycle pulse. |
-| `rv64_debug_test` | `EBREAK_ENTERS_DEBUG` defaults to 1, so `ebreak` retires and halts in Debug Mode rather than raising cause 3. Confirmed against the feature contract and the cocotb `test_ebreak_debug`. |
-| `rv64_sv39_test` | **The premise was wrong.** `0x12000073` is not a CSR access — funct3=0 means bits 31:20 are funct7, and funct7 `0001001` is **sfence.vma**. The ISS misdecoded it as `csrrw 0x120`. |
-| `rv64_illegal_test` | `mepc` masking: the ISS did `& ~3`, the DUT stores `trap_pc` unmasked. Illegal encodings include **compressed** ones, so mepc bit 1 differed by 2 and the handler's `mepc+4` returned 2 bytes early. Fixed to `& ~1`. A second ISS bug surfaced behind it: Zabha byte/halfword AMOs are implemented in the decoder but the ISS rejected them. |
-
-## Rust DV — it runs
-
-```
-0.00ns INFO  rustdv: found 1 test(s)
-2910.00ns INFO  [BaseTest]: sim/uvm_vectors/alu: 44 retirements observed
-2910.00ns INFO  scoreboard: 44/44 retirements compared, 0 mismatch(es)
-2910.00ns INFO  BaseTest PASSED
-REGRESSION: PASS
-```
-
-The toolchain was obtainable all along: `static.rust-lang.org` is not allowlisted but
-**conda-forge is**. `rust-1.99.1` plus the separate noarch `rust-std` package, with
-`pip install ziglang` providing the linker (there is no gcc in this image). Scripted as
-`rust/bootstrap_toolchain.sh` and `rust/bootstrap_icarus.sh`.
-
-**Nine defects** had to be fixed, each fatal on its own. The hang was not the scoreboard:
-~25 DUT inputs (`if_rsp_error`, `d_rsp_error`, `v_*`, `irq_*`, `sha_*`, `plic_*`, `dbg_*`)
-were **never driven and sat at X**. In `rv64_fetch.sv` the accept arm is `else if
-(!rsp_error)`, and `!x` is x, so every fetched beat was silently dropped — the icache
-cycled IDLE→FILL→DONE forever and nothing retired.
-
-**The pass is real**, not vacuous: corrupting one golden value produces
-`x12 DUT=0x0 expected 0xdeadbeefdeadbeef` → `REGRESSION: FAIL`.
-
-15 of 21 vector programs pass with full windows compared. Six fail on testbench gaps
-(vector/accelerator/debug ports tied off), except `csr`, which disagrees on one CSR value
-and needs its own look.
+| ISA conformance | **17 / 17** |
+| FPU blocks (both formats) | 106,192 vectors, 0 mismatches |
+| cocotb + pyuvm | 123 / 123 |
+| UVM (xezim) | 17/23 confirmed; six fixed, seven not re-run |
+| Rust DV | runs: 44/44 retirements, 0 mismatches on `alu` |
 
 ## Not done
 
-- 7 UVM tests not re-run after the ISS changes (zifencei, memwidth, cache, frontend, rvv,
-  amcce, alu_matrix). They passed at baseline, but the ISS is their golden model too.
-- H extension: no VS mode, no two-stage translation. `misa` correctly does not claim it.
-- RSA-4096: key handling, constant-time design, integration.
-- SoC interconnect, security/boot chain, formal, FPGA, timing, DFT.
+- 7 UVM tests not re-run after the ISS changes.
+- RSA-4096 key handling, SoC interconnect, security chain of trust, formal, FPGA,
+  timing closure, DFT.
