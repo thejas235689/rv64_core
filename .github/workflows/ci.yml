@@ -29,6 +29,13 @@ name: regression
 #    results.xml with testcase entries, and account for every requested test
 #    before any of it counts as passing.
 #
+# 5. Nothing tested the documents against the hardware. The README said "misa
+#    advertises RV64IM", the feature contract said the same, the RTL said
+#    0x8000000000141125, and the README also said "C, F, D and V are rejected as
+#    illegal" while C and A were implemented -- five contradictions at once, none
+#    caught. The "ISA conformance" step now reads isa/rv64_profile.yaml and fails
+#    on any of them.
+#
 # Note on the PSS tests: test_pss_alu, test_pss_memory and test_pss_word need the
 # external `satya` solver. Without it they fail, and a test that cannot run is
 # reported as FAIL, not quietly skipped. To declare that dependency absent, set
@@ -62,7 +69,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y --no-install-recommends iverilog
 
-      - name: Install cocotb into the pinned interpreter
+      - name: Install cocotb and PyYAML into the pinned interpreter
         # No actions/setup-python on purpose. It installs an interpreter under
         # /opt/hostedtoolcache and puts it first on PATH, which is a different
         # interpreter from the one every step below is pinned to. Installing into
@@ -70,12 +77,15 @@ jobs:
         # --break-system-packages because the runner's system Python is marked
         # externally managed (PEP 668) and has no venv here.
         run: |
-          "$PYTHON" -m pip install --quiet --break-system-packages cocotb
+          # pyyaml: isa/rv64_profile.yaml is YAML, and the conformance test reads
+          # it at import time. Without it that suite cannot even be collected.
+          "$PYTHON" -m pip install --quiet --break-system-packages cocotb pyyaml
 
       - name: Assert the interpreter is the pinned one
         run: |
           "$PYTHON" -c 'import sys; assert sys.executable == "/usr/local/bin/python3", sys.executable; print("pinned interpreter:", sys.executable, sys.version.split()[0])'
           "$PYTHON" -c 'import cocotb; print("cocotb", cocotb.__version__)'
+          "$PYTHON" -c 'import yaml; print("pyyaml", yaml.__version__)'
           echo "bare python3 resolves to: $(command -v python3 || echo none)"
           echo "PYTHONEXECUTABLE=${PYTHONEXECUTABLE:-<unset>}"
           # sed, not `head -1`: under the runner's -o pipefail, head closing the
@@ -107,6 +117,23 @@ jobs:
             [ -f "$f" ] || { echo "listed source does not exist: $f"; exit 1; }
           done
           iverilog -g2012 -Wall -o /dev/null -s riscv_core_top "${RTL[@]}"
+
+      - name: ISA conformance (profile vs RTL vs ISS vs docs)
+        # The gate for phase 1. It reads isa/rv64_profile.yaml and fails when the
+        # DUT's misa, the ISS's misa, README.md or the feature contract disagree
+        # with it, when an advertised extension's instruction traps, when a
+        # not-claimed extension does not behave as the profile records, when the
+        # profile's CSR windows are not the ones the RTL decodes, or when a bus
+        # signal the profile names is missing from the top level.
+        #
+        # Batched and scored by the same honest runner as the rest of the suite,
+        # so a test that silently does not run cannot pass.
+        run: bash ci/run_batches.sh
+        env:
+          SUITE: conformance
+          MODULE_FILE: tb/cocotb/test_isa_conformance.py
+          BATCH_SIZE: "6"
+          BATCH_TIMEOUT: "600"
 
       - name: Core regression (batched, honest scoring)
         # Batches keep each invocation inside the step limit; run_batches.sh
