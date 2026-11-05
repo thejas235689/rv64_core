@@ -535,6 +535,9 @@ module riscv_core_top #(
   logic [4:0]  id_ex_fp_op;
   logic [2:0]  id_ex_fp_f3;
   logic        id_ex_fp_src, ex_mem_fp_src, mem_wb_fp_src;
+  logic        id_ex_fp_single, ex_mem_fp_single, mem_wb_fp_single;
+  logic [63:0] fp_op_a, fp_op_b;          // NaN-unboxed operands for binary32
+  logic        fp_src_single;             // the FP source operands are binary32
   logic [2:0]  csr_frm;
   // EX-stage integer operands, with forwarding.  Declared here rather than in the
   // EX section because fcvt.d.* feeds the FPU from the integer file and that
@@ -708,131 +711,188 @@ module riscv_core_top #(
   // result is carried through MEM to WB like an ALU result.
   // ===========================================================================
   rv64_fregfile u_fregfile (
-    .clk     (clk),
-    .rst_n   (rst_n),
-    .we      (mem_wb_v && mem_wb_reg_we && mem_wb_is_fp),
-    .waddr   (mem_wb_rd),
-    .wdata   (mem_wb_wdata),
-    .raddr_a (id_ex_rs1),
-    .rdata_a (fp_rs1_data),
-    .raddr_b (id_ex_rs2),
-    .rdata_b (fp_rs2_data)
+    .clk      (clk),
+    .rst_n    (rst_n),
+    .we       (mem_wb_v && mem_wb_reg_we && mem_wb_is_fp),
+    .waddr    (mem_wb_rd),
+    .wdata    (mem_wb_wdata),
+    .w_single (mem_wb_fp_single),   // NaN-box a binary32 result on the way in
+    .raddr_a  (id_ex_rs1),
+    .rdata_a  (fp_rs1_data),
+    .raddr_b  (id_ex_rs2),
+    .rdata_b  (fp_rs2_data)
   );
 
   // ===========================================================================
-  // Scalar double-precision datapath.
+  // Scalar F/D datapath -- ONE datapath, two formats.
   //
   // Every block is combinational and they all see the operands at once; the
   // result is selected by id_ex_fp_op at the bottom.  That costs area (a
-  // synthesizer will not merge the five datapaths) but it keeps the EX stage
+  // synthesizer will not merge the datapaths) but it keeps the EX stage
   // single-cycle, which is what the pipeline in this core already assumes.  The
   // divider and the square root take an `enable` so their 55/56-step iterative
   // chains do not re-evaluate on every cycle the operands happen to change.
   //
+  // `fmt` (1 = binary64, 0 = binary32) is what makes single precision an
+  // extension rather than a second FPU: the same adder, multiplier, divider,
+  // square root, converter and comparator run both formats, and the rounding
+  // decision still exists in exactly one place (rv64_fp_round.sv).
+  //
   // Rounding mode: funct3 for the instruction, or frm from fcsr when funct3 is
-  // 7 (DYN).  fadd.d/fsub.d ignore it -- rv64_fp_add is round-to-nearest-even
-  // only and is left untouched, since it is the one verified block here.
+  // 7 (DYN).  Every operation honours it, including fadd/fsub -- the old adder
+  // was round-to-nearest-even only because it rounded inline.
   // ===========================================================================
   logic [2:0]  fp_rm_eff;
   logic [63:0] fp_mul_out, fp_div_out, fp_sqrt_out, fp_cvt_out, fp_cmp_out;
+  logic [63:0] fp_add_out;
   logic [4:0]  fp_mul_flags, fp_div_flags, fp_sqrt_flags, fp_cvt_flags, fp_cmp_flags;
   logic [4:0]  fp_add_flags;
 
   assign fp_rm_eff = (id_ex_fp_f3 == 3'd7) ? csr_frm : id_ex_fp_f3;
 
+  // ---- NaN-boxing on read --------------------------------------------------
+  // A binary32 operand must arrive NaN-boxed; one that is not is the canonical
+  // quiet NaN.  `fp_src_single` says whether the operands of THIS instruction are
+  // binary32, which is not the same as id_ex_fp_single for fcvt.s.d (whose source
+  // is a double) or fcvt.d.s (whose source is a single).
+  always_comb begin
+    unique case (id_ex_fp_op)
+      rv64_pkg::FP_ADD, rv64_pkg::FP_SUB, rv64_pkg::FP_MUL,
+      rv64_pkg::FP_DIV, rv64_pkg::FP_SQRT,
+      rv64_pkg::FP_FEQ, rv64_pkg::FP_FLT, rv64_pkg::FP_FLE,
+      rv64_pkg::FP_CVT_W, rv64_pkg::FP_CVT_WU,
+      rv64_pkg::FP_CVT_L, rv64_pkg::FP_CVT_LU:
+        fp_src_single = id_ex_fp_single;
+      rv64_pkg::FP_CVT_FP:
+        fp_src_single = ~id_ex_fp_single;   // fmt names the DESTINATION here
+      default:
+        fp_src_single = 1'b0;
+    endcase
+  end
+
+  rv64_fp_unbox u_unbox_a (
+    .fmt (~fp_src_single),
+    .x   (fp_rs1_data),
+    .y   (fp_op_a)
+  );
+
+  rv64_fp_unbox u_unbox_b (
+    .fmt (~fp_src_single),
+    .x   (fp_rs2_data),
+    .y   (fp_op_b)
+  );
+
   rv64_fp_add u_fp_add (
-    .sub          (id_ex_fp_op == rv64_pkg::FP_SUB),
-    .a            (fp_rs1_data),
-    .b            (fp_rs2_data),
-    .result       (ex_fp_a),          // adder result, muxed into ex_fp_out below
-    .flag_invalid (fp_flag_invalid),
-    .flag_inexact (fp_flag_inexact)
+    .fmt    (~id_ex_fp_single),
+    .sub    (id_ex_fp_op == rv64_pkg::FP_SUB),
+    .rm     (fp_rm_eff),
+    .a      (fp_op_a),
+    .b      (fp_op_b),
+    .result (fp_add_out),
+    .flags  (fp_add_flags)
   );
 
   rv64_fp_mul u_fp_mul (
+    .fmt    (~id_ex_fp_single),
     .rm     (fp_rm_eff),
-    .a      (fp_rs1_data),
-    .b      (fp_rs2_data),
+    .a      (fp_op_a),
+    .b      (fp_op_b),
     .result (fp_mul_out),
     .flags  (fp_mul_flags)
   );
 
   rv64_fp_div u_fp_div (
     .enable (id_ex_fp_op == rv64_pkg::FP_DIV),
+    .fmt    (~id_ex_fp_single),
     .rm     (fp_rm_eff),
-    .a      (fp_rs1_data),
-    .b      (fp_rs2_data),
+    .a      (fp_op_a),
+    .b      (fp_op_b),
     .result (fp_div_out),
     .flags  (fp_div_flags)
   );
 
   rv64_fp_sqrt u_fp_sqrt (
     .enable (id_ex_fp_op == rv64_pkg::FP_SQRT),
+    .fmt    (~id_ex_fp_single),
     .rm     (fp_rm_eff),
-    .a      (fp_rs1_data),
+    .a      (fp_op_a),
     .result (fp_sqrt_out),
     .flags  (fp_sqrt_flags)
   );
 
-  // fcvt: to_int selects the direction, and the operand comes from the FP file
-  // for double->int and from the integer file for int->double.
-  logic fp_cvt_to_int, fp_cvt_uns, fp_cvt_32;
+  // fcvt: `op` selects the direction.  The operand comes from the FP file for
+  // fp->int and fp->fp, and from the integer file for int->fp.
+  logic [1:0] fp_cvt_mode;
+  logic       fp_cvt_uns, fp_cvt_32;
   always_comb begin
-    fp_cvt_to_int = (id_ex_fp_op == rv64_pkg::FP_CVT_W_D)  ||
-                    (id_ex_fp_op == rv64_pkg::FP_CVT_WU_D) ||
-                    (id_ex_fp_op == rv64_pkg::FP_CVT_L_D)  ||
-                    (id_ex_fp_op == rv64_pkg::FP_CVT_LU_D);
-    fp_cvt_uns    = (id_ex_fp_op == rv64_pkg::FP_CVT_WU_D) ||
-                    (id_ex_fp_op == rv64_pkg::FP_CVT_LU_D) ||
-                    (id_ex_fp_op == rv64_pkg::FP_CVT_D_WU) ||
-                    (id_ex_fp_op == rv64_pkg::FP_CVT_D_LU);
-    fp_cvt_32     = (id_ex_fp_op == rv64_pkg::FP_CVT_W_D)  ||
-                    (id_ex_fp_op == rv64_pkg::FP_CVT_WU_D) ||
-                    (id_ex_fp_op == rv64_pkg::FP_CVT_D_W)  ||
-                    (id_ex_fp_op == rv64_pkg::FP_CVT_D_WU);
+    fp_cvt_mode = 2'd0;
+    unique case (id_ex_fp_op)
+      rv64_pkg::FP_CVT_W, rv64_pkg::FP_CVT_WU,
+      rv64_pkg::FP_CVT_L, rv64_pkg::FP_CVT_LU:       fp_cvt_mode = 2'd0;
+      rv64_pkg::FP_CVT_FROM_W, rv64_pkg::FP_CVT_FROM_WU,
+      rv64_pkg::FP_CVT_FROM_L, rv64_pkg::FP_CVT_FROM_LU: fp_cvt_mode = 2'd1;
+      rv64_pkg::FP_CVT_FP:                            fp_cvt_mode = 2'd2;
+      default:                                        fp_cvt_mode = 2'd0;
+    endcase
+    fp_cvt_uns = (id_ex_fp_op == rv64_pkg::FP_CVT_WU) ||
+                 (id_ex_fp_op == rv64_pkg::FP_CVT_LU) ||
+                 (id_ex_fp_op == rv64_pkg::FP_CVT_FROM_WU) ||
+                 (id_ex_fp_op == rv64_pkg::FP_CVT_FROM_LU);
+    fp_cvt_32  = (id_ex_fp_op == rv64_pkg::FP_CVT_W)  ||
+                 (id_ex_fp_op == rv64_pkg::FP_CVT_WU) ||
+                 (id_ex_fp_op == rv64_pkg::FP_CVT_FROM_W)  ||
+                 (id_ex_fp_op == rv64_pkg::FP_CVT_FROM_WU);
   end
 
   rv64_fp_cvt u_fp_cvt (
-    .to_int      (fp_cvt_to_int),
+    .op          (fp_cvt_mode),
+    .src_fmt     (~fp_src_single),
+    .dst_fmt     (~id_ex_fp_single),
     .is_unsigned (fp_cvt_uns),
     .is_32       (fp_cvt_32),
     .rm          (fp_rm_eff),
-    .src         (fp_cvt_to_int ? fp_rs1_data : op_a),
+    .src         (fp_cvt_mode == 2'd1 ? op_a : fp_op_a),
     .result      (fp_cvt_out),
     .flags       (fp_cvt_flags)
   );
 
   rv64_fp_cmp u_fp_cmp (
+    .fmt    (~id_ex_fp_single),
     .f3     (id_ex_fp_f3),
-    .a      (fp_rs1_data),
-    .b      (fp_rs2_data),
+    .a      (fp_op_a),
+    .b      (fp_op_b),
     .result (fp_cmp_out),
     .flags  (fp_cmp_flags)
   );
-
-  // fflags for the adder, which reports invalid and inexact only
-  assign fp_add_flags = {fp_flag_invalid, 3'b000, fp_flag_inexact};
 
   always_comb begin
     ex_fp_out   = 64'd0;
     ex_fp_flags = 5'd0;
     unique case (id_ex_fp_op)
       rv64_pkg::FP_ADD,
-      rv64_pkg::FP_SUB:     begin ex_fp_out = ex_fp_a;      ex_fp_flags = fp_add_flags;  end
+      rv64_pkg::FP_SUB:     begin ex_fp_out = fp_add_out;   ex_fp_flags = fp_add_flags;  end
       rv64_pkg::FP_MUL:     begin ex_fp_out = fp_mul_out;   ex_fp_flags = fp_mul_flags;  end
       rv64_pkg::FP_DIV:     begin ex_fp_out = fp_div_out;   ex_fp_flags = fp_div_flags;  end
       rv64_pkg::FP_SQRT:    begin ex_fp_out = fp_sqrt_out;  ex_fp_flags = fp_sqrt_flags; end
-      rv64_pkg::FP_CVT_W_D,
-      rv64_pkg::FP_CVT_WU_D,
-      rv64_pkg::FP_CVT_L_D,
-      rv64_pkg::FP_CVT_LU_D,
-      rv64_pkg::FP_CVT_D_W,
-      rv64_pkg::FP_CVT_D_WU,
-      rv64_pkg::FP_CVT_D_L,
-      rv64_pkg::FP_CVT_D_LU: begin ex_fp_out = fp_cvt_out;  ex_fp_flags = fp_cvt_flags; end
+      rv64_pkg::FP_CVT_W,
+      rv64_pkg::FP_CVT_WU,
+      rv64_pkg::FP_CVT_L,
+      rv64_pkg::FP_CVT_LU,
+      rv64_pkg::FP_CVT_FROM_W,
+      rv64_pkg::FP_CVT_FROM_WU,
+      rv64_pkg::FP_CVT_FROM_L,
+      rv64_pkg::FP_CVT_FROM_LU,
+      rv64_pkg::FP_CVT_FP:  begin ex_fp_out = fp_cvt_out;   ex_fp_flags = fp_cvt_flags; end
       rv64_pkg::FP_FEQ,
       rv64_pkg::FP_FLT,
       rv64_pkg::FP_FLE:     begin ex_fp_out = fp_cmp_out;   ex_fp_flags = fp_cmp_flags; end
+      // fmv.x.w is a bit move, not a single-precision operation: it returns the
+      // low 32 bits sign-extended and does NOT unbox.  fmv.w.x writes the low 32
+      // bits of the integer register and the register file NaN-boxes them.
+      rv64_pkg::FP_MV_X_W:  begin ex_fp_out = {{32{fp_rs1_data[31]}}, fp_rs1_data[31:0]}; end
+      rv64_pkg::FP_MV_X_D:  begin ex_fp_out = fp_rs1_data;  end
+      rv64_pkg::FP_MV_W_X:  begin ex_fp_out = {32'd0, op_a[31:0]}; end
+      rv64_pkg::FP_MV_D_X:  begin ex_fp_out = op_a;         end
       default:              begin ex_fp_out = 64'd0;         ex_fp_flags = 5'd0;         end
     endcase
   end
@@ -1202,13 +1262,11 @@ module riscv_core_top #(
       default: ex_wb_val = ex_alu_out;
     endcase
     // OP-FP writeback.  Anything the FPU datapath computed wins, whichever file
-    // the result goes to -- fcmp and fcvt.*.d write an INTEGER register.
-    //   fadd/fsub/fmul/fdiv/fsqrt/fcvt/fcmp -> FPU result
-    //   fmv.x.d  (fp_op = NONE, fp_src=1)   -> the FP operand, unchanged
-    //   fmv.d.x  (fp_op = NONE, fp_src=0)   -> the integer operand, unchanged
+    // the result goes to -- fcmp and fcvt.*.{s,d} write an INTEGER register.
+    // fmv.* is part of that set now: it has its own fp_op, so the sign-extension
+    // of fmv.x.w and the NaN-boxing of fmv.w.x are explicit rather than falling
+    // out of "whatever happened to be in the operand latch".
     if (id_ex_fp_op != rv64_pkg::FP_NONE)  ex_wb_val = ex_fp_out;
-    else if (id_ex_fp_src)                 ex_wb_val = fp_rs1_data;
-    else if (id_ex_is_fp)                  ex_wb_val = op_a;
   end
 
   // ===========================================================================
@@ -1575,6 +1633,7 @@ module riscv_core_top #(
       id_ex_ctrl     <= dec_ctrl;
       id_ex_rs1      <= dec_rs1;
       id_ex_is_fp   <= dec_ctrl.is_fp;
+      id_ex_fp_single <= dec_ctrl.fp_single;
       id_ex_fp_src  <= dec_ctrl.fp_src;
       id_ex_fp_op   <= dec_ctrl.fp_op;
       id_ex_fp_f3   <= dec_ctrl.fp_f3;
@@ -1600,6 +1659,7 @@ module riscv_core_top #(
       ex_mem_rd         <= 5'd0;
       ex_mem_reg_we     <= 1'b0;
       ex_mem_is_fp      <= 1'b0;
+      ex_mem_fp_single  <= 1'b0;
       ex_mem_fp_src     <= 1'b0;
       ex_mem_wb_sel     <= WB_ALU;
       ex_mem_wb_val     <= 64'd0;
@@ -1639,6 +1699,7 @@ module riscv_core_top #(
       ex_mem_rd         <= id_ex_rd;
       ex_mem_reg_we     <= id_ex_ctrl.reg_we;
       ex_mem_is_fp      <= id_ex_is_fp;
+      ex_mem_fp_single  <= id_ex_fp_single;
       ex_mem_fp_src     <= id_ex_fp_src;
       ex_mem_wb_sel     <= id_ex_ctrl.wb_sel;
       ex_mem_wb_val     <= ex_wb_val;
@@ -1677,6 +1738,7 @@ module riscv_core_top #(
       mem_wb_rd     <= 5'd0;
       mem_wb_reg_we <= 1'b0;
       mem_wb_is_fp  <= 1'b0;
+      mem_wb_fp_single <= 1'b0;
       mem_wb_fp_src <= 1'b0;
       mem_wb_is_num <= 1'b0;
       mem_wb_wdata  <= 64'd0;
@@ -1689,6 +1751,7 @@ module riscv_core_top #(
       mem_wb_rd     <= ex_mem_rd;
       mem_wb_reg_we <= ex_mem_reg_we;
       mem_wb_is_fp  <= ex_mem_is_fp;
+      mem_wb_fp_single <= ex_mem_fp_single;
       mem_wb_fp_src <= ex_mem_fp_src;
       mem_wb_is_num <= ex_mem_is_num;
       mem_wb_wdata  <= (ex_mem_wb_sel == WB_MEM) ? lsu_load_data : ex_mem_wb_val;
