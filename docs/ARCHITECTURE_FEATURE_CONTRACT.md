@@ -1,23 +1,34 @@
 # Architecture feature contract — rv64_core
 
-The single source of truth for what this core is. RTL, testbench and testplan
-are all written against this document; anything not listed here is out of scope
-and must trap or be absent.
+What this core is, in prose. The machine-readable form is
+`isa/rv64_profile.yaml`, and that file wins: this document, `README.md`, the RTL
+and the ISS are all checked against it by `tb/cocotb/test_isa_conformance.py`, so
+a disagreement fails the build instead of living in the tree.
 
 ## 1. Contract
 
+The ISA profile is pinned in **`isa/rv64_profile.yaml`** and that file is the
+single source of truth. `tb/cocotb/test_isa_conformance.py` reads it and fails
+when this document, `README.md`, the RTL or the ISS disagree with it; nothing
+below should be edited without editing the profile first.
+
 ```
-ISA profile    : RV64I + M + Zicsr + Zihintpause + Zba + Zbb + Zbc + Zbs + Zicond
-                 M/S/U privilege, misa = 0x8000000000141125 (MXL=2, A C F I M S U set, H clear)
+ISA profile    : RV64I + M + A + C + D + F + S + U
+                 misa = 0x800000000014112D (MXL=2, A C D F I M S U set, H clear)
+                 Zicsr, Zifencei, Zicntr, Zihintpause, Zicclsm, Zawrs,
+                 Zba, Zbb, Zbc, Zbs, Zicond
+                 M/S/U privilege, Sv39 translation, misa.V clear (see the profile)
 Microarchitecture: in-order 5-stage IF/ID/EX/MEM/WB, 1 instruction per cycle peak
                  forwarding: EX/MEM and MEM/WB into EX, plus WB->ID write-through
                  interlock: load-use (1 cycle), MDU busy, CSR-vs-MRET
                  branch: resolved in EX, tournament prediction in IF
                  trap: single precise trap point at MEM
-Bus interface  : separate I and D valid/ready ports, 64-bit beats, byte strobes
-                 on D, backpressure on request, separate response channel with
-                 an error flag; one outstanding request per port
-Clock/reset    : one clock, synchronous active-low reset, single domain
+Bus interface  : separate I, D and vector valid/ready ports, 64-bit beats, byte
+                 strobes on the write ports, backpressure on request, separate
+                 response channel with an error flag; one outstanding request
+                 per port
+Clock/reset    : one clock, synchronous active-low reset (rst_n), single domain
+Custom CSRs    : nine windows, 0x780-0x807 (see the profile's csr_map)
 ```
 
 ## 2. Architectural state
@@ -26,8 +37,8 @@ Clock/reset    : one clock, synchronous active-low reset, single domain
 | --- | --- | --- |
 | `x0`–`x31` | 64 | `x0` reads 0, writes suppressed |
 | `pc` | 64 | |
-| `mstatus` | MIE(3), MPIE(7), MPP(12:11) | MPP reads 11 (M is the only mode) |
-| `misa` | 64 | read-only, 0x8000000000141125 = A C F I M S U, MXL=2 |
+| `mstatus` | MIE(3), MPIE(7), MPP(12:11), FS(14:13), SUM(18), MXR(19) | MPP records the mode a trap came from: 11 M, 01 S, 00 U |
+| `misa` | 64 | read-only, 0x800000000014112D = A C D F I M S U, MXL=2 (computed from isa/rv64_profile.yaml) |
 | `mie` / `mip` | MSIE(3), MTIE(7), MEIE(11) | `mip` is read-only from the platform |
 | `mtvec` | 64 | direct mode only, low 2 bits forced 0 |
 | `mepc` | 64 | low 2 bits forced 0 (IALIGN=32) |
@@ -46,9 +57,15 @@ exception.
 RV64I: `lui auipc jal jalr beq bne blt bge bltu bgeu lb lh lw ld lbu lhu lwu
 sb sh sw sd addi slti sltiu xori ori andi slli srli srai add sub sll slt sltu
 xor srl sra or and addiw slliw srliw sraiw addw subw sllw srlw sraw fence
-fence.i ecall ebreak mret wfi` and the CSR instructions.
+fence.i ecall ebreak mret sret wfi` and the CSR instructions.
 
 RV64M: `mul mulh mulhsu mulhu div divu rem remu`.
+RV64A: `lr.w/d sc.w/d` and all nine AMOs in `.w` and `.d`, plus the Zabha
+byte/halfword AMOs.
+RV64C: the RV64C encodings, widened by `rv64_rvc_expand`; `pc` advances by the
+instruction's own length.
+RV64F / RV64D: `fadd fsub fmul fdiv fsqrt fsgnj fsgnjn fsgnjx fmin fmax` and
+`fcvt.*`, `fmv.*`, `feq flt fle` in `.s` and `.d`.
 
 Zba: `add.uw sh1add sh2add sh3add slli.uw`.
 Zbb: `andn orn xnor clz ctz cpop max maxu min minu sext.b sext.h zext.h rol ror
@@ -58,8 +75,10 @@ Zbs: `bset bclr binv bext bseti bclri binvi bexti`.
 Zicond: `czero.eqz czero.nez`.
 Zihintpause: `pause`.
 
-Everything else — including all C, F, D and V encodings — raises an
-illegal-instruction exception with `mtval` = the instruction word.
+H, V, Q, Zfh and Zacas are not implemented. H instructions retire as no-ops
+rather than trapping (recorded in the profile); V, Q, Zfh and Zacas instructions
+raise an illegal-instruction exception with `mtval` = the instruction word.
+Anything else unimplemented also raises an illegal-instruction exception.
 
 `fence`, `fence.i` and `pause` are accepted as ordering no-ops: the memory model
 is strongly ordered with a single hart.
@@ -109,7 +128,9 @@ Data port (single outstanding request)
 ```
 
 `req_valid` is held stable until `req_ready`. Addresses are naturally aligned;
-misaligned accesses never reach the port (they trap in the core).
+misaligned accesses never reach the port — the LSU splits them (Zicclsm) — while
+instruction-address misalignment traps in the core. The vector unit has its own
+`v_req_*`/`v_rsp_*` port with the same shape.
 
 ## 7. Debug and watchpoints
 
@@ -125,6 +146,13 @@ misaligned accesses never reach the port (they trap in the core).
 
 ## 8. Explicitly out of scope
 
-Caches, out-of-order execution, S/U privilege, Sv39, atomics, RVV, the custom
-numeric ABI, XRV512, Xcetask, QISA, the AI accelerator, and all research blocks.
-See `docs/ROADMAP.md`.
+The H extension (no VS/VU mode, no two-stage translation), RVV instruction
+encodings (the vector unit exists but is driven through its CSR window, not
+through `misa`), Q, Zfh, Zacas, cache coherence, cache inclusion, write-back
+caches, prefetch, an out-of-order backend, and the four research blocks (DNA,
+neuromorphic, photonic, interconnect). CLINT, UART, DMI, PLIC-lite and the L2
+arbiter exist as verified blocks reachable through their CSR windows but are not
+memory-mapped behind a peripheral bus. See `docs/ROADMAP.md`.
+
+`isa/rv64_profile.yaml` lists every one of these with the reason it is not
+claimed, and the conformance test asserts the recorded behaviour of each.

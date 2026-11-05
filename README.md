@@ -1,4 +1,4 @@
-# rv64_core — RV64IM core with caches, Sv39, RVV and keyed boot authentication
+# rv64_core — RV64IMAFDC core with caches, Sv39, RVV and keyed boot authentication
 
 A synthesizable 64-bit RISC-V core and the cocotb verification environment that
 proves it correct, delivered as a project tree you can build, simulate and push
@@ -8,28 +8,29 @@ to a private repository as-is.
 
 ## 1. Design contract
 
-1. **ISA profile** — RV64I base, plus **M** (integer multiply/divide), **A**
-   (atomics incl. LR/SC and the Zabha byte/halfword AMOs), **C** (compressed),
-   **F** (single- and double-precision scalar FP), **S** and **U** privilege,
-   **Zicsr**, **Zihintpause**, and the ratified bit-manipulation subsets
-   **Zba, Zbb, Zbc, Zbs**, plus **Zicond**.
-   `misa` = `0x8000000000141125`, i.e. **A C F I M S U** with MXL=2.
-   **H is deliberately not advertised** — the H CSRs and the hret/hfence decode
-   exist, but there is no VS/VU mode and no two-stage address translation, so
-   claiming it would be false.
+1. **ISA profile** — pinned in `isa/rv64_profile.yaml`, which is the single
+   source of truth. `tb/cocotb/test_isa_conformance.py` reads that file and fails
+   the build when the RTL, the ISS or these documents disagree with it.
+   `misa` = `0x800000000014112D`, i.e. **A C D F I M S U** with MXL=2: RV64I base
+   plus **M** (integer multiply/divide), **A** (atomics incl. LR/SC and the Zabha
+   byte/halfword AMOs), **C** (compressed), **F** and **D** (single- and
+   double-precision scalar FP), **S** and **U** privilege, **Zicsr**,
+   **Zifencei**, **Zicntr**, **Zihintpause**, **Zicclsm**, **Zawrs**, and the
+   ratified bit-manipulation subsets **Zba, Zbb, Zbc, Zbs**, plus **Zicond**.
+   Every advertised letter is exercised by the conformance test: an instruction
+   from each one is executed and must retire without trapping.
 
-   **Known non-conformance in the F/D bits, not yet fixed.** The scalar FPU
-   implements *double* precision (`fadd.d`, `fmul.d`, `fdiv.d`, `fsqrt.d`, `fcvt.*`,
-   `fcmp.*`) and `fadd.s` traps as illegal — `test_fpu_core_single_precision_traps`
-   asserts exactly that. Per the ISA, F is the single-precision extension and D
-   requires F. So the current `misa` is wrong in both directions: **F is set but
-   single-precision traps, and D is implemented but its bit is clear.** Making this
-   honest means either implementing single-precision and setting D, or clearing F
-   and documenting the core as double-only (itself non-conformant, since D requires
-   F). Until that is resolved, treat the F bit as unearned.
+   **H is deliberately not advertised** (misa bit 7 clear) — the H CSRs and the
+   hret/hfence decode exist, but there is no VS/VU mode and no two-stage address
+   translation, so claiming it would be false. The H instructions (`hret`,
+   `hfence.*`, `hinval.*`, `hlv.*`, `hsv.*`) retire as no-ops rather than
+   trapping, so software cannot detect H's absence by trap; that deviation is
+   recorded in the profile and pinned by the conformance test.
 
-   **V is not advertised.** RVV is present as a separate unit driven through its own
-   CSR window, not via `misa`.
+   **V is not advertised.** RVV is present as a separate unit driven through its
+   own CSR window (`0x780`-`0x78F`), not through RVV instruction encodings, so
+   rv64gcv binaries do not run. Q, Zfh and Zacas are not implemented and their
+   instructions trap as illegal.
 2. **Microarchitecture** — in-order IF/ID/EX/MEM/WB pipeline. Full EX/MEM and
    MEM/WB operand forwarding plus a WB→ID write-through bypass, load-use
    interlock, branch resolution in EX, tournament branch prediction in IF, a
@@ -40,7 +41,8 @@ to a private repository as-is.
 4. **Clocks and reset** — one clock, synchronous active-low reset (`rst_n`),
    single clock domain, no CDC paths.
 5. **Memory model** — strongly ordered, single outstanding request per port.
-   Misaligned loads and stores trap rather than being split.
+   Misaligned loads and stores are split in the LSU (Zicclsm) and never trap;
+   instruction-address misalignment still traps.
 
 ## 2. What is implemented
 
