@@ -10,7 +10,9 @@ the DUT value and the expected value.
 Coverage is accumulated across tests and printed at the end of the run.
 """
 
+import os
 import random
+import shutil
 
 import cocotb
 from cocotb.clock import Clock
@@ -28,6 +30,44 @@ CAUSE = {
     0x8000000000000007: "m_timer_int",
     0x800000000000000B: "m_ext_int",
 }
+
+PROFILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                      "..", "..", "isa", "rv64_profile.yaml")
+
+
+def expected_misa():
+    """misa as the ISA profile defines it.
+
+    The profile is the single source of truth for the advertised extensions, and it
+    deliberately stores them as letters + bits rather than as a literal (a second
+    place to get the value wrong). Recomputing it here means a stale hand-written
+    constant cannot make this test lie: the earlier literal omitted the D bit, so
+    the test failed against a correct core that reports D.
+    """
+    import yaml
+    with open(PROFILE) as f:
+        prof = yaml.safe_load(f)
+    mxl = prof["mxl"]["encoding"]
+    v = (mxl & 0x3) << 62
+    for e in prof["misa"]["extensions"]:
+        if e.get("claimed"):
+            v |= 1 << int(e["bit"])
+    return v
+
+
+def satya_available():
+    """Is the Satya PSS solver on PATH?
+
+    The PSS tests solve a constraint model with an external `satya` binary. It is
+    not part of this repository and not installable from PyPI, so on a machine
+    without it those tests must report SKIP rather than a fabricated FAIL: the RTL
+    has not been exercised either way.
+    """
+    return shutil.which(os.environ.get("SATYA", "satya")) is not None
+
+
+SATYA_AVAILABLE = satya_available()
+SATYA_SKIP = "Satya PSS solver not on PATH (set SATYA=... to enable the PSS tests)"
 
 COV = {}
 
@@ -1970,10 +2010,11 @@ async def test_misa_bits(dut):
     # the retirement record carries the write data, which is the value misa
     # actually returned; reading the register file hierarchically did not work
     got = h.trace[0][4]
-    dut._log.info(f"misa = {got:#x}")
-    # A C F I M S U = A(0)1 + C(2)4 + F(5)32 + I(8)256 + M(12)4096
-    #                 + S(18)262144 + U(20)1048576 = 0x141125, MXL=2 on top.
-    assert got == 0x8000000000141125, f"misa should be 0x8000000000141125, got {got:#x}"
+    want = expected_misa()
+    dut._log.info(f"misa = {got:#x} (profile says {want:#x})")
+    # A C D F I M S U = A(0)1 + C(2)4 + D(3)8 + F(5)32 + I(8)256 + M(12)4096
+    #                   + S(18)262144 + U(20)1048576 = 0x14112D, MXL=2 on top.
+    assert got == want, f"misa should be {want:#x} per isa/rv64_profile.yaml, got {got:#x}"
     assert (got >> 5) & 1, f"misa {got:#x} does not advertise F (bit 5)"
     assert not (got >> 7) & 1, f"misa {got:#x} advertises H (bit 7) but guest mode is not implemented"
     assert not (got >> 21) & 1, f"misa {got:#x} advertises V (bit 21)"
@@ -2070,59 +2111,42 @@ async def test_rvc_in_core(dut):
     dut._log.info(f"straddle: {len(h2.trace)} retirements, x5 = {x5}")
     assert x5 == 8, f"straddled instruction did not run: x5 = {x5}"
 
-def _fmv_d_x(rd, rs1):
-    """fmv.d.x rd, rs1  (funct7=0x78, rs2=0, funct3=0, opcode=0x53)"""
-    return (0x78 << 25) | (0 << 20) | (rs1 << 15) | (0 << 12) | (rd << 7) | 0x53
-
-def _fmv_x_d(rd, rs1):
-    """fmv.x.d rd, rs1  (funct7=0x70, rs2=0, funct3=0, opcode=0x53)"""
-    return (0x70 << 25) | (0 << 20) | (rs1 << 15) | (0 << 12) | (rd << 7) | 0x53
-
-def _fadd_d(rd, rs1, rs2, sub=0):
-    """fadd.d / fsub.d (funct7=0x01, funct3=0 for add, 1 for sub)"""
-    return (0x01 << 25) | (rs2 << 20) | (rs1 << 15) | (sub << 12) | (rd << 7) | 0x53
-
-def _enc_i(imm, rs1, f3, rd, op):
-    return ((imm & 0xFFF) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
-
-def _enc_s(imm, rs2, rs1, f3, op):
-    imm &= 0xFFF
-    return ((imm >> 5) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | ((imm & 0x1F) << 7) | op
-
-def _enc_i(imm, rs1, f3, rd, op):
-    return ((imm & 0xFFF) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op
-
-def _enc_s(imm, rs2, rs1, f3, op):
-    imm &= 0xFFF
-    return ((imm >> 5) << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | ((imm & 0x1F) << 7) | op
-
-
 @cocotb.test()
 async def test_fp_arith_in_core(dut):
     """End-to-end binary64 through the CPU: sd, fld, fadd.d, fmv.x.d.
 
-    lui+slli build 1.0 and 2.0 as doubles in integer registers; sd writes them to
-    memory; fld loads them into the FP file; fadd.d adds; fmv.x.d reads the result
-    back. This is the test that proves the FPU executes in situ, as opposed to
-    merely not trapping.
+    Every instruction here comes from rv64_asm.py -- `li` builds the doubles and
+    the mnemonics encode themselves. Nothing is hand-rolled: the previous version
+    of this test hand-built fmv.x.d with funct7 = 0x70, which is fmv.x.w, so the
+    core faithfully sign-extended the low 32 bits of 3.0 (== 0) and the test read
+    the 0 as a datapath failure. The measurement that settled it is the decoded
+    fp_op logged below: for a real fmv.x.d (funct7 0x71) the decoder drives
+    FP_MV_X_D, and only the hand-built 0x70 produced FP_MV_X_W.
     """
     ONE   = 0x3FF0000000000000
     TWO   = 0x4000000000000000
     THREE = 0x4008000000000000
 
     src = "\n".join([
-        "lui   x5, 0x3FF00", "slli  x5, x5, 32",        # x5 = 1.0
-        "lui   x6, 0x40000", "slli  x6, x6, 32",        # x6 = 2.0
-        "lui   x10, 0x100",                             # x10 = 0x100000 scratch
-        f".word 0x{_enc_s(0, 5, 10, 3, 0x23):08x}",     # sd  x5, 0(x10)
-        f".word 0x{_enc_s(8, 6, 10, 3, 0x23):08x}",     # sd  x6, 8(x10)
-        f".word 0x{_enc_i(0, 10, 3, 1, 0x07):08x}",     # fld f1, 0(x10)
-        f".word 0x{_enc_i(8, 10, 3, 2, 0x07):08x}",     # fld f2, 8(x10)
-        f".word 0x{_fadd_d(3, 1, 2, 0):08x}",           # fadd.d f3, f1, f2
-        f".word 0x{_fmv_x_d(7, 3):08x}",                # fmv.x.d x7, f3
-        ".word 0x00000073",                             # ecall
+        f"li      x5, {hex(ONE)}",      # x5 = 1.0
+        f"li      x6, {hex(TWO)}",      # x6 = 2.0
+        "li      x10, 0x100000",        # scratch buffer
+        "sd      x5, 0(x10)",
+        "sd      x6, 8(x10)",
+        "fld     f1, 0(x10)",
+        "fld     f2, 8(x10)",
+        "fadd.d  f3, f1, f2",
+        "fmv.x.d x7, f3",
+        "ecall",
     ])
     words, _ = assemble(src)
+
+    # Sanity-check the encodings against the ISA before running them: funct7 0x71
+    # with opcode 0x53 is fmv.x.d, and funct7 0x01 is fadd.d.
+    fmv_insn = words[-2]
+    assert (fmv_insn & 0x7F) == 0x53, f"fmv encoding has opcode {fmv_insn & 0x7F:#x}"
+    assert ((fmv_insn >> 25) & 0x7F) == 0x71, (
+        f"fmv.x.d must be funct7 0x71, assembler emitted {((fmv_insn >> 25) & 0x7F):#x}")
 
     h = Harness(dut)
     await h.startup()
@@ -2132,66 +2156,66 @@ async def test_fp_arith_in_core(dut):
     # nothing retires, which is exactly the failure this test first showed.
     await h.reset()
 
-    seen = []
+    # Watch the decoder in situ: record (instruction, decoded fp_op) for every
+    # OP-FP instruction that reaches the decoder. This is the measurement, taken
+    # from the running core rather than from a reading of the RTL.
+    decoded = []
     async def dec_watch():
         while True:
             await RisingEdge(dut.clk)
             await Timer(1, "ns")
             try:
-                insn = int(dut.u_core.dec_insn.value)
+                insn = int(dut.u_core.id_ex_insn.value)
                 if (insn & 0x7F) == 0x53:
-                    seen.append((int(dut.u_core.clint_csr_sel.value),
-                             int(dut.u_core.accel_csr_sel.value),
-                             int(dut.u_core.clint_csr_rdata.value),
-                             int(dut.u_core.accel_csr_rdata.value)))
-            except Exception:
-                pass
+                    decoded.append((insn, int(dut.u_core.id_ex_fp_op.value),
+                                    int(dut.u_core.id_ex_fp_single.value)))
+            except Exception as e:
+                if not decoded and not getattr(dec_watch, "reported", False):
+                    dec_watch.reported = True
+                    dut._log.info(f"dec_watch probe failed: {type(e).__name__}: {e}")
     cocotb.start_soon(dec_watch())
 
     await h.run(max_cycles=800, stop_on_ecall=True)
-    for insn, isfp in seen[:6]:
-        dut._log.info(f"OP-FP insn={insn:08x} funct7={(insn>>25)&0x7F:07b} dec_ctrl.is_fp={isfp}")
+
+    for insn, fp_op, single in decoded:
+        dut._log.info(f"OP-FP insn={insn:08x} funct7={((insn >> 25) & 0x7F):07b} "
+                      f"fp_single={single} decoded fp_op={fp_op}")
 
     causes = [c for (_, c) in h.traps]
     assert all(c != 2 for c in causes), f"illegal trap: causes={causes}"
 
+    # The last instruction retires in the same cycle run() returns, and the
+    # register file is only updated on the following rising edge, so settle a
+    # couple of clocks before reading any architectural state back. Reading the
+    # array on the trap cycle showed 0 for a write the trace had already recorded
+    # as 0x4008000000000000 -- a readback race, not a datapath fault.
+    for _ in range(2):
+        await RisingEdge(dut.clk)
+
     x5 = int(dut.u_core.u_regfile.regs[5].value)
-    assert x5 == ONE, f"lui+slli built {x5:016x}, expected {ONE:016x}"
+    assert x5 == ONE, f"li built {x5:016x}, expected {ONE:016x}"
     dut._log.info(f"FP regs: f1={int(dut.u_core.u_fregfile.regs_q[1].value):016x} "
                   f"f2={int(dut.u_core.u_fregfile.regs_q[2].value):016x} "
                   f"f3={int(dut.u_core.u_fregfile.regs_q[3].value):016x} "
                   f"x10={int(dut.u_core.u_regfile.regs[10].value):x} "
                   f"trace={len(h.trace)}")
-    got = int(dut.u_core.u_regfile.regs[7].value)
-    # fadd.d in situ is still wrong: x7 reads 0 rather than 3.0. Reported, not
-    # asserted, until the operand path is understood.
-    got = int(dut.u_core.u_regfile.regs[7].value)
-    # fadd.d in situ is still wrong: x7 reads 0 rather than 3.0. Reported, not
-    # asserted, until the operand path is understood.
-    # probe the FP adder's inputs and output while fadd.d is in EX
-    log = []
-    async def fp_watch():
-        while True:
-            await RisingEdge(dut.clk)
-            await Timer(1, "ns")
-            try:
-                if int(dut.u_core.id_ex_is_fp.value) == 1:
-                    log.append((int(dut.u_core.id_ex_rs1.value),
-                                int(dut.u_core.id_ex_rs2.value),
-                                int(dut.u_core.fp_rs1_data.value),
-                                int(dut.u_core.fp_rs2_data.value),
-                                int(dut.u_core.ex_fp_out.value)))
-            except Exception:
-                pass
-    cocotb.start_soon(fp_watch())
 
-    got = int(dut.u_core.u_regfile.regs[7].value)
+    # The decoder must have produced FP_MV_X_D (5'd19) for the fmv.x.d, and must
+    # never have produced FP_MV_X_W (5'd18) for it.
+    fmv_ops = [op for (insn, op, _) in decoded if ((insn >> 25) & 0x7F) == 0x71]
+    assert fmv_ops, f"fmv.x.d never reached the decoder; decoded={decoded}"
+    assert all(op == 19 for op in fmv_ops), (
+        f"fmv.x.d (funct7 0x71) decoded as fp_op={fmv_ops}, expected 19 (FP_MV_X_D)")
+
     f3 = int(dut.u_core.u_fregfile.regs_q[3].value)
     assert f3 == THREE, f"fadd.d 1.0+2.0 -> f3={f3:016x}, expected {THREE:016x}"
-    # Assert from the RETIREMENT TRACE, not by reading the register array back.
-    # The trace is architectural evidence: it records what the core wrote, when.
-    # Reading u_regfile.regs[7] returned 0 while the trace showed x7 <- 3.0, so the
-    # readback was wrong, not the RTL.
+    # x7 through the debug port: that is the architectural read path an external
+    # observer (or a debugger) sees, not a peek at the array.
+    x7 = await h.read_gpr(7)
+    assert x7 == THREE, f"fmv.x.d f3 -> x7 = {x7:016x}, expected {THREE:016x}"
+
+    # Assert from the RETIREMENT TRACE as well: it is architectural evidence of
+    # what the core wrote and when, independent of the register-array readback.
     fp_writes = {}
     for t in h.trace:
         tinsn, trd, twd = t[1], t[3], t[4]
@@ -2199,6 +2223,7 @@ async def test_fp_arith_in_core(dut):
             fp_writes[trd] = twd
     assert fp_writes.get(7) == THREE, (
         f"fmv.x.d f3 -> x7: trace shows {fp_writes.get(7)}, expected {THREE:016x}")
+
 
 @cocotb.test()
 async def test_fcsr(dut):
@@ -2313,6 +2338,7 @@ async def _pss_run(dut, action, seed=5):
     return vals, summary
 
 
+@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
 @cocotb.test()
 async def test_pss_alu(dut):
     """PSS alu_op: the solved op executes and x7 matches the solver's operands."""
@@ -2323,6 +2349,7 @@ async def test_pss_alu(dut):
     assert vals.get(7) == exp, f"alu_op x7={vals.get(7)}, expected {exp}"
 
 
+@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
 @cocotb.test()
 async def test_pss_word(dut):
     """PSS word_op: bit 31 differs from bit 32, so sign-extension is exercised."""
@@ -2335,6 +2362,7 @@ async def test_pss_word(dut):
     assert vals.get(7) == v, f"word_op x7={vals.get(7):016x}, expected {v:016x}"
 
 
+@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
 @cocotb.test()
 async def test_pss_memory(dut):
     """PSS memory_op: a sized store then the same-sized load at the solved offset."""

@@ -57,6 +57,20 @@ ALL_TESTS = [
 ]
 
 
+def _cocotb_filter(names):
+    """A module name selects the whole module; a test name filters to that test."""
+    if not names:
+        return None
+    MODULES = {"test_fpu_integration", "test_isa_conformance", "test_fpu_core",
+               "test_scenarios", "test_alu_matrix", "test_alu_lsu_num",
+               "test_cache_hardening", "test_dcache_unit", "test_l2arb",
+               "test_l2sys", "test_plic", "test_pmp_unit", "test_fpu_unit",
+               "test_pss_matrix", "tb_li", "tb_two_store"}
+    if all(n in MODULES for n in names):
+        return None          # run every test in the module
+    return names
+
+
 def main():
     import sys as _sys
     if "--list-rtl" in _sys.argv:
@@ -158,6 +172,11 @@ def main():
         toplevel, module = "tb_core_top", "test_pyuvm"
     if any(t.startswith("test_fpu_core") for t in tests):
         toplevel, module = "tb_core_top", "test_fpu_core"
+    # The integration suite: the same core, but it looks at the seams between the
+    # FPU blocks and the core (NaN-boxing, fmt routing, frm, fflags, hazards,
+    # flw/fsw) rather than at block arithmetic.
+    if any(t.startswith("test_fpu_integration") for t in tests):
+        toplevel, module = "tb_core_top", "test_fpu_integration"
 
     build_dir = os.path.join(SIM_DIR, f"sim_build_{args.sim}_{args.suite}")
     if args.sim == "icarus":
@@ -183,7 +202,7 @@ def main():
     runner.test(
         hdl_toplevel=toplevel,
         test_module=module,
-        testcase=args.testcase,
+        testcase=_cocotb_filter(args.testcase),
         build_dir=build_dir,
     )
 

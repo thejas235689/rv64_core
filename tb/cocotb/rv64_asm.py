@@ -128,10 +128,17 @@ F_ARITH = {
 }
 # fcvt: funct7 selects the direction, rs2 the width/signedness, funct3 the
 # rounding mode
-FCVT_TO_INT   = {"fcvt.w.d": 0, "fcvt.wu.d": 1, "fcvt.l.d": 2, "fcvt.lu.d": 3}
-FCVT_FROM_INT = {"fcvt.d.w": 0, "fcvt.d.wu": 1, "fcvt.d.l": 2, "fcvt.d.lu": 3}
-# fcmp: funct7 0x51, funct3 selects the comparison
-FCMP = {"fle.d": 0, "flt.d": 1, "feq.d": 2}
+FCVT_TO_INT   = {"fcvt.w.d": 0, "fcvt.wu.d": 1, "fcvt.l.d": 2, "fcvt.lu.d": 3,
+                 "fcvt.w.s": 0, "fcvt.wu.s": 1, "fcvt.l.s": 2, "fcvt.lu.s": 3}
+FCVT_FROM_INT = {"fcvt.d.w": 0, "fcvt.d.wu": 1, "fcvt.d.l": 2, "fcvt.d.lu": 3,
+                 "fcvt.s.w": 0, "fcvt.s.wu": 1, "fcvt.s.l": 2, "fcvt.s.lu": 3}
+# fcvt.s.d / fcvt.d.s: funct7 0x20 / 0x21, rs2 = 0 for .s.d and 1 for .d.s (the
+# source width, which the decoder range-checks).  Here funct7[0] names the
+# DESTINATION format, not the source -- the opposite of the arithmetic group.
+FCVT_FP = {"fcvt.s.d": (0x20, 0), "fcvt.d.s": (0x21, 1)}
+# fcmp: funct7 0x50 (.s) / 0x51 (.d), funct3 selects the comparison
+FCMP = {"fle.d": 0, "flt.d": 1, "feq.d": 2,
+        "fle.s": 0, "flt.s": 1, "feq.s": 2}
 
 # rounding modes, as the optional trailing operand of an FP instruction
 RM_CODES = {"rne": 0, "rtz": 1, "rdn": 2, "rup": 3, "rmm": 4, "dyn": 7}
@@ -289,12 +296,19 @@ def encode(mn, ops, labels=None, here=0):
         return _r(f7, _freg(ops[2]), _freg(ops[1]), rm, _freg(ops[0]), op=0x53)
     if mn in FCVT_TO_INT:
         rm = _rm(ops[2]) if len(ops) > 2 else 0
-        return _r(0x61, FCVT_TO_INT[mn], _freg(ops[1]), rm, _reg(ops[0]), op=0x53)
+        f7 = 0x60 if mn.endswith(".s") else 0x61
+        return _r(f7, FCVT_TO_INT[mn], _freg(ops[1]), rm, _reg(ops[0]), op=0x53)
     if mn in FCVT_FROM_INT:
         rm = _rm(ops[2]) if len(ops) > 2 else 0
-        return _r(0x69, FCVT_FROM_INT[mn], _reg(ops[1]), rm, _freg(ops[0]), op=0x53)
+        f7 = 0x68 if mn.startswith("fcvt.s") else 0x69
+        return _r(f7, FCVT_FROM_INT[mn], _reg(ops[1]), rm, _freg(ops[0]), op=0x53)
+    if mn in FCVT_FP:
+        f7, rs2 = FCVT_FP[mn]
+        rm = _rm(ops[2]) if len(ops) > 2 else 0
+        return _r(f7, rs2, _freg(ops[1]), rm, _freg(ops[0]), op=0x53)
     if mn in FCMP:
-        return _r(0x51, _freg(ops[2]), _freg(ops[1]), FCMP[mn], _reg(ops[0]), op=0x53)
+        f7 = 0x50 if mn.endswith(".s") else 0x51
+        return _r(f7, _freg(ops[2]), _freg(ops[1]), FCMP[mn], _reg(ops[0]), op=0x53)
     if mn in FMV_X_F:
         f7, f3 = FMV_X_F[mn]
         if mn.startswith("fmv.x"):

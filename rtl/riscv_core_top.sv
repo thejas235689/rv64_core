@@ -1229,13 +1229,39 @@ module riscv_core_top #(
   // Instruction-address misalignment still traps, generated in fetch.
   assign ex_misalign = 1'b0;
 
+  // ---- reserved dynamic rounding mode ---------------------------------------
+  // An instruction whose rm field is DYN (7) takes its rounding mode from
+  // fcsr.frm, and frm values 5 and 6 are reserved: the spec requires the
+  // instruction to raise an illegal-instruction exception.  The decoder cannot
+  // check this (it does not see the CSR), so it is checked here, where frm is
+  // available.  Only the forms whose funct3 IS a rounding mode are affected --
+  // for fcmp funct3 selects the comparison, and fmv has no rounding at all.
+  //
+  // Measured before this existed: with frm = 5 or 6, `fadd.d f3,f1,f2,dyn`
+  // executed and returned 3.0, i.e. a reserved mode was silently accepted.
+  logic fp_rm_reserved;
+  always_comb begin
+    fp_rm_reserved = 1'b0;
+    unique case (id_ex_fp_op)
+      rv64_pkg::FP_ADD, rv64_pkg::FP_SUB, rv64_pkg::FP_MUL, rv64_pkg::FP_DIV,
+      rv64_pkg::FP_SQRT,
+      rv64_pkg::FP_CVT_W, rv64_pkg::FP_CVT_WU,
+      rv64_pkg::FP_CVT_L, rv64_pkg::FP_CVT_LU,
+      rv64_pkg::FP_CVT_FROM_W, rv64_pkg::FP_CVT_FROM_WU,
+      rv64_pkg::FP_CVT_FROM_L, rv64_pkg::FP_CVT_FROM_LU,
+      rv64_pkg::FP_CVT_FP:
+        fp_rm_reserved = (id_ex_fp_f3 == 3'd7) && (csr_frm > 3'd4);
+      default: fp_rm_reserved = 1'b0;
+    endcase
+  end
+
   // ---- exception generation -------------------------------------------------
   always_comb begin
     ex_exc       = 1'b0;
     ex_exc_cause = 64'd0;
     ex_exc_tval  = 64'd0;
 
-    if (id_ex_ctrl.illegal ||
+    if (id_ex_ctrl.illegal || fp_rm_reserved ||
         (id_ex_ctrl.is_csr && !csr_valid && !num_csr_valid && !task_csr_sel &&
          !qisa_csr_sel && !aiacc_csr_sel && !xrv512_csr_sel && !rvv_csr_sel)) begin
       ex_exc       = 1'b1;
@@ -1507,12 +1533,20 @@ module riscv_core_top #(
     // FP RAW interlock: no forwarding on the FP side, so a reader must wait for
     // an in-flight FP writer. Without this, fld f2 followed by fadd.d f3,f1,f2
     // reads f2 before the load lands.
+    //
+    // The `rd != 0` test the integer file needs does NOT belong here: f0 is an
+    // ordinary FP register, so an FP producer with rd = f0 is a real producer and
+    // a consumer of f0 must wait for it.  With the guard, `fadd.d f0,f1,f2`
+    // followed by `fmv.x.d x7,f0` read f0 one instruction stale -- measured on
+    // riscv_core_top: 7 of the 8 test_fpu_integration f0 cases still failed after
+    // only the register-file write was fixed, each returning the PREVIOUS case's
+    // f0, which is exactly what a missing interlock looks like.
     if (dec_ctrl.is_fp || dec_ctrl.fp_src) begin
-      if (id_ex_v && id_ex_is_fp && (id_ex_rd != 5'd0) &&
+      if (id_ex_v && id_ex_is_fp &&
           ((dec_rs1 == id_ex_rd) || (dec_rs2 == id_ex_rd))) stall_id = 1'b1;
-      if (ex_mem_v && ex_mem_is_fp && (ex_mem_rd != 5'd0) &&
+      if (ex_mem_v && ex_mem_is_fp &&
           ((dec_rs1 == ex_mem_rd) || (dec_rs2 == ex_mem_rd))) stall_id = 1'b1;
-      if (mem_wb_v && mem_wb_is_fp && (mem_wb_rd != 5'd0) &&
+      if (mem_wb_v && mem_wb_is_fp &&
           ((dec_rs1 == mem_wb_rd) || (dec_rs2 == mem_wb_rd))) stall_id = 1'b1;
     end
   end

@@ -50,7 +50,14 @@ module rv64_fregfile (
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       for (int i = 0; i < 32; i++) regs_q[i] <= 64'd0;
-    end else if (we && (waddr != 5'd0)) begin
+    end else if (we) begin
+      // No `waddr != 0` guard here.  That rule belongs to the INTEGER file, where
+      // x0 is hardwired to zero; the F/D register file has no such register and
+      // f0 is an ordinary one.  Copying the integer idiom in silently discarded
+      // every write to f0: `fadd.d f0,f1,f2` left f0 at its old value, so the
+      // test_fpu_integration f0 cases read 0 and `fadd.d f4,f0,f2` returned a
+      // stale operand.  Measured on riscv_core_top before the fix: all 8 f0
+      // cases failed.
       regs_q[waddr] <= wdata_boxed;
     end
   end
