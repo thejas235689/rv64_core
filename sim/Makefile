@@ -7,45 +7,7 @@ ROOT      := $(abspath $(CURDIR)/..)
 RTL_DIR   := $(ROOT)/rtl
 TB_DIR    := $(ROOT)/tb
 
-RTL_SRCS := \
-  $(RTL_DIR)/rv64_pkg.sv \
-  $(RTL_DIR)/rv64_alu.sv \
-  $(RTL_DIR)/rv64_mdu.sv \
-  $(RTL_DIR)/rv64_regfile.sv \
-  $(RTL_DIR)/rv64_decoder.sv \
-  $(RTL_DIR)/rv64_pmp.sv \
-  $(RTL_DIR)/rv64_csr.sv \
-  $(RTL_DIR)/rv64_mmu.sv \
-  $(RTL_DIR)/rv64_l2arb.sv \
-  $(RTL_DIR)/rv64_l2cache.sv \
-  $(RTL_DIR)/rv64_amcce.sv \
-  $(RTL_DIR)/rv64_dcache.sv \
-  $(RTL_DIR)/rv64_lsu.sv \
-  $(RTL_DIR)/rv64_bpu.sv \
-  $(RTL_DIR)/rv64_predecode.sv \
-  $(RTL_DIR)/rv64_bootrom.sv \
-  $(RTL_DIR)/fpu/rv64_fp_add.sv \
-  $(RTL_DIR)/fpu/rv64_fp_round.sv \
-  $(RTL_DIR)/fpu/rv64_fp_mul.sv \
-  $(RTL_DIR)/fpu/rv64_fp_div.sv \
-  $(RTL_DIR)/fpu/rv64_fp_sqrt.sv \
-  $(RTL_DIR)/fpu/rv64_fp_cvt.sv \
-  $(RTL_DIR)/fpu/rv64_fp_cmp.sv \
-  $(RTL_DIR)/fpu/rv64_fp_nanbox.sv \
-  $(RTL_DIR)/fpu/rv64_fregfile.sv \
-  $(RTL_DIR)/rv64_rvc_expand.sv \
-  $(RTL_DIR)/rv64_sha256.sv \
-  $(RTL_DIR)/rv64_hmac.sv \
-  $(RTL_DIR)/rv64_bootauth_hmac.sv \
-  $(RTL_DIR)/rv64_icache.sv \
-  $(RTL_DIR)/rv64_fetch.sv \
-  $(RTL_DIR)/rv64_plic_lite.sv \
-  $(RTL_DIR)/rv64_num_pkg.sv \
-  $(RTL_DIR)/rv64_num_wide.sv \
-  $(RTL_DIR)/rv64_numfile.sv \
-  $(RTL_DIR)/rv64_num_unit.sv \
-  $(RTL_DIR)/rv64_num_csr.sv \
-  $(RTL_DIR)/riscv_core_top.sv
+RTL_SRCS := $(addprefix $(RTL_DIR)/,$(shell cat $(ROOT)/sim/rtl_sources.f))
 
 VERILOG_SOURCES := $(RTL_SRCS) $(TB_DIR)/tb_core_top.sv
 

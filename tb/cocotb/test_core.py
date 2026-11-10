@@ -2790,3 +2790,36 @@ async def test_mixed_workload(dut):
                 dut._log.warning(f"{name}: ALL = { {k: (hex(v) if v is not None else None) for k, v in sorted(vals.items())} }")
             assert got == want, f"{name}: x{reg} = {got if got is None else hex(got)}, want {hex(want)}"
         dut._log.info(f"{name}: ok")
+
+
+@cocotb.test()
+async def test_scalar_fma_in_core(dut):
+    """Check R4 decode, rs3 dependencies and one rounding in both formats."""
+    source = ["li x10, 0x100000"]
+    expected = {}
+    cases = [
+        (1, 0x43, 0x3ff0000000000000, 0x4000000000000000, 0x4008000000000000, 0x4014000000000000),
+        (1, 0x47, 0x3ff0000000000000, 0x4000000000000000, 0x4008000000000000, 0xbff0000000000000),
+        (1, 0x4b, 0x3ff0000000000000, 0x4000000000000000, 0x4008000000000000, 0x3ff0000000000000),
+        (1, 0x4f, 0x3ff0000000000000, 0x4000000000000000, 0x4008000000000000, 0xc014000000000000),
+        (0, 0x43, 0x3f800001, 0x3f7ffffe, 0xbf800000, 0xa8800000),
+        (1, 0x43, 0x3ff0000000000001, 0x3feffffffffffffe, 0xbff0000000000000, 0xb970000000000000),
+    ]
+    for rd, (fmt, opcode, a, b, c, result) in enumerate(cases, 20):
+        store, load, move = ("sd", "fld", "fmv.x.d") if fmt else ("sw", "flw", "fmv.x.w")
+        for fp, value in ((1, a), (2, b), (0, c)):
+            source.extend([f"li x5, {value:#x}", f"{store} x5, 0(x10)", f"{load} f{fp}, 0(x10)"])
+        # rs3=f0 and the producer is immediately before the fused operation.
+        insn = (fmt << 25) | (2 << 20) | (1 << 15) | (3 << 7) | opcode
+        source.extend([f".word {insn:#x}", f"{move} x{rd}, f3"])
+        expected[rd] = result if fmt or result < (1 << 31) else result | 0xffffffff00000000
+    source.append("ecall")
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=4000, stop_on_ecall=True)
+    values = await halt_and_read(h, list(expected))
+    assert values == expected

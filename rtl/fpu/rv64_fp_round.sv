@@ -92,6 +92,8 @@ module rv64_fp_round (
   logic [55:0] sig_s, lost, mask;
   always_comb begin
     sig_s = sig;
+    mask = '0;
+    lost = '0;
     if (shift != 7'd0) begin
       mask  = (56'd1 << shift) - 56'd1;      // shift == 56 -> all ones
       lost  = sig & mask;

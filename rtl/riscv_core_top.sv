@@ -526,7 +526,7 @@ module riscv_core_top #(
 
   // ---- FPU path ----------------------------------------------------
   logic        dec_is_fp;
-  logic [63:0] fp_rs1_data, fp_rs2_data;
+  logic [63:0] fp_rs1_data, fp_rs2_data, fp_rs3_data;
   logic [63:0] ex_fp_out, ex_fp_a, ex_fp_b;
   logic [4:0]  ex_fp_flags;
   logic        id_ex_is_fp, ex_mem_is_fp, mem_wb_is_fp;
@@ -720,7 +720,9 @@ module riscv_core_top #(
     .raddr_a  (id_ex_rs1),
     .rdata_a  (fp_rs1_data),
     .raddr_b  (id_ex_rs2),
-    .rdata_b  (fp_rs2_data)
+    .rdata_b  (fp_rs2_data),
+    .raddr_c  (id_ex_insn[31:27]),
+    .rdata_c  (fp_rs3_data)
   );
 
   // ===========================================================================
@@ -757,7 +759,7 @@ module riscv_core_top #(
   // is a double) or fcvt.d.s (whose source is a single).
   always_comb begin
     unique case (id_ex_fp_op)
-      rv64_pkg::FP_ADD, rv64_pkg::FP_SUB, rv64_pkg::FP_MUL,
+      rv64_pkg::FP_ADD, rv64_pkg::FP_SUB, rv64_pkg::FP_MUL, rv64_pkg::FP_FMA,
       rv64_pkg::FP_DIV, rv64_pkg::FP_SQRT,
       rv64_pkg::FP_FEQ, rv64_pkg::FP_FLT, rv64_pkg::FP_FLE,
       rv64_pkg::FP_CVT_W, rv64_pkg::FP_CVT_WU,
@@ -790,6 +792,19 @@ module riscv_core_top #(
     .b      (fp_op_b),
     .result (fp_add_out),
     .flags  (fp_add_flags)
+  );
+
+  logic [63:0] fp_op_c, fp_fma_out;
+  logic [4:0] fp_fma_flags;
+  rv64_fp_unbox u_unbox_c (
+    .fmt (~fp_src_single), .x (fp_rs3_data), .y (fp_op_c)
+  );
+  rv64_fp_fma u_fp_fma (
+    .fmt (~id_ex_fp_single), .rm (fp_rm_eff),
+    .negate_product (id_ex_insn[3]),
+    .negate_addend (id_ex_insn[2]),
+    .a (fp_op_a), .b (fp_op_b), .c (fp_op_c),
+    .result (fp_fma_out), .flags (fp_fma_flags)
   );
 
   rv64_fp_mul u_fp_mul (
@@ -871,6 +886,7 @@ module riscv_core_top #(
     unique case (id_ex_fp_op)
       rv64_pkg::FP_ADD,
       rv64_pkg::FP_SUB:     begin ex_fp_out = fp_add_out;   ex_fp_flags = fp_add_flags;  end
+      rv64_pkg::FP_FMA:     begin ex_fp_out = fp_fma_out; ex_fp_flags = fp_fma_flags; end
       rv64_pkg::FP_MUL:     begin ex_fp_out = fp_mul_out;   ex_fp_flags = fp_mul_flags;  end
       rv64_pkg::FP_DIV:     begin ex_fp_out = fp_div_out;   ex_fp_flags = fp_div_flags;  end
       rv64_pkg::FP_SQRT:    begin ex_fp_out = fp_sqrt_out;  ex_fp_flags = fp_sqrt_flags; end
@@ -1243,7 +1259,7 @@ module riscv_core_top #(
   always_comb begin
     fp_rm_reserved = 1'b0;
     unique case (id_ex_fp_op)
-      rv64_pkg::FP_ADD, rv64_pkg::FP_SUB, rv64_pkg::FP_MUL, rv64_pkg::FP_DIV,
+      rv64_pkg::FP_ADD, rv64_pkg::FP_SUB, rv64_pkg::FP_MUL, rv64_pkg::FP_FMA, rv64_pkg::FP_DIV,
       rv64_pkg::FP_SQRT,
       rv64_pkg::FP_CVT_W, rv64_pkg::FP_CVT_WU,
       rv64_pkg::FP_CVT_L, rv64_pkg::FP_CVT_LU,
@@ -1543,11 +1559,14 @@ module riscv_core_top #(
     // f0, which is exactly what a missing interlock looks like.
     if (dec_ctrl.is_fp || dec_ctrl.fp_src) begin
       if (id_ex_v && id_ex_is_fp &&
-          ((dec_rs1 == id_ex_rd) || (dec_rs2 == id_ex_rd))) stall_id = 1'b1;
+          ((dec_rs1 == id_ex_rd) || (dec_rs2 == id_ex_rd) ||
+           (dec_ctrl.fp_op == FP_FMA && if_id_insn[31:27] == id_ex_rd))) stall_id = 1'b1;
       if (ex_mem_v && ex_mem_is_fp &&
-          ((dec_rs1 == ex_mem_rd) || (dec_rs2 == ex_mem_rd))) stall_id = 1'b1;
+          ((dec_rs1 == ex_mem_rd) || (dec_rs2 == ex_mem_rd) ||
+           (dec_ctrl.fp_op == FP_FMA && if_id_insn[31:27] == ex_mem_rd))) stall_id = 1'b1;
       if (mem_wb_v && mem_wb_is_fp &&
-          ((dec_rs1 == mem_wb_rd) || (dec_rs2 == mem_wb_rd))) stall_id = 1'b1;
+          ((dec_rs1 == mem_wb_rd) || (dec_rs2 == mem_wb_rd) ||
+           (dec_ctrl.fp_op == FP_FMA && if_id_insn[31:27] == mem_wb_rd))) stall_id = 1'b1;
     end
   end
 
