@@ -59,6 +59,22 @@ package rv64_num_pkg;
   localparam logic [4:0] NUM_TOINT   = 5'd18;   // int rd  <- numeric nrs1
   localparam logic [4:0] NUM_FROMINT = 5'd19;   // numeric nrd <- int rs1
 
+  localparam logic [4:0] NUM_BFADD = 5'd20; // BF16 add, round to nearest even
+  localparam logic [4:0] NUM_BFSUB = 5'd21; // BF16 subtract
+  localparam logic [4:0] NUM_BFMUL = 5'd22; // BF16 multiply
+  localparam logic [4:0] NUM_RSUB  = 5'd23; // per-channel modular subtraction
+
+  // 16 balanced ternary digits, low digit first. 00=0, 01=+1, 11=-1.
+  localparam logic [4:0] NUM_SDADD = 5'd24;
+  localparam logic [4:0] NUM_SDSUB = 5'd25;
+
+  // Exact posit<8,1> dot-product accumulator. Format field must be zero.
+  localparam logic [4:0] NUM_PQCLR = 5'd26;
+  localparam logic [4:0] NUM_PQACC = 5'd27;
+  localparam logic [4:0] NUM_PQGET = 5'd28; // raw signed Q40.24 readback
+  localparam logic [4:0] NUM_LNADD = 5'd29; // log2(2^a + 2^b)
+  localparam logic [4:0] NUM_LNSUB = 5'd30; // log2(2^a - 2^b), a >= b
+
   // ------------------------------------------------------------------ ncfg
   // Configuration CSR layout.
   localparam int CFG_ROUND_SHIFT  = 0;    // [1:0] 0 truncate, 1 round-half-up

@@ -15,6 +15,7 @@ module rv64_mmu (
   input  logic        mprv,
   input  logic        sum,
   input  logic        mxr,
+  input  logic        invalidate,
 
   // ---- translate request ---------------------------------------------------
   input  logic        req_valid,
@@ -104,7 +105,7 @@ module rv64_mmu (
   logic [63:0] pte_lat_q;
   logic        bare_q;         // this access bypasses translation entirely
 
-  logic pte_error_q;
+  logic pte_error_q, access_error_q, walk_invalidated_q;
 
   // the response the walker should act on: live if present, else the latched one
   wire [63:0] rsp_eff   = pte_rsp_valid ? pte_rsp_data : pte_lat_q;
@@ -164,7 +165,8 @@ module rv64_mmu (
 
   assign resp_valid  = (wst == W_DONE) || (wst == W_FAULT);
   assign fault       = (wst == W_FAULT);
-  assign fault_cause = cause_c;
+  assign fault_cause = access_error_q ? ((acc_q == ACC_FETCH) ? 64'd1 :
+                                         (acc_q == ACC_LOAD) ? 64'd5 : 64'd7) : cause_c;
   assign fault_tval  = v_q;
   assign paddr       = (wst == W_DONE) ? final_c : v_q;
 
@@ -182,6 +184,8 @@ module rv64_mmu (
       v_q        <= 64'd0;
       acc_q      <= ACC_FETCH;
       pte_error_q <= 1'b0;
+      access_error_q <= 1'b0;
+      walk_invalidated_q <= 1'b0;
       tlb_context_q <= '0;
       walk_context_q <= '0;
       leaf_ppn   <= 44'd0;
@@ -197,7 +201,8 @@ module rv64_mmu (
         tlb_lvl[i]  <= 2'd0;
       end
     end else begin
-      if (satp != tlb_context_q) begin
+      if (invalidate) walk_invalidated_q <= 1'b1;
+      if (invalidate || satp != tlb_context_q) begin
         tlb_context_q <= satp;
         for (int i = 0; i < TLB_N; i++) tlb_v[i] <= 1'b0;
       end
@@ -205,6 +210,8 @@ module rv64_mmu (
         W_IDLE: begin
           if (req_valid) begin
             v_q     <= vaddr;
+            access_error_q <= 1'b0;
+            walk_invalidated_q <= invalidate;
             acc_q   <= acc_type;
             if (!xlate) begin
               // bare: pass the address straight through. Without bare_q the
@@ -247,8 +254,10 @@ module rv64_mmu (
         W_RESP: begin
           if (rsp_eff_v) begin
             pte_got_q <= 1'b0;
-            if ((pte_rsp_valid ? pte_rsp_error : pte_error_q) ||
-                !rsp_eff[0] || (|rsp_eff[63:54]) ||
+            if (pte_rsp_valid ? pte_rsp_error : pte_error_q) begin
+              access_error_q <= 1'b1;
+              wst <= W_FAULT;
+            end else if (!rsp_eff[0] || (|rsp_eff[63:54]) ||
                 (!rsp_eff[1] && rsp_eff[2])) begin
               wst <= W_FAULT;          // invalid PTE, or W without R
             end else if (rsp_eff[1] || rsp_eff[3]) begin
@@ -258,7 +267,7 @@ module rv64_mmu (
               if (!leaf_aligned) wst <= W_FAULT;
               else begin
                 if (perm_of(rsp_eff, acc_q)) begin
-                  tlb_v[v_q[15:12]]    <= walk_context_q == satp;
+                  tlb_v[v_q[15:12]]    <= walk_context_q == satp && !walk_invalidated_q && !invalidate;
                   tlb_vpn[v_q[15:12]]  <= v_q[47:12];
                   tlb_ppn[v_q[15:12]]  <= rsp_eff[53:10];
                   tlb_perm[v_q[15:12]] <= {rsp_eff[7], rsp_eff[4], rsp_eff[3],

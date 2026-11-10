@@ -62,26 +62,27 @@ module rv64_bpu (
   // final iteration wrong every pass because it is the one iteration that is not
   // taken. This table learns the trip count and predicts the exit directly.
   //
-  // It only engages once a count has been learned, so a branch that is not a loop
-  // never overrides the tournament -- the existing behaviour is preserved for
-  // everything else, which is what keeps the regression meaningful.
+  // Only backward branches train the table. Require two matching completed
+  // trip counts before overriding the general predictors.
   localparam int LOOP_N = 16;
   logic         loop_v    [0:LOOP_N-1];
-  logic [7:0]   loop_tag  [0:LOOP_N-1];
+  logic [58:0]  loop_tag  [0:LOOP_N-1];
   logic [7:0]   loop_trip [0:LOOP_N-1];
   logic [7:0]   loop_iter [0:LOOP_N-1];
+  logic [1:0]   loop_conf [0:LOOP_N-1];
 
   logic [3:0]  lidx;
   logic        loop_hit;
   logic        loop_pred_taken;
+  logic        loop_use;
 
   assign lidx     = lookup_pc[7:4];
-  assign loop_hit = loop_v[lidx] && (loop_tag[lidx] == lookup_pc[15:8]);
+  assign loop_hit = loop_v[lidx] && (loop_tag[lidx] == {lookup_pc[63:8], lookup_pc[3:1]});
 
   // taken while the iteration counter is short of the learned trip count,
   // not-taken on the final iteration
-  assign loop_pred_taken = !(loop_hit && (loop_trip[lidx] != 8'd0) &&
-                             ((loop_iter[lidx] + 8'd1) >= loop_trip[lidx]));
+  assign loop_use = loop_hit && loop_conf[lidx][1];
+  assign loop_pred_taken = loop_iter[lidx] < (loop_trip[lidx] - 8'd1);
 
   // ---- lookup ---------------------------------------------------------------
   logic [7:0]  idx;
@@ -129,7 +130,7 @@ module rv64_bpu (
     end else if (btb_hit && btb_ret[bidx]) begin
       pred_taken  = 1'b1;
       pred_target = ras[ras_sp];
-    end else if (loop_hit && btb_hit && (loop_trip[lidx] != 8'd0)) begin
+    end else if (loop_use && btb_hit) begin
       // A learned loop count beats the tournament for the exit iteration -- but
       // only with a valid BTB entry. Without the btb_hit guard the taken target
       // came from a stale BTB line and sent the core to address 0.
@@ -179,7 +180,8 @@ module rv64_bpu (
         for (int j = 0; j < PW; j++) wtab[i][j] <= 6'sd0;
       for (int i = 0; i < LOOP_N; i++) begin
         loop_v[i]    <= 1'b0;
-        loop_tag[i]  <= 8'd0;
+        loop_tag[i]  <= '0;
+        loop_conf[i] <= 2'd0;
         loop_trip[i] <= 8'd0;
         loop_iter[i] <= 8'd0;
       end
@@ -193,27 +195,31 @@ module rv64_bpu (
       end
 
       // ---- loop predictor --------------------------------------------------
-      // Taken: count the iteration and remember the longest run seen. Not taken:
-      // the loop just exited, so the trip count is the run length plus this final
-      // iteration, and the counter restarts.
-      if (upd_valid && upd_is_cond) begin
+      if (upd_valid && upd_is_cond && upd_target < upd_pc) begin
         logic [3:0] li;
         li = upd_pc[7:4];
-        if (!loop_v[li] || (loop_tag[li] != upd_pc[15:8])) begin
+        if (!loop_v[li] || loop_tag[li] != {upd_pc[63:8], upd_pc[3:1]}) begin
           loop_v[li]    <= 1'b1;
-          loop_tag[li]  <= upd_pc[15:8];
+          loop_tag[li]  <= {upd_pc[63:8], upd_pc[3:1]};
           loop_trip[li] <= 8'd0;
           loop_iter[li] <= upd_taken ? 8'd1 : 8'd0;
+          loop_conf[li] <= 2'd0;
         end else if (upd_taken) begin
-          // Only COUNT while the branch keeps being taken. Learning the trip
-          // count here would let a branch that is never not-taken accumulate a
-          // count and then wrongly predict its own exit -- so the count is
-          // learned only from the exit below.
           if (loop_iter[li] != 8'hFF) loop_iter[li] <= loop_iter[li] + 8'd1;
+          // The branch stayed taken at the predicted exit. Stop trusting this
+          // count immediately while collecting the rest of the new trip.
+          if (loop_conf[li][1] && loop_iter[li] >= loop_trip[li] - 8'd1)
+            loop_conf[li] <= 2'd0;
         end else begin
-          // the exit iteration: the count is iter + 1
-          if (loop_iter[li] != 8'd0) loop_trip[li] <= loop_iter[li] + 8'd1;
           loop_iter[li] <= 8'd0;
+          if (loop_iter[li] == 8'd0 || loop_iter[li] == 8'hFF) begin
+            loop_conf[li] <= 2'd0;
+          end else if (loop_trip[li] == loop_iter[li] + 8'd1) begin
+            loop_conf[li] <= sat_inc(loop_conf[li]);
+          end else begin
+            loop_trip[li] <= loop_iter[li] + 8'd1;
+            loop_conf[li] <= 2'd1;
+          end
         end
       end
 

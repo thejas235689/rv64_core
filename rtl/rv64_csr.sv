@@ -34,6 +34,7 @@ module rv64_csr (
   output logic [63:0] satp_o,
   output logic [63:0] mtvec_o,
   output logic [63:0] mepc_o,
+  output logic [63:0] sepc_o,
 
   // ---- interrupt inputs -----------------------------------------------------
   input  logic        irq_soft,
@@ -443,6 +444,7 @@ module rv64_csr (
 
   assign mtvec_o     = mtvec_q;
   assign mepc_o      = mepc_q;
+  assign sepc_o      = sepc_q;
   assign mcause_o    = mcause_q;
   assign mcycle_o    = mcycle_q;
   assign minstret_o  = minstret_q;

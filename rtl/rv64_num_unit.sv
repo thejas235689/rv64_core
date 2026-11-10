@@ -200,6 +200,53 @@ module rv64_num_unit (
     adapt_lost_self = adapt_lost(a, cfg_prec);
   end
 
+  // Posit<8,1> ranges from 2^-12 to 2^12, so Q12 fractional precision
+  // represents every input exactly. Decode negatives by taking the two's
+  // complement of the whole encoding before interpreting the regime.
+  function automatic logic signed [25:0] posit8_q12(input logic [7:0] value);
+    logic [7:0] magnitude;
+    logic [25:0] significand;
+    logic regime, scanning;
+    int run, fraction_bits, exponent, scale;
+    magnitude = value[7] ? -value : value;
+    regime = magnitude[6];
+    run = 0;
+    scanning = 1'b1;
+    for (int bit_index = 6; bit_index >= 0; bit_index--) begin
+      if (scanning && magnitude[bit_index] == regime) run++;
+      else scanning = 1'b0;
+    end
+    exponent = 0;
+    fraction_bits = 0;
+    if (run < 6) begin
+      exponent = int'(magnitude[5-run]);
+      fraction_bits = 5-run;
+    end
+    significand = (26'd1 << fraction_bits)
+                | (26'(magnitude) & ((26'd1 << fraction_bits) - 26'd1));
+    scale = 12 + 2 * (regime ? run - 1 : -run) + exponent - fraction_bits;
+    if (magnitude == 0) return '0;
+    significand = significand << scale;
+    return value[7] ? -$signed(significand) : $signed(significand);
+  endfunction
+
+  logic signed [63:0] posit_quire_q;
+  wire pq_format_ok = fmt == FMT_P8;
+  wire pq_operands_ok = !(|a[63:8]) && !(|b[63:8]) &&
+                        a[7:0] != 8'h80 && b[7:0] != 8'h80;
+  wire signed [51:0] pq_product = posit8_q12(a[7:0]) * posit8_q12(b[7:0]);
+  wire signed [64:0] pq_sum = 65'(posit_quire_q) + 65'(pq_product);
+  wire pq_overflow = pq_sum[64] != pq_sum[63];
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) posit_quire_q <= '0;
+    else if (op_valid && pq_format_ok) begin
+      if (op == NUM_PQCLR) posit_quire_q <= '0;
+      else if (op == NUM_PQACC && pq_operands_ok && !pq_overflow)
+        posit_quire_q <= pq_sum[63:0];
+    end
+  end
+
   // ---- research families: RNS / LNS / POSIT / FP32 -------------------------
   logic [63:0] wide_y;
   logic [7:0]  wide_flags;
@@ -257,6 +304,16 @@ module rv64_num_unit (
         if (quire_ovf) flags[FLAG_QUIRE_OVF] = 1'b1;
       end
 
+      NUM_PQCLR, NUM_PQGET: begin
+        if (pq_format_ok && op == NUM_PQGET) y = posit_quire_q;
+        flags[FLAG_INVALID] = !pq_format_ok;
+      end
+
+      NUM_PQACC: begin
+        flags[FLAG_INVALID] = !pq_format_ok || !pq_operands_ok;
+        flags[FLAG_QUIRE_OVF] = pq_format_ok && pq_operands_ok && pq_overflow;
+      end
+
       NUM_QCLR: y = 64'd0;
 
       NUM_ADAPT: begin
@@ -271,8 +328,9 @@ module rv64_num_unit (
       NUM_TOINT, NUM_FROMINT: y = 64'd0;
 
       NUM_PADD, NUM_PSUB, NUM_PMUL, NUM_PDIV,
-      NUM_LNMUL, NUM_LNDIV, NUM_RADD, NUM_RMUL,
-      NUM_FADD, NUM_FMUL: begin
+      NUM_LNMUL, NUM_LNDIV, NUM_LNADD, NUM_LNSUB, NUM_RADD, NUM_RMUL, NUM_RSUB,
+      NUM_FADD, NUM_FMUL, NUM_BFADD, NUM_BFSUB, NUM_BFMUL,
+      NUM_SDADD, NUM_SDSUB: begin
         y     = wide_y;
         flags = wide_flags;
       end

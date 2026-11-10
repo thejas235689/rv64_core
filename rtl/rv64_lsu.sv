@@ -24,6 +24,7 @@ module rv64_lsu (
   input  logic [4:0]  req_amo_op,
   // ---- translation ---------------------------------------------------------
   input  logic [63:0] satp,
+  input  logic        tlb_invalidate,
   input  logic [1:0]  priv,
   input  logic        mprv, sum, mxr,
   input  logic        pmp_ok,
@@ -159,7 +160,7 @@ module rv64_lsu (
 
   rv64_mmu u_mmu (
     .clk(clk), .rst_n(rst_n),
-    .satp(satp), .priv(priv), .mprv(mprv), .sum(sum), .mxr(mxr),
+    .satp(satp), .priv(priv), .mprv(mprv), .sum(sum), .mxr(mxr), .invalidate(tlb_invalidate),
     .req_valid(mmu_req), .vaddr(addr_q), .acc_type(acc_kind),
     .resp_valid(mmu_resp), .paddr(mmu_paddr), .fault(mmu_fault),
     .fault_cause(mmu_cause), .fault_tval(), .busy(mmu_busy),
@@ -314,7 +315,7 @@ module rv64_lsu (
           if (mmu_resp) begin
             if (mmu_fault) begin
               fault_q <= 1'b1;
-              page_fault_q <= 1'b1;
+              page_fault_q <= (mmu_cause == 64'd13 || mmu_cause == 64'd15);
               state   <= S_DONE;
             end else begin
               paddr_q <= mmu_paddr;

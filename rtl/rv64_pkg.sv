@@ -288,6 +288,7 @@ package rv64_pkg;
     logic        is_csr;
     logic        is_mdu;
     logic        csr_imm;
+    logic        is_rvv;          // supported native OP-V instruction
     logic        is_num;          // custom-0 numeric-ABI instruction
     logic [4:0]  num_op;
     logic [2:0]  num_fmt;

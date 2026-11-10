@@ -30,7 +30,7 @@ module tb_fetch_cache;
     .clk(clk), .rst_n(rst_n),
     .redirect(redirect), .pc_i(pc_i), .consume(consume), .pause(pause),
     .req_valid(req_valid), .req_addr(req_addr), .req_ready(req_ready),
-    .rsp_valid(rsp_valid), .rsp_data(rsp_data), .rsp_error(rsp_error),
+    .rsp_valid(rsp_valid), .rsp_data(rsp_data), .rsp_error(rsp_error), .rsp_page_fault(1'b0),
     .insn_valid(insn_valid), .insn_pc(insn_pc), .insn(insn),
     .fault_valid(fault_valid), .fault_pc(fault_pc),
     .tag_is_control(tag_control), .tag_writes_rd(tag_writes_rd),
@@ -45,12 +45,13 @@ module tb_fetch_cache;
     .fill_valid(fill_valid), .fill_addr(fill_addr),
     .fill_ready(fill_ready), .fill_rsp_valid(fill_rsp_valid),
     .fill_rsp_data(fill_rsp_data), .fill_rsp_error(fill_rsp_error),
+    .invalidate(1'b0),
     .hit_count(hits), .miss_count(misses)
   );
 
   // ---- memory: word at address A is (A*7)+1, so any misread shows up -------
   logic [63:0] mem [0:8191];
-  assign req_ready = 1'b1;
+  assign req_ready = c_req_ready;
   assign fill_ready = 1'b1;
   assign fill_rsp_error = 1'b0;
 
@@ -62,7 +63,7 @@ module tb_fetch_cache;
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       pend <= 1'b0; pend_d <= 64'd0;
-      for (int i = 0; i < 8192; i++) mem[i] <= ((i * 7) + 1);
+      for (int i = 0; i < 8192; i++) mem[i] <= mem_beat(64'(i) << 3);
     end else begin
       pend <= 1'b0;
       if (fill_valid && fill_ready) begin
@@ -75,7 +76,7 @@ module tb_fetch_cache;
   // explicit zero-extension: the 64'(...) size cast does not behave under Icarus
   function automatic logic [63:0] mem_beat(input logic [63:0] a);
     begin
-      return (((a[15:3]) * 7) + 1);
+      return {a[14:3], 20'h00013, a[15:4], 20'h00093};
     end
   endfunction
 
@@ -116,41 +117,54 @@ module tb_fetch_cache;
 
   initial begin
     redirect = 0; consume = 0; pause = 0; pc_i = 0;
-    repeat (3) @(posedge clk);
+    repeat (3) @(negedge clk);
     rst_n = 1'b1;
     @(posedge clk);
 
     // ---- 1. sequential walk over several beats (cold misses) -------------
     for (int i = 0; i < 8; i++) begin
       fetch_at((i*4), got, ok);
-      if (ok) chk("sequential fetch", got, expect_insn((i*4)));
+      chk("sequential fetch", got, expect_insn((i*4)));
     end
 
     // ---- 2. re-fetch a warm line (hits) ----------------------------------
     for (int i = 0; i < 8; i++) begin
       fetch_at((i*4), got, ok);
-      if (ok) chk("warm fetch", got, expect_insn((i*4)));
+      chk("warm fetch", got, expect_insn((i*4)));
     end
 
     // ---- 3. a redirect mid-stream ----------------------------------------
     pc_i = 64'h1000; redirect = 1'b1; @(posedge clk); #1; redirect = 1'b0;
     fetch_at(64'h1000, got, ok);
-    if (ok) chk("after redirect", got, expect_insn(64'h1000));
+    chk("after redirect", got, expect_insn(64'h1000));
 
     // ---- 4. back and forth between two lines that share a cache index ----
     // 0x000 and 0x2000 share addr[8:3] but differ in the tag
     fetch_at(64'h0000, got, ok);
-    if (ok) chk("line A", got, expect_insn(64'h0000));
+    chk("line A", got, expect_insn(64'h0000));
     fetch_at(64'h2000, got, ok);
-    if (ok) chk("line B (evicts A)", got, expect_insn(64'h2000));
+    chk("line B (evicts A)", got, expect_insn(64'h2000));
     fetch_at(64'h0000, got, ok);
-    if (ok) chk("line A again (misses)", got, expect_insn(64'h0000));
+    chk("line A again (misses)", got, expect_insn(64'h0000));
 
     // ---- 5. back-to-back with no gap -------------------------------------
     for (int i = 0; i < 6; i++) begin
       fetch_at((i*8), got, ok);
-      if (ok) chk("back-to-back", got, expect_insn((i*8)));
+      chk("back-to-back", got, expect_insn((i*8)));
     end
+
+    // A regular 32-bit LUI/ADDI pair is eligible only on the same path.
+    mem[64'h3000 >> 3] = {32'h00128293, 32'h000012b7};
+    fetch_at(64'h3000, got, ok);
+    chk("fusion first instruction valid", ok, 1);
+    consume = 1'b1;
+    @(posedge clk); #1;
+    fetch_at(64'h3004, got, ok);
+    chk("adjacent LUI+ADDI tagged", tag_fusion_valid, 1);
+    redirect = 1'b1;
+    @(posedge clk); #1; redirect = 1'b0;
+    fetch_at(64'h3004, got, ok);
+    chk("redirect clears fusion history", tag_fusion_valid, 0);
 
     $display("tb_fetch_cache: %0d checks, %0d mismatches (hits=%0d misses=%0d)",
              checks, errors, hits, misses);

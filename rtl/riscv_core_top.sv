@@ -287,7 +287,7 @@ module riscv_core_top #(
   logic        redirect_ex, ebreak_commit, mret_commit, sret_commit, ex_advance;
   logic [1:0]  cur_priv;
   logic        trap_to_s;
-  logic [63:0] csr_stvec, csr_satp;
+  logic [63:0] csr_stvec, csr_satp, csr_sepc;
   logic        mstatus_mprv, mstatus_sum, mstatus_mxr;
   logic [1:0]  mstatus_mpp, data_priv;
   assign data_priv = (cur_priv == 2'b11 && mstatus_mprv) ? mstatus_mpp : cur_priv;
@@ -420,6 +420,7 @@ module riscv_core_top #(
   logic        ic_fill_valid, ic_fill_ready, fence_i_commit;
   logic [63:0] ic_fill_addr;
   logic [31:0] ic_hits, ic_misses;
+  logic        fetch_pmp_ok, fetch_pmp_fault;
 
   // ---- boot ROM signals, declared before the I-cache uses them -------------
   logic        rom_sel, rom_sel_q, rom_req_valid, rom_req_ready;
@@ -433,13 +434,89 @@ module riscv_core_top #(
   logic [31:0] auth_words, boot_idx;
   logic [63:0] boot_addr_q;
 
-  assign ic_fill_ready = fetch_pmp_ok && (rom_sel ? rom_req_ready : if_req_ready);
+  // A translated fetch owns the instruction bus from page walk through
+  // cache response. Bare fetches retain the existing direct cache path.
+  typedef enum logic [2:0] {IF_IDLE, IF_WALK, IF_CACHE, IF_WAIT, IF_ERROR} if_state_t;
+  if_state_t if_state;
+  logic if_xlate, if_abandon_q, if_page_error_q;
+  logic if_mmu_req, if_mmu_resp, if_mmu_fault, if_walk_busy;
+  logic if_pte_valid, if_pte_allow;
+  logic [63:0] if_pte_addr, if_paddr, if_mmu_cause, if_pa_q;
+  logic if_front_ready, if_front_resp, if_front_error, if_front_page;
+  logic f_fault_page;
+  logic [63:0] f_fault_tval;
+  logic if_sfence_commit, if_serialize;
+
+  assign if_xlate = cur_priv != 2'b11 &&
+                    (csr_satp[63:60] == 4'd8 || csr_satp[63:60] == 4'd9);
+  assign if_mmu_req = if_state == IF_IDLE && if_xlate &&
+                      f_req_valid && ic_req_ready;
+  assign if_front_ready = if_state == IF_IDLE && ic_req_ready;
+  assign if_front_resp = (if_state == IF_ERROR) ||
+                         ((if_state == IF_IDLE ||
+                           (if_state == IF_WAIT && !if_abandon_q)) && ic_resp_valid);
+  assign if_front_error = if_state == IF_ERROR || ic_resp_error;
+  assign if_front_page = if_state == IF_ERROR && if_page_error_q;
+
+  rv64_mmu u_if_mmu (
+    .clk(clk), .rst_n(rst_n), .satp(csr_satp), .priv(cur_priv),
+    .mprv(1'b0), .sum(mstatus_sum), .mxr(mstatus_mxr),
+    .invalidate(if_sfence_commit),
+    .req_valid(if_mmu_req), .vaddr(f_req_addr), .acc_type(2'd0),
+    .resp_valid(if_mmu_resp), .paddr(if_paddr), .fault(if_mmu_fault),
+    .fault_cause(if_mmu_cause), .fault_tval(), .busy(if_walk_busy),
+    .pte_req_valid(if_pte_valid), .pte_req_addr(if_pte_addr),
+    .pte_req_ready(if_pte_allow ? if_req_ready : 1'b1),
+    .pte_rsp_valid(if_walk_busy && (if_pte_allow ? if_rsp_valid : if_pte_valid)),
+    .pte_rsp_data(if_rsp_data), .pte_rsp_error(!if_pte_allow || if_rsp_error)
+  );
+
+  rv64_pmp u_if_pte_pmp (
+    .cfg(pmp_cfg), .addr_cfg(pmp_addr), .addr(if_pte_addr),
+    .is_write(1'b0), .is_exec(1'b0), .priv_m(1'b0), .allow(if_pte_allow)
+  );
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      if_state <= IF_IDLE;
+      if_abandon_q <= 1'b0;
+      if_page_error_q <= 1'b0;
+      if_pa_q <= '0;
+    end else begin
+      if (f_redirect) if_abandon_q <= 1'b1;
+      case (if_state)
+        IF_IDLE: if (if_mmu_req) begin
+          if_state <= IF_WALK;
+          if_abandon_q <= 1'b0;
+        end
+        IF_WALK: if (if_mmu_resp) begin
+          if_pa_q <= if_paddr;
+          if_page_error_q <= if_mmu_cause == 64'd12;
+          if (if_abandon_q || f_redirect) if_state <= IF_IDLE;
+          else if (if_mmu_fault) if_state <= IF_ERROR;
+          else if_state <= IF_CACHE;
+        end
+        IF_CACHE: begin
+          if (f_redirect) if_state <= IF_IDLE;
+          else if (!fetch_pmp_ok) begin
+            if_page_error_q <= 1'b0;
+            if_state <= IF_ERROR;
+          end else if (ic_req_ready) if_state <= IF_WAIT;
+        end
+        IF_WAIT: if (ic_resp_valid || fence_i_commit) if_state <= IF_IDLE;
+        default: if_state <= IF_IDLE;
+      endcase
+    end
+  end
+
+  assign ic_fill_ready = rom_sel ? rom_req_ready : if_req_ready;
 
   rv64_icache u_icache (
     .clk            (clk),
     .rst_n          (rst_n),
-    .req_valid      (f_req_valid),
-    .req_addr       (f_req_addr),
+    .req_valid      ((if_state == IF_IDLE && !if_xlate && f_req_valid) ||
+                     (if_state == IF_CACHE && !f_redirect && fetch_pmp_ok)),
+    .req_addr       (if_state == IF_IDLE ? f_req_addr : if_pa_q),
     .req_ready      (ic_req_ready),
     .resp_valid     (ic_resp_valid),
     .resp_data      (ic_resp_data),
@@ -448,7 +525,7 @@ module riscv_core_top #(
     .fill_valid     (ic_fill_valid),
     .fill_addr      (ic_fill_addr),
     .fill_ready     (ic_fill_ready),
-    .fill_rsp_valid (rom_sel_q ? rom_rsp_valid : if_rsp_valid),
+    .fill_rsp_valid (rom_sel_q ? rom_rsp_valid : (if_rsp_valid && !if_walk_busy)),
     .fill_rsp_data  (rom_sel_q ? rom_rsp_rdata : if_rsp_data),
     .fill_rsp_error (rom_sel_q ? rom_rsp_error : if_rsp_error),
     .invalidate     (fence_i_commit),
@@ -456,9 +533,6 @@ module riscv_core_top #(
     .miss_count     (ic_misses)
   );
   logic [63:0] f_redirect_pc;
-
-  logic        fetch_pmp_ok;
-  logic        fetch_pmp_fault;
 
   logic        f_pred_taken;
   logic        f_tag_control, f_tag_writes_rd, f_tag_fusion_valid;
@@ -489,24 +563,28 @@ module riscv_core_top #(
     .pause       (f_pause || fetch_stopped || f_redirect),
     .req_valid   (f_req_valid),
     .req_addr    (f_req_addr),
-    .req_ready   (ic_req_ready),
-    .rsp_valid   (ic_resp_valid),
+    .req_ready   (if_front_ready),
+    .rsp_valid   (if_front_resp),
     .rsp_data    (ic_resp_data),
-    .rsp_error   (ic_resp_error),
+    .rsp_error   (if_front_error),
+    .rsp_page_fault(if_front_page),
     .insn_valid  (f_insn_valid),
     .insn_pc     (f_insn_pc),
     .insn        (f_insn),
     .insn_len    (f_insn_len),
     .fault_valid (f_fault_valid),
     .fault_pc    (f_fault_pc),
+    .fault_tval  (f_fault_tval),
+    .fault_page  (f_fault_page),
     .tag_is_control   (f_tag_control),
     .tag_writes_rd    (f_tag_writes_rd),
     .tag_fusion_valid (f_tag_fusion_valid),
     .tag_fusion_kind  (f_tag_fusion_kind)
   );
 
-  assign if_req_valid = ic_fill_valid && fetch_pmp_ok && !rom_sel;
-  assign if_req_addr  = ic_fill_addr;
+  assign if_req_valid = if_walk_busy ? (if_pte_valid && if_pte_allow)
+                                     : (ic_fill_valid && !rom_sel);
+  assign if_req_addr  = if_walk_busy ? if_pte_addr : ic_fill_addr;
 
   // ===========================================================================
   // Branch prediction
@@ -1096,11 +1174,17 @@ module riscv_core_top #(
     .busy      (), .op_count()
   );
 
+  logic rvv_native_issue, rvv_native_illegal, rvv_native_busy;
+  logic [6:0] rvv_native_vl;
+
   rv64_vunit u_rvv (
     .clk        (clk), .rst_n(rst_n),
     .csr_we     (csr_we && rvv_csr_sel),
     .csr_addr   (id_ex_ctrl.csr_addr[3:0] - CSR_RVV_BASE[3:0]),
     .csr_wdata  (csr_wdata), .csr_rdata(rvv_csr_rdata),
+    .native_issue(rvv_native_issue), .native_insn(id_ex_insn),
+    .native_scalar(op_a), .native_vl(rvv_native_vl),
+    .native_illegal(rvv_native_illegal), .native_busy(rvv_native_busy),
     // the element memory port is the core's dedicated vector port
     .mem_req_valid(v_req_valid), .mem_req_addr(v_req_addr),
     .mem_req_we(v_req_we), .mem_req_wstrb(v_req_wstrb),
@@ -1298,6 +1382,10 @@ module riscv_core_top #(
     endcase
   end
 
+  assign rvv_native_issue = id_ex_v && id_ex_ctrl.is_rvv && ex_advance &&
+                            !ex_exc && !trap_taken && !mret_commit && !sret_commit &&
+                            !ebreak_commit && !if_serialize;
+
   // ---- exception generation -------------------------------------------------
   always_comb begin
     ex_exc       = 1'b0;
@@ -1305,6 +1393,9 @@ module riscv_core_top #(
     ex_exc_tval  = 64'd0;
 
     if (id_ex_ctrl.illegal || fp_rm_reserved ||
+        (id_ex_ctrl.is_rvv && (rvv_native_illegal || cur_priv != 2'b11)) ||
+        (cur_priv == 2'b00 && id_ex_insn[31:25] == 7'h09 &&
+         id_ex_insn[14:7] == 8'b0 && id_ex_insn[6:0] == 7'h73) ||
         (id_ex_ctrl.is_csr && !csr_valid && !num_csr_valid && !task_csr_sel &&
          !qisa_csr_sel && !aiacc_csr_sel && !xrv512_csr_sel && !rvv_csr_sel)) begin
       ex_exc       = 1'b1;
@@ -1336,6 +1427,7 @@ module riscv_core_top #(
     // of fmv.x.w and the NaN-boxing of fmv.w.x are explicit rather than falling
     // out of "whatever happened to be in the operand latch".
     if (id_ex_fp_op != rv64_pkg::FP_NONE)  ex_wb_val = ex_fp_out;
+    if (id_ex_ctrl.is_rvv && id_ex_ctrl.reg_we) ex_wb_val = {57'd0, rvv_native_vl};
   end
 
   // ===========================================================================
@@ -1365,6 +1457,7 @@ module riscv_core_top #(
     .req_atomic    (ex_mem_atomic_kind),
     .req_amo_op    (ex_mem_amo_op),
     .satp          (csr_satp),
+    .tlb_invalidate(if_sfence_commit),
     .priv          (data_priv),
     .mprv          (1'b0),
     .sum           (mstatus_sum),
@@ -1401,7 +1494,7 @@ module riscv_core_top #(
   // arbitrated here: address decode picks exactly one of the two files
   assign csr_we    = id_ex_v && id_ex_ctrl.is_csr && (csr_valid || num_csr_valid || task_csr_sel || qisa_csr_sel || aiacc_csr_sel ||
                       xrv512_csr_sel || rvv_csr_sel) &&
-                     !trap_to_csr && !ex_hold;
+                     !trap_to_csr && !ex_hold && !if_serialize && !sret_commit;
 
   rv64_csr u_csr (
     .clk            (clk),
@@ -1424,6 +1517,7 @@ module riscv_core_top #(
     .satp_o         (csr_satp),
     .mtvec_o        (csr_mtvec),
     .mepc_o         (csr_mepc),
+    .sepc_o         (csr_sepc),
     .irq_soft       (irq_soft_eff),
     .irq_timer      (irq_timer_eff),
     .irq_ext        (irq_ext_eff),
@@ -1457,7 +1551,7 @@ module riscv_core_top #(
   rv64_pmp u_pmp_fetch (
     .cfg      (pmp_cfg),
     .addr_cfg (pmp_addr),
-    .addr     (f_req_addr),
+    .addr     (if_state == IF_IDLE ? f_req_addr : if_pa_q),
     .is_write (1'b0),
     .is_exec  (1'b1),
     .priv_m   (cur_priv == 2'b11),
@@ -1477,7 +1571,7 @@ module riscv_core_top #(
   // The PMP verdict for the address the core would fetch next.  It is derived
   // from the registered pc only, which keeps the fault path out of the fetch
   // request handshake (no combinational loop through pause/redirect).
-  assign fetch_pmp_fault = !fetch_pmp_ok;
+  assign fetch_pmp_fault = if_state == IF_IDLE && !if_xlate && !fetch_pmp_ok;
 
   // ===========================================================================
   // Trap, interrupt and redirect control
@@ -1495,14 +1589,18 @@ module riscv_core_top #(
   assign fence_i_commit = ex_mem_v && !mem_trap &&
                           ex_mem_insn[6:0] == 7'h0f && ex_mem_insn[14:12] == 3'b001;
 
-  assign irq_take = csr_mstatus_mie && csr_irq_pending && !mem_trap && !fence_i_commit && !halted_q &&
+  assign if_sfence_commit = ex_mem_v && !mem_trap &&
+                            ex_mem_insn[31:25] == 7'h09 && ex_mem_insn[14:7] == 8'b0 &&
+                            ex_mem_insn[6:0] == 7'h73;
+  assign if_serialize = if_sfence_commit || fence_i_commit;
+  assign irq_take = csr_mstatus_mie && csr_irq_pending && !mem_trap && !if_serialize && !halted_q &&
                     !halt_pending_q && id_ex_v && !id_ex_ctrl.illegal && !id_ex_ctrl.is_ebreak &&
                     !id_ex_ctrl.is_mret;
 
   assign wfi_irq_take = wfi_active_q && csr_irq_pending && csr_mstatus_mie &&
                         !id_ex_v && !ex_mem_v;
 
-  assign fetch_fault_take = (f_fault_valid || fetch_pmp_fault) && !id_ex_v && !ex_mem_v;
+  assign fetch_fault_take = (f_fault_valid || fetch_pmp_fault) && !if_id_v && !id_ex_v && !ex_mem_v;
 
   assign trap_taken = mem_trap || irq_take || wfi_irq_take || fetch_fault_take;
   assign trap_to_csr = trap_taken;
@@ -1523,14 +1621,14 @@ module riscv_core_top #(
       trap_pc_sel    = wfi_pc_q + (wfi_rvc_q ? 64'd2 : 64'd4);
       trap_tval_sel  = 64'd0;
     end else begin
-      trap_cause_sel = CAUSE_INST_ACCESS;
+      trap_cause_sel = (f_fault_valid && f_fault_page) ? 64'd12 : CAUSE_INST_ACCESS;
       trap_pc_sel    = f_fault_valid ? f_fault_pc : f_req_addr;
-      trap_tval_sel  = trap_pc_sel;
+      trap_tval_sel  = f_fault_valid ? f_fault_tval : trap_pc_sel;
     end
   end
 
   // ---- mispredict / return redirect ----------------------------------------
-  assign ex_advance = !mem_stall && !ex_hold;
+  assign ex_advance = !mem_stall && !ex_hold && !if_serialize && !sret_commit;
 
   assign redirect_ex = ex_advance && id_ex_v && !trap_taken &&
                        (id_ex_ctrl.is_branch || id_ex_ctrl.is_jal || id_ex_ctrl.is_jalr) &&
@@ -1565,7 +1663,8 @@ module riscv_core_top #(
 
   // ---- stalls ---------------------------------------------------------------
   assign csr_vs_mret = mret_commit && id_ex_v && id_ex_ctrl.is_csr;
-  assign ex_hold     = mdu_busy || (id_ex_v && id_ex_ctrl.is_mdu && !mdu_done) || csr_vs_mret;
+  assign ex_hold     = mdu_busy || (id_ex_v && id_ex_ctrl.is_mdu && !mdu_done) || csr_vs_mret ||
+                       (id_ex_v && id_ex_ctrl.is_rvv && rvv_native_busy);
 
   always_comb begin
     stall_id = 1'b0;
@@ -1613,7 +1712,7 @@ module riscv_core_top #(
   assign dbg_resume_pulse = resume_req && halted_q;
   // MRET and EBREAK both redirect the front end: whatever was fetched behind
   // them is wrong-path and must be squashed, exactly like a branch redirect.
-  assign flush_front = trap_taken || redirect_ex || ebreak_commit || mret_commit || fence_i_commit;
+  assign flush_front = trap_taken || redirect_ex || ebreak_commit || mret_commit || sret_commit || if_serialize;
 
   always_comb begin
     f_redirect    = 1'b1;
@@ -1623,7 +1722,9 @@ module riscv_core_top #(
       f_redirect_pc = trap_to_s ? csr_stvec : csr_mtvec;
     end else if (mret_commit) begin
       f_redirect_pc = csr_mepc;
-    end else if (fence_i_commit) begin
+    end else if (sret_commit) begin
+      f_redirect_pc = csr_sepc;
+    end else if (if_serialize) begin
       f_redirect_pc = ex_mem_pc + 64'd4;
     end else if (redirect_ex) begin
       f_redirect_pc = redirect_pc_ex;
@@ -1772,7 +1873,7 @@ module riscv_core_top #(
       ex_mem_exc        <= 1'b0;
       ex_mem_exc_cause  <= 64'd0;
       ex_mem_exc_tval   <= 64'd0;
-    end else if (trap_taken || mret_commit || ebreak_commit || fence_i_commit) begin
+    end else if (trap_taken || mret_commit || sret_commit || ebreak_commit || if_serialize) begin
       // A trap, an MRET or an EBREAK that commits in MEM must also stop the
       // younger instruction sitting in EX from advancing into MEM. Clearing
       // if_id/id_ex alone is not enough: the EX instruction is transferred to
@@ -2007,7 +2108,7 @@ module riscv_core_top #(
   assign rom_sel       = BOOT_ROM && boot_released &&
                          (ic_fill_addr < 64'h0000_0000_0000_0800);
   assign rom_req_valid = BOOT_ROM ? ((bst == BS_READ && !boot_released)
-                                     || (ic_fill_valid && fetch_pmp_ok && rom_sel))
+                                     || (ic_fill_valid && rom_sel))
                                   : 1'b0;
 
 

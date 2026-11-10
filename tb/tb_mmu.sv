@@ -14,6 +14,7 @@ module tb_mmu;
   logic        mprv, sum, mxr;
 
   logic        req_valid;
+  logic        invalidate = 0;
   logic [63:0] vaddr;
   logic [1:0]  acc_type;
   logic        resp_valid, fault, busy;
@@ -26,7 +27,7 @@ module tb_mmu;
 
   rv64_mmu u_mmu (
     .clk(clk), .rst_n(rst_n),
-    .satp(satp), .priv(priv), .mprv(mprv), .sum(sum), .mxr(mxr),
+    .satp(satp), .priv(priv), .mprv(mprv), .sum(sum), .mxr(mxr), .invalidate(invalidate),
     .req_valid(req_valid), .vaddr(vaddr), .acc_type(acc_type),
     .resp_valid(resp_valid), .paddr(paddr), .fault(fault),
     .fault_cause(fault_cause), .fault_tval(fault_tval), .busy(busy),
@@ -200,6 +201,11 @@ module tb_mmu;
     xlate(64'h0000_0080_0000_1234, 2'd1, pa, flt, cause);
     chk("Sv48 superpage: no fault", flt, 0);
     chk("Sv48 superpage: high physical bits", pa, 64'h0000_0080_0000_1234);
+    mem[(64'h1000 + 8) >> 3] = pte_leaf(44'h00010000000, 1, 1, 0, 0);
+    @(negedge clk); invalidate = 1;
+    @(negedge clk); invalidate = 0;
+    xlate(64'h0000_0080_0000_1234, 2'd1, pa, flt, cause);
+    chk("Sv48 invalidate: new translation", pa, 64'h0000_0100_0000_1234);
     xlate(64'h0001_0000_0000_1234, 2'd1, pa, flt, cause);
     chk("Sv48 noncanonical: fault", flt, 1);
     chk("Sv48 noncanonical: load page fault", cause, 13);

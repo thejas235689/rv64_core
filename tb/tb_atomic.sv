@@ -62,6 +62,7 @@ module tb_atomic;
   assign mem_rsp_error = 1'b0;
 
   rv64_lsu u_lsu (
+    .tlb_invalidate(1'b0),
     .clk(clk), .rst_n(rst_n),
     .req_start(req_start), .req_addr(req_addr), .req_wdata(req_wdata),
     .req_size(req_size), .req_uns(req_uns), .req_we(req_we), .pmp_ok(pmp_ok),

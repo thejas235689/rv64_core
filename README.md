@@ -27,10 +27,12 @@ to a private repository as-is.
    trapping, so software cannot detect H's absence by trap; that deviation is
    recorded in the profile and pinned by the conformance test.
 
-   **V is not advertised.** RVV is present as a separate unit driven through its
-   own CSR window (`0x780`-`0x78F`), not through RVV instruction encodings, so
-   rv64gcv binaries do not run. Q, Zfh and Zacas are not implemented and their
-   instructions trap as illegal.
+   **V is not advertised.** The native M-mode subset implements `vsetvli`,
+   `vsetivli`, and unmasked integer `vadd`, `vsub`, `vand`, `vor`, and
+   `vxor` at LMUL=1 and SEW=8/16/32/64. It shares the 64-bit vector registers
+   with the existing control window (`0x780`–`0x78F`). Native loads/stores,
+   masked execution, vector CSRs and VS context management are outside this
+   subset. Q, Zfh and Zacas remain unimplemented.
 2. **Microarchitecture** — in-order IF/ID/EX/MEM/WB pipeline. Full EX/MEM and
    MEM/WB operand forwarding plus a WB→ID write-through bypass, load-use
    interlock, branch resolution in EX, tournament branch prediction in IF, a

@@ -78,6 +78,11 @@ module tb_bpu_loop;
     for (int pass = 0; pass < 3; pass++) begin
       for (int i = 0; i < 4; i++) upd(LOOP_PC, 1'b1, LOOP_TGT);
       upd(LOOP_PC, 1'b0, LOOP_TGT);
+      look(LOOP_PC, t, tg);
+      if (pass == 0)
+        chk("one completed trip does not engage the loop table", u_bpu.loop_use, 1'b0);
+      else
+        chk("repeated trip engages the loop table", u_bpu.loop_use, 1'b1);
     end
 
     // ---- 3. now the predictor must call the exit -------------------------
@@ -121,8 +126,37 @@ module tb_bpu_loop;
     look(TRIP3_PC, t, tg);
     chk("trip3: third iteration is the exit", t, 1'b0);
 
+    // The loop PC is halfword-aligned; the neighboring compressed PC shares
+    // the set and BTB index but must not inherit the learned trip count.
+    look(LOOP_PC + 64'd2, t, tg);
+    chk("neighboring halfword does not hit loop entry", u_bpu.loop_use, 1'b0);
+    look(LOOP_PC + 64'h10000, t, tg);
+    chk("distant PC does not hit loop entry", u_bpu.loop_use, 1'b0);
+
+    // Extend the learned five-iteration loop to six iterations. Confidence
+    // drops on the unexpected taken outcome, before the next exit arrives.
+    for (int i = 0; i < 5; i++) upd(LOOP_PC, 1'b1, LOOP_TGT);
+    look(LOOP_PC, t, tg);
+    chk("overrun disables stale loop count immediately", u_bpu.loop_use, 1'b0);
+    upd(LOOP_PC, 1'b0, LOOP_TGT);
+    look(LOOP_PC, t, tg);
+    chk("first changed trip remains untrusted", u_bpu.loop_use, 1'b0);
+    for (int i = 0; i < 5; i++) upd(LOOP_PC, 1'b1, LOOP_TGT);
+    upd(LOOP_PC, 1'b0, LOOP_TGT);
+    look(LOOP_PC, t, tg);
+    chk("second matching changed trip restores trust", u_bpu.loop_use, 1'b1);
+
+    // The same alternating pattern on a forward branch never trains a loop.
+    for (int i = 0; i < 3; i++) begin
+      upd(STRAIGHT_PC, 1'b1, STRAIGHT_TGT);
+      upd(STRAIGHT_PC, 1'b0, STRAIGHT_TGT);
+    end
+    look(STRAIGHT_PC, t, tg);
+    chk("forward branch never engages the loop table", u_bpu.loop_use, 1'b0);
+
     $display("tb_bpu_loop: %0d checks, %0d mismatches", checks, errors);
-    if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");
+    if (errors != 0) $fatal(1, "loop predictor checks failed");
+    $display("RESULT: PASS");
     $finish;
   end
 endmodule

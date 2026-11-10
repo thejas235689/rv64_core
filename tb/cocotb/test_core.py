@@ -1989,9 +1989,8 @@ async def test_misa_bits(dut):
     It previously reported RV64IM only, while the core executes A, B, S, U and
     Sv39. Software that reads misa -- a bootloader picking a page-table mode, an OS
     probing for atomics -- would take a slower path or refuse to boot. This checks
-    the bits are right, and that V is NOT set: the vector unit follows RVV
-    semantics but not RVV encoding, so advertising V would make -march=rv64gcv
-    binaries fault.
+    the bits are right and V remains clear because the native vector path
+    supports only a restricted M-mode integer subset.
     """
     L = [csrr(5, 0x301)]          # misa
     L.append("ecall")
@@ -2878,3 +2877,278 @@ async def test_sv48_four_level_data_walk(dut):
     values = await halt_and_read(h, [11, 12])
     assert values == {11: 0x12345678, 12: 0x12345678}
     assert any(cause == 13 for _, cause in h.traps)
+
+
+@cocotb.test()
+async def test_bf16_and_residue_subtract(dut):
+    """Exercise custom opcodes through integer bridges and check sticky flags."""
+    cases = [
+        (20, 0, 0x3F80, 0x4000, 0x4040),  # 1 + 2
+        (21, 0, 0x3F80, 0x4000, 0xBF80),  # 1 - 2
+        (22, 0, 0x3FC0, 0x4000, 0x4040),  # 1.5 * 2
+        (20, 0, 0x3F80, 0x3B80, 0x3F80),  # halfway, even result
+        (20, 0, 0x3F81, 0x3B80, 0x3F82),  # halfway, odd result
+        (20, 0, 0x0001, 0x0001, 0x0002),  # exact subnormal
+        (22, 0, 0x0001, 0x3F00, 0x0000),  # tiny halfway rounds to zero
+        (22, 0, 0x7F7F, 0x4000, 0x7F80),  # overflow
+        (22, 0, 0x7F80, 0x0000, 0x7FC0),  # invalid infinity times zero
+        (23, 2, 0, 0x1125, 0xCAD2),        # channel-wise 0 - 1
+    ]
+    source = []
+    for rd, (op, fmt, a, b, _) in enumerate(cases, 10):
+        for reg, value in ((1, a), (2, b)):
+            upper = (value + 0x800) >> 12
+            source += [f"lui x{reg}, {upper}",
+                       f"addi x{reg}, x{reg}, {value - (upper << 12)}",
+                       f".word 0x{num_insn(NUM_FROMINT, rd=reg, rs1=reg):08x}"]
+        source += [f".word 0x{num_insn(op, fmt, 3, 1, 2):08x}",
+                   f".word 0x{num_insn(NUM_TOINT, rd=rd, rs1=3):08x}"]
+    source += ["csrrs x20, nflags, x0", "ecall"]
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=4000, stop_on_ecall=True)
+    values = await halt_and_read(h, range(10, 21))
+    for rd, case in enumerate(cases, 10):
+        assert values[rd] == case[-1], f"case {case}: got {values[rd]:#x}"
+    assert values[20] == 0xF
+
+
+@cocotb.test()
+async def test_signed_digit_abi(dut):
+    """Check balanced-ternary carries, borrows, overflow and invalid digits."""
+    cases = [
+        (24, 1, 1, 0x7),                  # 1 + 1 = (-1) + 3
+        (25, 0, 1, 0x3),                  # 0 - 1
+        (25, 0, 0x7, 0xD),                # -2 = 1 - 3
+        (24, 0x55555555, 1, 0xFFFFFFFF),  # positive overflow
+        (24, 2, 1, 0),                    # reserved digit encoding
+    ]
+    source = []
+    for rd, (op, a, b, _) in enumerate(cases, 10):
+        for reg, value in ((1, a), (2, b)):
+            source += [f"li x{reg}, {value}",
+                       f".word {num_insn(NUM_FROMINT, rd=reg, rs1=reg):#x}"]
+        source += [f".word {num_insn(op, 0, 3, 1, 2):#x}",
+                   f".word {num_insn(NUM_TOINT, rd=rd, rs1=3):#x}"]
+    source += ["csrrs x15, nflags, x0", "ecall"]
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=2000, stop_on_ecall=True)
+    values = await halt_and_read(h, list(range(10, 16)))
+    assert [values[reg] for reg in range(10, 15)] == [case[-1] for case in cases]
+    assert values[15] == 0x9
+
+
+@cocotb.test()
+async def test_posit8_quire_in_core(dut):
+    """Minpos products survive accumulation and opposite signed products cancel."""
+    source = [f".word {num_insn(26):#x}"]
+
+    def product(a, b):
+        for reg, value in ((1, a), (2, b)):
+            source.extend([f"addi x{reg}, x0, {value}",
+                           f".word {num_insn(NUM_FROMINT, rd=reg, rs1=reg):#x}"])
+        source.append(f".word {num_insn(27, rs1=1, rs2=2):#x}")
+
+    def read(rd):
+        source.extend([f".word {num_insn(28, rd=3):#x}",
+                       f".word {num_insn(NUM_TOINT, rd=rd, rs1=3):#x}"])
+
+    product(0x01, 0x01)  # 2^-24, one accumulator LSB
+    product(0x7F, 0x7F)  # 2^24
+    read(10)
+    product(0x81, 0x7F)  # -2^24
+    read(11)
+    product(0x80, 0x40)  # NaR raises invalid without corrupting the accumulator
+    read(12)
+    source += ["csrrs x13, nflags, x0", f".word {num_insn(26):#x}"]
+    read(14)
+    source.append("ecall")
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=2000, stop_on_ecall=True)
+    assert await halt_and_read(h, list(range(10, 15))) == {
+        10: (1 << 48) + 1, 11: 1, 12: 1, 13: 8, 14: 0,
+    }
+
+
+@cocotb.test()
+async def test_lns_add_sub_abi(dut):
+    """Execute LNS add/subtract with exact and approximate log-space cases."""
+    import math
+
+    add, sub = 29, 30
+    cases = [
+        # op, format, encoded a and b, or None for the LNS zero sentinel
+        (add, 0, None, -8192),
+        (sub, 1, -128, None),
+        (add, 0, 0, 0),
+        (sub, 0, 0, 0),
+        (sub, 1, -128, 128),  # unsigned LNS cannot encode a negative result
+        (add, 0, 98304, -8192),
+        (sub, 0, 65536, 0),
+        (sub, 0, 81920, 0),
+        (sub, 1, 3, 0),
+        (sub, 2, 1, 0),      # one Q32.32 input ULP
+        (add, 2, 1 << 33, 1 << 32),
+        (add, 0, 0x7fffffff, 0x7fffffff),
+        (sub, 0, -0x7ffffffe, -0x7fffffff),
+        (add, 1, 0, -8192),  # large log-space difference
+    ]
+    expected = {}
+    source = []
+    for rd, (op, fmt, a, b) in enumerate(cases, 10):
+        width, fraction = [(32, 16), (16, 8), (64, 32)][fmt]
+        scale = 1 << fraction
+        mask = (1 << width) - 1
+        zero = 1 << (width - 1)
+        exact = True
+        if b is None or (op == add and a is None):
+            result = b if a is None else a
+        elif op == sub and (a is None or a <= b):
+            result = None
+        else:
+            gap = abs(a - b) / scale
+            if op == add:
+                correction = math.log2(1 + math.exp2(-gap))
+            else:
+                correction = math.log2(-math.expm1(-gap * math.log(2)))
+            result = max(a, b) + round(scale * correction)
+            exact = (op == add and a == b) or (op == sub and a - b == scale)
+            if result <= -zero:
+                result, exact = None, True
+            elif result >= zero:
+                result, exact = zero - 1, True
+        expected[rd] = (result, width, scale, exact)
+        for reg, value in ((1, a), (2, b)):
+            source.extend(li64(reg, zero if value is None else value & mask))
+            source.append(f".word {num_insn(NUM_FROMINT, rd=reg, rs1=reg):#x}")
+        source.extend([f".word {num_insn(op, fmt, 3, 1, 2):#x}",
+                       f".word {num_insn(NUM_TOINT, rd=rd, rs1=3):#x}"])
+    source.extend(["csrrs x24, nflags, x0", "ecall"])
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=4000, stop_on_ecall=True)
+    values = await halt_and_read(h, list(expected) + [24])
+    for rd, (result, width, scale, exact) in expected.items():
+        zero = 1 << (width - 1)
+        raw = values[rd]
+        if result is None:
+            assert raw == zero, f"x{rd}: expected LNS zero, got {raw:#x}"
+        else:
+            got = raw - (1 << width) if raw & zero else raw
+            tolerance = 0 if exact else math.ceil(0.004 * scale) + 1
+            assert abs(got - result) <= tolerance, f"x{rd}: got {got}, expected {result}"
+    assert values[24] == 0xf
+
+
+@cocotb.test()
+async def test_native_rvv_integer(dut):
+    """Execute standard OP-V encodings and check vl, dependencies, and tail."""
+    def opv(fn, vd, vs2, src, form):
+        return f".word {(fn << 26) | (1 << 25) | (vs2 << 20) | (src << 15) | (form << 12) | (vd << 7) | 0x57:#x}"
+
+    code = []
+    # Seed vector registers through the existing debug window. Execution below
+    # uses native OP-V instructions without writing the legacy INSN/GO CSRs.
+    for index, data in ((1, 0x0201), (2, 0x0403), (3, 0x12340000)):
+        code += li64(5, index) + [csrw(0x786, 5)]
+        code += li64(5, data) + [csrw(0x787, 5)]
+    code += [
+        ".word 0xc00173d7",          # vsetivli x7, 2, e8,m1,tu,mu
+        "addi x9, x7, 1",           # consumes forwarded vl = 2
+        opv(0, 3, 2, 1, 0),        # vadd.vv v3, v2, v1 -> ...0604
+        opv(2, 4, 3, 9, 4),        # vsub.vx v4, v3, x9 -> ...0301
+        opv(11, 5, 4, 31, 3),      # vxor.vi v5, v4, -1 -> ...fcfe
+        "addi x10, x0, 20",
+        ".word 0x008575d7",         # vsetvli x11, x10, e16,m1,tu,mu
+        "ecall",
+    ]
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(code))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=3000, stop_on_ecall=True)
+    regs = dut.u_core.u_rvv.u_vrf.regs
+    assert [int(regs[i].value) for i in (3, 4, 5)] == [0x12340604, 0x0301, 0xFCFE]
+    assert await halt_and_read(h, [7, 9, 11]) == {7: 2, 9: 3, 11: 4}
+    assert [cause for _, cause in h.traps] == [11]
+
+
+@cocotb.test()
+async def test_native_rvv_invalid_config(dut):
+    """An unsupported LMUL gives vl=0 and prevents vector arithmetic."""
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join([
+        ".word 0xc01173d7",  # vsetivli x7, 2, e8,m2,tu,mu
+        ".word 0x022081d7",  # vadd.vv v3, v2, v1
+    ]))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    for _ in range(1000):
+        await h.run(max_cycles=1, stop_on_ecall=False)
+        if h.traps:
+            break
+    assert h.traps == [(4, 2)]
+    assert await halt_and_read(h, [7]) == {7: 0}
+    assert int(dut.u_core.u_rvv.u_vrf.regs[3].value) == 0
+
+
+@cocotb.test()
+async def test_instruction_translation_sv39_sv48(dut):
+    """Execute a non-identity supervisor fetch and then fault on an unmapped VPN."""
+    h = Harness(dut)
+    await h.startup()
+    for mode, base in ((8, 1 << 30), (9, 1 << 39)):
+        start_va = base + 0x8000
+        bad_va = 0x5000
+        boot = [
+            "addi x5, x0, -1", "csrrw x0, pmpaddr0, x5",
+            "addi x5, x0, 31", "csrrw x0, pmpcfg0, x5",
+            "li x5, 0x7000", "csrrw x0, mtvec, x5",
+        ]
+        entries = [(0x1008, 0x801), (0x2000, 0xC01)]
+        if mode == 9:
+            entries.append((0x3000, 0x1001))
+        entries.append((0x3040 if mode == 8 else 0x4040, 0x4849))
+        for address, pte in entries:
+            boot += [f"li x5, {address:#x}", f"li x6, {pte:#x}", "sd x6, 0(x5)"]
+        boot += li64(5, (mode << 60) | 1)
+        boot += ["csrrw x0, satp, x5"]
+        boot += li64(5, start_va)
+        boot += ["csrrw x0, mepc, x5", "li x5, 0x800",
+                 "csrrw x0, mstatus, x5", "mret"]
+        payload = ["addi x11, x0, 93"] + li64(5, bad_va) + ["jalr x0, 0(x5)"]
+        boot_words, _ = assemble("\n".join(boot))
+        payload_words, _ = assemble("\n".join(payload))
+        words = boot_words + [0] * (0x12000 // 4 - len(boot_words)) + payload_words
+        h.clear()
+        await h.load(words)
+        await h.reset()
+        for _ in range(2000):
+            await h.run(max_cycles=1, stop_on_ecall=False)
+            if h.traps:
+                break
+        assert h.traps == [(bad_va, 12)], (mode, h.traps, h.trace[-8:])
+        assert any(t[0] == start_va and t[3] == 11 and t[4] == 93
+                   for t in h.trace), (mode, h.trace[-8:])

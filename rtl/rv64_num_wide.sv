@@ -90,6 +90,12 @@ module rv64_num_wide (
       rns_y[7:5]  = mod7({1'b0, a7} + {1'b0, b7});
       if (fmt != 3'd1) rns_y[11:8] = mod11({1'b0, a11} + {1'b0, b11});
       if (fmt == 3'd2) rns_y[15:12] = mod13({1'b0, a13} + {1'b0, b13});
+    end else if (op == NUM_RSUB) begin
+      rns_y[1:0] = mod3(3'd3 + {1'b0, a3} - {1'b0, b3});
+      rns_y[4:2] = mod5(6'd10 + 6'(a5) - 6'(b5));
+      rns_y[7:5] = mod7(7'd7 + 7'(a7) - 7'(b7));
+      if (fmt != 3'd1) rns_y[11:8] = mod11(8'd22 + 8'(a11) - 8'(b11));
+      if (fmt == 3'd2) rns_y[15:12] = mod13(9'd26 + 9'(a13) - 9'(b13));
     end else begin
       rns_y[1:0]  = mod3(a3 * b3);
       rns_y[4:2]  = mod5(a5 * b5);
@@ -102,9 +108,10 @@ module rv64_num_wide (
   // ===========================================================================
   // Logarithmic number system
   //
-  // Operand is a base-2 logarithm in signed Q16.16 in the low 32 bits;
-  // 32'h8000_0000 is -infinity and encodes zero. Multiply is addition, divide
-  // is subtraction, and both are exact in the log domain.
+  // Encodes nonnegative values as signed base-2 logarithms. The minimum
+  // code of each format represents zero. Multiply/divide add/subtract the
+  // logarithms exactly. Add/subtract approximate the log-domain correction;
+  // subtraction that would produce a negative value signals invalid.
   // ===========================================================================
   // fmt selects the log width and with it the Q format:
   //   0 -> Q16.16 in 32 bits   1 -> Q8.8 in 16 bits   2 -> Q32.32 in 64 bits
@@ -158,8 +165,235 @@ module rv64_num_wide (
     lns_mask  = (64'd1 << lns_w) - 64'd1;
     lns_max65 = {lns_max[63], lns_max};
     lns_min65 = {lns_min[63], lns_min};
-    la_zero = (a_w == lns_zero);
-    lb_zero = (b_w == lns_zero);
+    la_zero = (a_w == (lns_zero & lns_mask));
+    lb_zero = (b_w == (lns_zero & lns_mask));
+  end
+
+  // Correction ROM in Q16.16, sampled at d=i/8, where d is the
+  // absolute difference between the two log operands. Linear interpolation
+  // uses the next 16 bits of d. Subtraction below d=1 uses a separate
+  // normalized path because its correction tends to -infinity at d=0.
+  function automatic logic signed [31:0] lns_rom(input logic [7:0] index,
+                                                 input logic subtract);
+    case (index)
+      8'd0: lns_rom = subtract ? 32'sd0 : 32'sd65536;
+      8'd1: lns_rom = subtract ? 32'sd0 : 32'sd61529;
+      8'd2: lns_rom = subtract ? 32'sd0 : 32'sd57698;
+      8'd3: lns_rom = subtract ? 32'sd0 : 32'sd54044;
+      8'd4: lns_rom = subtract ? 32'sd0 : 32'sd50565;
+      8'd5: lns_rom = subtract ? 32'sd0 : 32'sd47257;
+      8'd6: lns_rom = subtract ? 32'sd0 : 32'sd44119;
+      8'd7: lns_rom = subtract ? 32'sd0 : 32'sd41146;
+      8'd8: lns_rom = subtract ? -32'sd65536 : 32'sd38336;
+      8'd9: lns_rom = subtract ? -32'sd57998 : 32'sd35684;
+      8'd10: lns_rom = subtract ? -32'sd51576 : 32'sd33184;
+      8'd11: lns_rom = subtract ? -32'sd46048 : 32'sd30832;
+      8'd12: lns_rom = subtract ? -32'sd41248 : 32'sd28623;
+      8'd13: lns_rom = subtract ? -32'sd37051 : 32'sd26551;
+      8'd14: lns_rom = subtract ? -32'sd33359 : 32'sd24610;
+      8'd15: lns_rom = subtract ? -32'sd30096 : 32'sd22794;
+      8'd16: lns_rom = subtract ? -32'sd27200 : 32'sd21098;
+      8'd17: lns_rom = subtract ? -32'sd24620 : 32'sd19515;
+      8'd18: lns_rom = subtract ? -32'sd22314 : 32'sd18040;
+      8'd19: lns_rom = subtract ? -32'sd20248 : 32'sd16667;
+      8'd20: lns_rom = subtract ? -32'sd18392 : 32'sd15391;
+      8'd21: lns_rom = subtract ? -32'sd16722 : 32'sd14204;
+      8'd22: lns_rom = subtract ? -32'sd15216 : 32'sd13103;
+      8'd23: lns_rom = subtract ? -32'sd13856 : 32'sd12082;
+      8'd24: lns_rom = subtract ? -32'sd12625 : 32'sd11136;
+      8'd25: lns_rom = subtract ? -32'sd11511 : 32'sd10260;
+      8'd26: lns_rom = subtract ? -32'sd10500 : 32'sd9450;
+      8'd27: lns_rom = subtract ? -32'sd9583 : 32'sd8700;
+      8'd28: lns_rom = subtract ? -32'sd8750 : 32'sd8008;
+      8'd29: lns_rom = subtract ? -32'sd7992 : 32'sd7369;
+      8'd30: lns_rom = subtract ? -32'sd7302 : 32'sd6778;
+      8'd31: lns_rom = subtract ? -32'sd6674 : 32'sd6234;
+      8'd32: lns_rom = subtract ? -32'sd6102 : 32'sd5732;
+      8'd33: lns_rom = subtract ? -32'sd5580 : 32'sd5269;
+      8'd34: lns_rom = subtract ? -32'sd5104 : 32'sd4843;
+      8'd35: lns_rom = subtract ? -32'sd4670 : 32'sd4450;
+      8'd36: lns_rom = subtract ? -32'sd4274 : 32'sd4089;
+      8'd37: lns_rom = subtract ? -32'sd3911 : 32'sd3756;
+      8'd38: lns_rom = subtract ? -32'sd3581 : 32'sd3450;
+      8'd39: lns_rom = subtract ? -32'sd3278 : 32'sd3168;
+      8'd40: lns_rom = subtract ? -32'sd3002 : 32'sd2909;
+      8'd41: lns_rom = subtract ? -32'sd2749 : 32'sd2671;
+      8'd42: lns_rom = subtract ? -32'sd2518 : 32'sd2452;
+      8'd43: lns_rom = subtract ? -32'sd2306 : 32'sd2251;
+      8'd44: lns_rom = subtract ? -32'sd2113 : 32'sd2066;
+      8'd45: lns_rom = subtract ? -32'sd1936 : 32'sd1897;
+      8'd46: lns_rom = subtract ? -32'sd1773 : 32'sd1741;
+      8'd47: lns_rom = subtract ? -32'sd1625 : 32'sd1597;
+      8'd48: lns_rom = subtract ? -32'sd1489 : 32'sd1466;
+      8'd49: lns_rom = subtract ? -32'sd1365 : 32'sd1345;
+      8'd50: lns_rom = subtract ? -32'sd1251 : 32'sd1234;
+      8'd51: lns_rom = subtract ? -32'sd1146 : 32'sd1132;
+      8'd52: lns_rom = subtract ? -32'sd1050 : 32'sd1039;
+      8'd53: lns_rom = subtract ? -32'sd963 : 32'sd953;
+      8'd54: lns_rom = subtract ? -32'sd883 : 32'sd874;
+      8'd55: lns_rom = subtract ? -32'sd809 : 32'sd802;
+      8'd56: lns_rom = subtract ? -32'sd742 : 32'sd736;
+      8'd57: lns_rom = subtract ? -32'sd680 : 32'sd675;
+      8'd58: lns_rom = subtract ? -32'sd623 : 32'sd619;
+      8'd59: lns_rom = subtract ? -32'sd571 : 32'sd568;
+      8'd60: lns_rom = subtract ? -32'sd524 : 32'sd521;
+      8'd61: lns_rom = subtract ? -32'sd480 : 32'sd478;
+      8'd62: lns_rom = subtract ? -32'sd440 : 32'sd438;
+      8'd63: lns_rom = subtract ? -32'sd404 : 32'sd402;
+      8'd64: lns_rom = subtract ? -32'sd370 : 32'sd369;
+      8'd65: lns_rom = subtract ? -32'sd339 : 32'sd338;
+      8'd66: lns_rom = subtract ? -32'sd311 : 32'sd310;
+      8'd67: lns_rom = subtract ? -32'sd285 : 32'sd284;
+      8'd68: lns_rom = subtract ? -32'sd262 : 32'sd261;
+      8'd69: lns_rom = subtract ? -32'sd240 : 32'sd239;
+      8'd70: lns_rom = subtract ? -32'sd220 : 32'sd219;
+      8'd71: lns_rom = subtract ? -32'sd202 : 32'sd201;
+      8'd72: lns_rom = subtract ? -32'sd185 : 32'sd184;
+      8'd73: lns_rom = subtract ? -32'sd169 : 32'sd169;
+      8'd74: lns_rom = subtract ? -32'sd155 : 32'sd155;
+      8'd75: lns_rom = subtract ? -32'sd143 : 32'sd142;
+      8'd76: lns_rom = subtract ? -32'sd131 : 32'sd130;
+      8'd77: lns_rom = subtract ? -32'sd120 : 32'sd120;
+      8'd78: lns_rom = subtract ? -32'sd110 : 32'sd110;
+      8'd79: lns_rom = subtract ? -32'sd101 : 32'sd101;
+      8'd80: lns_rom = subtract ? -32'sd92 : 32'sd92;
+      8'd81: lns_rom = subtract ? -32'sd85 : 32'sd85;
+      8'd82: lns_rom = subtract ? -32'sd78 : 32'sd78;
+      8'd83: lns_rom = subtract ? -32'sd71 : 32'sd71;
+      8'd84: lns_rom = subtract ? -32'sd65 : 32'sd65;
+      8'd85: lns_rom = subtract ? -32'sd60 : 32'sd60;
+      8'd86: lns_rom = subtract ? -32'sd55 : 32'sd55;
+      8'd87: lns_rom = subtract ? -32'sd50 : 32'sd50;
+      8'd88: lns_rom = subtract ? -32'sd46 : 32'sd46;
+      8'd89: lns_rom = subtract ? -32'sd42 : 32'sd42;
+      8'd90: lns_rom = subtract ? -32'sd39 : 32'sd39;
+      8'd91: lns_rom = subtract ? -32'sd36 : 32'sd36;
+      8'd92: lns_rom = subtract ? -32'sd33 : 32'sd33;
+      8'd93: lns_rom = subtract ? -32'sd30 : 32'sd30;
+      8'd94: lns_rom = subtract ? -32'sd27 : 32'sd27;
+      8'd95: lns_rom = subtract ? -32'sd25 : 32'sd25;
+      8'd96: lns_rom = subtract ? -32'sd23 : 32'sd23;
+      8'd97: lns_rom = subtract ? -32'sd21 : 32'sd21;
+      8'd98: lns_rom = subtract ? -32'sd19 : 32'sd19;
+      8'd99: lns_rom = subtract ? -32'sd18 : 32'sd18;
+      8'd100: lns_rom = subtract ? -32'sd16 : 32'sd16;
+      8'd101: lns_rom = subtract ? -32'sd15 : 32'sd15;
+      8'd102: lns_rom = subtract ? -32'sd14 : 32'sd14;
+      8'd103: lns_rom = subtract ? -32'sd13 : 32'sd13;
+      8'd104: lns_rom = subtract ? -32'sd12 : 32'sd12;
+      8'd105: lns_rom = subtract ? -32'sd11 : 32'sd11;
+      8'd106: lns_rom = subtract ? -32'sd10 : 32'sd10;
+      8'd107: lns_rom = subtract ? -32'sd9 : 32'sd9;
+      8'd108: lns_rom = subtract ? -32'sd8 : 32'sd8;
+      8'd109: lns_rom = subtract ? -32'sd7 : 32'sd7;
+      8'd110: lns_rom = subtract ? -32'sd7 : 32'sd7;
+      8'd111: lns_rom = subtract ? -32'sd6 : 32'sd6;
+      8'd112: lns_rom = subtract ? -32'sd6 : 32'sd6;
+      8'd113: lns_rom = subtract ? -32'sd5 : 32'sd5;
+      8'd114: lns_rom = subtract ? -32'sd5 : 32'sd5;
+      8'd115: lns_rom = subtract ? -32'sd4 : 32'sd4;
+      8'd116: lns_rom = subtract ? -32'sd4 : 32'sd4;
+      8'd117: lns_rom = subtract ? -32'sd4 : 32'sd4;
+      8'd118: lns_rom = subtract ? -32'sd3 : 32'sd3;
+      8'd119: lns_rom = subtract ? -32'sd3 : 32'sd3;
+      8'd120: lns_rom = subtract ? -32'sd3 : 32'sd3;
+      8'd121: lns_rom = subtract ? -32'sd3 : 32'sd3;
+      8'd122: lns_rom = subtract ? -32'sd2 : 32'sd2;
+      8'd123: lns_rom = subtract ? -32'sd2 : 32'sd2;
+      8'd124: lns_rom = subtract ? -32'sd2 : 32'sd2;
+      8'd125: lns_rom = subtract ? -32'sd2 : 32'sd2;
+      8'd126: lns_rom = subtract ? -32'sd2 : 32'sd2;
+      8'd127: lns_rom = subtract ? -32'sd2 : 32'sd2;
+      8'd128: lns_rom = subtract ? -32'sd1 : 32'sd1;
+      default: lns_rom = 32'sd0;
+    endcase
+  endfunction
+
+  function automatic logic signed [31:0] log_mantissa(input logic [4:0] index);
+    case (index)
+      5'd0: log_mantissa = 32'sd0;
+      5'd1: log_mantissa = 32'sd5732;
+      5'd2: log_mantissa = 32'sd11136;
+      5'd3: log_mantissa = 32'sd16248;
+      5'd4: log_mantissa = 32'sd21098;
+      5'd5: log_mantissa = 32'sd25711;
+      5'd6: log_mantissa = 32'sd30109;
+      5'd7: log_mantissa = 32'sd34312;
+      5'd8: log_mantissa = 32'sd38336;
+      5'd9: log_mantissa = 32'sd42196;
+      5'd10: log_mantissa = 32'sd45904;
+      5'd11: log_mantissa = 32'sd49472;
+      5'd12: log_mantissa = 32'sd52911;
+      5'd13: log_mantissa = 32'sd56229;
+      5'd14: log_mantissa = 32'sd59434;
+      5'd15: log_mantissa = 32'sd62534;
+      5'd16: log_mantissa = 32'sd65536;
+      default: log_mantissa = 32'sd0;
+    endcase
+  endfunction
+
+  function automatic logic signed [31:0] interpolate(
+      input logic signed [31:0] lo, hi, input logic [15:0] frac);
+    logic signed [48:0] product;
+    product = (49'(hi) - 49'(lo)) *
+              $signed({1'b0, frac});
+    return lo + 32'(product >>> 16);
+  endfunction
+
+  function automatic logic signed [31:0] lns_correction(
+      input logic [64:0] delta, input logic subtract);
+    logic [7:0] index;
+    logic [31:0] normalized, d;
+    logic [31:0] square;
+    logic [47:0] quadratic;
+    int msb;
+    if (delta >= (65'd16 << 32)) return 32'sd0;
+    if (!subtract || delta >= (65'd1 << 32)) begin
+      index = delta[36:29];
+      return interpolate(lns_rom(index, subtract),
+                         lns_rom(index + 8'd1, subtract), delta[28:13]);
+    end
+
+    // For 0 < d < 1, log2(1-2^-d) = log2(d) + log2(ln 2)
+    // - d/2 + (ln 2)*d*d/24 + O(d^4). Normalize d before approximating
+    // log2(d) to preserve resolution even for one Q32.32 input ULP.
+    d = {16'd0, delta[31:16]};
+    square = d * d;
+    quadratic = square * 16'd1893; // round(65536 * ln(2) / 24)
+    msb = 0;
+    for (int bit_index = 0; bit_index < 32; bit_index++)
+      if (delta[bit_index]) msb = bit_index;
+    normalized = delta[31:0] << (31 - msb);
+    return ((msb - 32) <<< 16) +
+           interpolate(log_mantissa({1'b0, normalized[30:27]}),
+                       log_mantissa({1'b0, normalized[30:27]} + 5'd1),
+                       normalized[26:11]) - 32'sd34653 -
+           $signed(d >> 1) + $signed({16'd0, quadratic[47:32]});
+  endfunction
+
+  logic signed [64:0] delta, lns_base, correction;
+  logic signed [31:0] correction_q16;
+  logic [64:0] delta_q32;
+  always_comb begin
+    delta = $signed({la_w[63], la_w}) - $signed({lb_w[63], lb_w});
+    lns_base = delta < 0 ? $signed({lb_w[63], lb_w}) :
+                           $signed({la_w[63], la_w});
+    delta_q32 = delta < 0 ? $unsigned(-delta) : $unsigned(delta);
+    // Clamp first to prevent a large fixed-point delta wrapping on conversion.
+    case (fmt)
+      3'd0: delta_q32 = delta_q32 >= (65'd16 << 16) ? (65'd16 << 32) : delta_q32 << 16;
+      3'd1: delta_q32 = delta_q32 >= (65'd16 << 8) ? (65'd16 << 32) : delta_q32 << 24;
+      default: ;
+    endcase
+    correction_q16 = 32'sd0;
+    if ((op == NUM_LNADD || op == NUM_LNSUB) && !la_zero && !lb_zero &&
+        (op == NUM_LNADD || delta > 0))
+      correction_q16 = lns_correction(delta_q32, op == NUM_LNSUB);
+    case (fmt)
+      3'd1: correction = (65'($signed(correction_q16)) + 65'sd128) >>> 8;
+      3'd2: correction = 65'($signed(correction_q16)) <<< 16;
+      default: correction = 65'($signed(correction_q16));
+    endcase
   end
 
   always_comb begin
@@ -167,7 +401,34 @@ module rv64_num_wide (
     lns_y     = 64'd0;
     lns_flags = 8'd0;
 
-    if (op == NUM_LNMUL) begin
+    if (op == NUM_LNADD || op == NUM_LNSUB) begin
+      if (fmt > 3'd2) begin
+        lns_y = lns_zero;
+        lns_flags[FLAG_INVALID] = 1'b1;
+      end else if (lb_zero || (op == NUM_LNADD && la_zero)) begin
+        lns_y = lb_zero ? a_w : b_w;
+      end else if (op == NUM_LNSUB && (la_zero || delta < 0)) begin
+        lns_y = lns_zero;
+        lns_flags[FLAG_INVALID] = 1'b1;
+      end else if (op == NUM_LNSUB && delta == 0) begin
+        lns_y = lns_zero;
+      end else begin
+        lsum = lns_base + correction;
+        lns_flags[FLAG_INEXACT] = delta != 0 &&
+                                 !(op == NUM_LNSUB && delta_q32 == (65'd1 << 32));
+        if (lsum > lns_max65) begin
+          lns_y = lns_max;
+          lns_flags[FLAG_OVERFLOW] = 1'b1;
+          lns_flags[FLAG_INEXACT] = 1'b1;
+        end else if (lsum <= lns_min65) begin
+          lns_y = lns_zero;
+          lns_flags[FLAG_UNDERFLOW] = 1'b1;
+          lns_flags[FLAG_INEXACT] = 1'b1;
+        end else begin
+          lns_y = lsum[63:0];
+        end
+      end
+    end else if (op == NUM_LNMUL) begin
       if (la_zero || lb_zero) begin
         lns_y = lns_zero[63:0];
       end else begin
@@ -584,6 +845,59 @@ module rv64_num_wide (
     posit_y = {32'd0, posit_encode(pres, pos_n)};
   end
 
+  // BF16 operands widen exactly into binary32. Truncation plus the FP32
+  // inexact flag preserves the sticky bit needed to round once to BF16.
+  wire bf_mul = op == NUM_BFMUL;
+  wire bf_active = bf_mul || op == NUM_BFADD || op == NUM_BFSUB;
+  wire [63:0] bf_a = bf_active ? {32'b0, a[15:0], 16'b0} : 64'b0;
+  wire [63:0] bf_b = bf_active ? {32'b0, b[15:0], 16'b0} : 64'b0;
+  logic [63:0] bf_add_raw, bf_mul_raw;
+  logic [4:0] bf_add_exc, bf_mul_exc;
+  rv64_fp_add u_bf_add (
+    .fmt(1'b0), .sub(op == NUM_BFSUB), .rm(3'd1),
+    .a(bf_a), .b(bf_b), .result(bf_add_raw), .flags(bf_add_exc)
+  );
+  rv64_fp_mul u_bf_mul (
+    .fmt(1'b0), .rm(3'd1), .a(bf_a), .b(bf_b),
+    .result(bf_mul_raw), .flags(bf_mul_exc)
+  );
+
+  wire [31:0] bf_raw = bf_mul ? bf_mul_raw[31:0] : bf_add_raw[31:0];
+  wire [4:0] bf_exc = bf_mul ? bf_mul_exc : bf_add_exc;
+  wire bf_finite = bf_raw[30:23] != 8'hff;
+  wire bf_lost = bf_exc[0] || (|bf_raw[15:0]);
+  wire bf_up = bf_finite && bf_raw[15] &&
+               (bf_raw[16] || (|bf_raw[14:0]) || bf_exc[0]);
+  wire [15:0] bf_y = bf_raw[31:16] + {15'b0, bf_up};
+
+  // Balanced radix-3 addition/subtraction. A digit sum outside [-1, 1]
+  // is reduced by one radix unit and forwards a signed carry to the next trit.
+  logic [31:0] sd_result;
+  logic sd_invalid, sd_overflow;
+  always_comb begin
+    logic signed [2:0] carry, lhs, rhs, sum;
+    carry = 3'sd0;
+    sd_result = '0;
+    sd_invalid = fmt != 0 || (|a[63:32]) || (|b[63:32]);
+    for (int digit = 0; digit < 16; digit++) begin
+      lhs = 3'($signed(a[2*digit +: 2]));
+      rhs = 3'($signed(b[2*digit +: 2]));
+      sd_invalid |= lhs == -3'sd2 || rhs == -3'sd2;
+      sum = lhs + (op == NUM_SDSUB ? -rhs : rhs) + carry;
+      if (sum > 3'sd1) begin
+        sum = sum - 3'sd3;
+        carry = 3'sd1;
+      end else if (sum < -3'sd1) begin
+        sum = sum + 3'sd3;
+        carry = -3'sd1;
+      end else begin
+        carry = 3'sd0;
+      end
+      sd_result[2*digit +: 2] = sum[1:0];
+    end
+    sd_overflow = carry != 0;
+  end
+
   // ===========================================================================
   // Select -- a single procedural block drives `flags`: two always_comb blocks
   // assigning the same variable is a multiple-driver conflict, and an arm can
@@ -593,18 +907,30 @@ module rv64_num_wide (
     y     = 64'd0;
     flags = 8'd0;
     case (op)
-      NUM_RADD, NUM_RMUL: begin
+      NUM_RADD, NUM_RMUL, NUM_RSUB: begin
         y = rns_y;
         // per-channel modular arithmetic is exact: no flags
       end
-      NUM_LNMUL, NUM_LNDIV: begin
+      NUM_LNMUL, NUM_LNDIV, NUM_LNADD, NUM_LNSUB: begin
         // the result is the width-truncated log field, not the widened one
-        y     = {32'd0, lns_y & lns_mask};
+        y     = lns_y & lns_mask;
         flags = lns_flags;
       end
       NUM_PADD, NUM_PSUB, NUM_PMUL, NUM_PDIV: begin
         y     = posit_y;
         flags = posit_flags;
+      end
+      NUM_SDADD, NUM_SDSUB: begin
+        y = sd_invalid ? 64'd0 : {32'd0, sd_result};
+        flags[FLAG_INVALID] = sd_invalid;
+        flags[FLAG_OVERFLOW] = !sd_invalid && sd_overflow;
+      end
+      NUM_BFADD, NUM_BFSUB, NUM_BFMUL: begin
+        y = {48'b0, bf_y};
+        flags[FLAG_INVALID] = bf_exc[4];
+        flags[FLAG_INEXACT] = bf_finite && bf_lost;
+        flags[FLAG_OVERFLOW] = bf_exc[2] || (bf_finite && bf_y[14:7] == 8'hff);
+        flags[FLAG_UNDERFLOW] = bf_finite && bf_lost && bf_y[14:7] == 8'b0;
       end
       NUM_FADD, NUM_FMUL: begin
         y     = fp_y;

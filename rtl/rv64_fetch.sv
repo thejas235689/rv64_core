@@ -26,6 +26,7 @@ module rv64_fetch (
   input  logic        rsp_valid,
   input  logic [63:0] rsp_data,
   input  logic        rsp_error,
+  input  logic        rsp_page_fault,
 
   // ---- instruction out ------------------------------------------------------
   output logic        insn_valid,
@@ -34,6 +35,8 @@ module rv64_fetch (
   output logic [1:0]  insn_len,
   output logic        fault_valid,
   output logic [63:0] fault_pc,
+  output logic [63:0] fault_tval,
+  output logic        fault_page,
 
   // ---- predecode tags for the instruction being presented ------------------
   output logic        tag_is_control,
@@ -50,7 +53,8 @@ module rv64_fetch (
   logic [63:0] out_align;   // aligned at issue time
 
   logic        fault_q;
-  logic [63:0] fault_addr_q;
+  logic [63:0] fault_addr_q, fault_tval_q;
+  logic fault_page_q;
 
   logic [63:0] aligned;
   logic        need;
@@ -59,6 +63,7 @@ module rv64_fetch (
   // as the pipeline sees it rather than as the fetch stream happens to align.
   logic [31:0] prev_insn_q;
   logic        prev_valid_q;
+  logic [63:0] prev_next_pc_q;
 
   logic        nxt_v;
   logic [63:0] nxt_addr, nxt_data;
@@ -78,9 +83,9 @@ module rv64_fetch (
   wire is_rvc = (insn_raw[1:0] != 2'b11);
 
   rv64_predecode u_pre (
-    .insn           (cur_insn),
+    .insn           (insn),
     .prev_insn      (prev_insn_q),
-    .prev_valid     (prev_valid_q),
+    .prev_valid     (prev_valid_q && insn_valid && pc_i == prev_next_pc_q),
     .is_control     (tag_is_control),
     .is_branch      (),
     .is_jal         (),
@@ -114,6 +119,8 @@ module rv64_fetch (
 
   assign fault_valid = fault_q;
   assign fault_pc    = fault_addr_q;
+  assign fault_tval  = fault_tval_q;
+  assign fault_page  = fault_page_q;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -125,12 +132,16 @@ module rv64_fetch (
       out_align    <= 64'd0;
       fault_q      <= 1'b0;
       fault_addr_q <= 64'd0;
+      fault_tval_q <= 64'd0;
+      fault_page_q <= 1'b0;
       prev_insn_q  <= 32'd0;
       prev_valid_q <= 1'b0;
+      prev_next_pc_q <= '0;
       nxt_v        <= 1'b0;
       nxt_addr     <= 64'd0;
       nxt_data     <= 64'd0;
     end else if (redirect) begin
+      prev_valid_q <= 1'b0;
       beat_v       <= 1'b0;
       nxt_v        <= 1'b0;
       out_pending  <= 1'b0;
@@ -140,6 +151,7 @@ module rv64_fetch (
       if (consume && insn_valid) begin
         prev_insn_q  <= is_rvc ? cur_insn : insn_raw;
         prev_valid_q <= 1'b1;
+        prev_next_pc_q <= pc_i + (is_rvc ? 64'd2 : 64'd4);
       end
       // issue tracking
       if (req_valid && req_ready) begin
@@ -151,9 +163,11 @@ module rv64_fetch (
       // response: accept only if it still matches the address we want
       if (rsp_valid && out_pending) begin
         out_pending <= 1'b0;
-        if (rsp_error && (out_addr == out_align)) begin
+        if (rsp_error) begin
           fault_q      <= 1'b1;
-          fault_addr_q <= aligned;
+          fault_addr_q <= pc_i;
+          fault_tval_q <= out_addr == out_align ? pc_i : out_addr;
+          fault_page_q <= rsp_page_fault;
           beat_v       <= 1'b0;
         end else if (!rsp_error) begin
           if (out_addr == out_align) begin

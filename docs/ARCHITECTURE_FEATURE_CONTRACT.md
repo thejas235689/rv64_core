@@ -146,9 +146,9 @@ instruction-address misalignment traps in the core. The vector unit has its own
 
 ## 8. Explicitly out of scope
 
-The H extension (no VS/VU mode, no two-stage translation), RVV instruction
-encodings (the vector unit exists but is driven through its CSR window, not
-through `misa`), Q, Zfh, Zacas, cache coherence, cache inclusion, write-back
+The H extension (no VS/VU mode, no two-stage translation), full RVV (the core
+executes a limited M-mode integer OP-V subset and leaves `misa.V` clear),
+Q, Zfh, Zacas, cache coherence, cache inclusion, write-back
 caches, prefetch, an out-of-order backend, and the four research blocks (DNA,
 neuromorphic, photonic, interconnect). CLINT, UART, DMI, PLIC-lite and the L2
 arbiter exist as verified blocks reachable through their CSR windows but are not

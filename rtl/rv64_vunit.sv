@@ -38,6 +38,14 @@ module rv64_vunit (
   input  logic [63:0] csr_wdata,
   output logic [63:0] csr_rdata,
 
+  // ---- native single-register OP-V issue ----------------------------------
+  input  logic        native_issue,
+  input  logic [31:0] native_insn,
+  input  logic [63:0] native_scalar,
+  output logic [6:0]  native_vl,
+  output logic        native_illegal,
+  output logic        native_busy,
+
   // ---- element memory port (vle / vse) ------------------------------------
   // One 64-bit beat per element. The base address comes from the control window
   // (csr 10) rather than the integer file, because this unit is not wired to the
@@ -87,16 +95,22 @@ module rv64_vunit (
   // ---- the instruction being executed -------------------------------------
   logic [31:0] insn_q;
   logic        go_q;
+  logic        native_go_q, native_vill_q;
+  logic [31:0] native_insn_q;
+  logic [63:0] native_scalar_q;
+  logic [63:0] xval_q;
 
-  wire [6:0]  opcode = insn_q[6:0];
-  wire [2:0]  funct3 = insn_q[14:12];
-  wire [5:0]  funct6 = insn_q[31:26];
-  wire [4:0]  vs1_i  = insn_q[19:15];
-  wire [4:0]  vs2_i  = insn_q[24:20];
-  wire [4:0]  vd_i   = insn_q[11:7];
-  wire [4:0]  rs1_i  = insn_q[19:15];
+  wire [31:0] op_insn = native_go_q ? native_insn_q : insn_q;
+  wire [63:0] op_scalar = native_go_q ? native_scalar_q : xval_q;
+  wire [6:0]  opcode = op_insn[6:0];
+  wire [2:0]  funct3 = op_insn[14:12];
+  wire [5:0]  funct6 = op_insn[31:26];
+  wire [4:0]  vs1_i  = op_insn[19:15];
+  wire [4:0]  vs2_i  = op_insn[24:20];
+  wire [4:0]  vd_i   = op_insn[11:7];
+  wire [4:0]  rs1_i  = op_insn[19:15];
 
-  wire        vm       = insn_q[25];    // 1 = unmasked
+  wire        vm       = op_insn[25];    // 1 = unmasked
   wire [1:0]  sew_sel = vtype_q[4:3];
   // vlmul: 0=1, 1=2, 2=4, 3=8. Fractional values (5,6,7) are treated as 1.
   wire [2:0]  lmul_sel = vtype_q[2:0];
@@ -104,6 +118,26 @@ module rv64_vunit (
                        : (lmul_sel == 3'd3) ? 4'd8 : 4'd1;
   wire [6:0]  nelem   = (sew_sel == 2'd0) ? 7'd8 : (sew_sel == 2'd1) ? 7'd4
                       : (sew_sel == 2'd2) ? 7'd2 : 7'd1;
+
+  wire native_setvl = native_insn[14:12] == 3'b111;
+  wire native_immediate = native_insn[31:30] == 2'b11;
+  wire [7:0] native_type = native_insn[27:20];
+  wire [6:0] native_max = 7'd8 >> native_type[4:3];
+  wire [63:0] native_avl = native_immediate ? {59'd0, native_insn[19:15]}
+                          : native_insn[19:15] != 0 ? native_scalar
+                          : native_insn[11:7] != 0 ? {57'd0, native_max}
+                          : {57'd0, vl_q};
+  wire native_keep_vl = !native_immediate && native_insn[19:15] == 0
+                       && native_insn[11:7] == 0;
+  wire native_bad_type = native_type[5] || native_type[2:0] != 0
+                        || (native_immediate ? |native_insn[29:28] : |native_insn[30:28])
+                        || (native_keep_vl && (native_vill_q || native_type[4:3] != sew_sel));
+
+  assign native_vl = native_bad_type ? 7'd0
+                   : native_avl >= {57'd0, native_max} ? native_max : native_avl[6:0];
+  assign native_illegal = !native_setvl &&
+                          (native_vill_q || vtype_q[5] || lmul_sel != 0 || vstart_q != 0);
+  assign native_busy = go_q || native_go_q || el_walk_q || grp_walk_q || grp_commit_q || load_we_q;
 
   // ---- register file -------------------------------------------------------
   logic [63:0] rdata1, rdata2, rdata3, rdata_mask, cdata;
@@ -142,9 +176,8 @@ module rv64_vunit (
   // ---- scalar operand for the .vx and .vi forms ---------------------------
   // For .vx the scalar comes from a register supplied on the control window
   // (csr 9), because this unit is not wired to the core's integer file yet.
-  logic [63:0] xval_q;
-  wire  [63:0] s2_val = (funct3 == 3'b100) ? xval_q
-                      : (funct3 == 3'b011) ? {{59{insn_q[19]}}, insn_q[19:15]}
+  wire  [63:0] s2_val = (funct3 == 3'b100) ? op_scalar
+                      : (funct3 == 3'b011) ? {{59{op_insn[19]}}, op_insn[19:15]}
                       : rdata1;
 
   // insert one element into a register image, constant slices only
@@ -489,7 +522,7 @@ module rv64_vunit (
     end
     w = (sew_sel == 2'd0) ? 7'd8 : (sew_sel == 2'd1) ? 7'd16
       : (sew_sel == 2'd2) ? 7'd32 : 7'd64;
-    if ((go_q || grp_commit_q) && (opcode == 7'b1010111) && !load_we_q) begin
+    if ((go_q || native_go_q || grp_commit_q) && (opcode == 7'b1010111) && !load_we_q) begin
       if (funct3 == 3'b111) begin
         // vsetvli / vsetivli: vl and vtype come from the instruction
         acc   = 64'd0;
@@ -539,7 +572,7 @@ module rv64_vunit (
         logic [63:0] soff, se;
         vd_we = 1'b1;
         acc   = rdata3;               // slideup keeps the elements below the offset
-        soff  = (funct3 == 3'b011) ? {{59{insn_q[19]}}, insn_q[19:15]}
+        soff  = (funct3 == 3'b011) ? {{59{op_insn[19]}}, op_insn[19:15]}
                                    : get_elem(rdata1, 3'd0, sew_sel);
         for (int i = 0; i < 8; i++) begin
           if ((i < vl_q) && (i < nelem)) begin
@@ -566,7 +599,7 @@ module rv64_vunit (
         logic [63:0] nx, nsh, nr;
         vd_we = 1'b1;
         acc   = 64'd0;
-        nsh   = (funct3 == 3'b011) ? {{59{insn_q[19]}}, insn_q[19:15]}
+        nsh   = (funct3 == 3'b011) ? {{59{op_insn[19]}}, op_insn[19:15]}
                                    : get_elem(rdata1, 3'd0, sew_sel);
         // bounded by the SOURCE's element count: a 64-bit register holds only
         // VLEN/(2*SEW) elements at twice the width, and going past that wrapped
@@ -712,6 +745,10 @@ module rv64_vunit (
       vxrm_q      <= 2'd0;
       insn_q      <= 32'd0;
       go_q        <= 1'b0;
+      native_go_q <= 1'b0;
+      native_vill_q <= 1'b1;
+      native_insn_q <= '0;
+      native_scalar_q <= '0;
       xval_q      <= 64'd0;
       base_q      <= 64'd0;
       el_q        <= 3'd0;
@@ -729,6 +766,20 @@ module rv64_vunit (
       illegal_q   <= 1'b0;
     end else begin
       go_q <= 1'b0;
+      native_go_q <= 1'b0;
+      if (native_issue) begin
+        insn_count_q <= insn_count_q + 32'd1;
+        if (native_setvl) begin
+          vl_q <= native_vl;
+          vtype_q <= native_bad_type ? 8'd0 : native_type;
+          vstart_q <= 7'd0;
+          native_vill_q <= native_bad_type;
+        end else begin
+          native_go_q <= 1'b1;
+          native_insn_q <= native_insn;
+          native_scalar_q <= native_scalar;
+        end
+      end
 
       // ---- register-group walk (vlmul) ----------------------------------
       // A grouped op takes `lmul` cycles, one register per cycle. Element indices

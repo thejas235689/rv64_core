@@ -237,11 +237,12 @@ not_claimed:
     misa_bit: 21
     name: vector
     reason: >-
-      An RVV unit exists (32x64 vector file, vsetvli-equivalent control, add/sub/
-      and/or/xor/min/max/vmv, masking, reductions, widening, narrowing, slides,
-      vle/vse, binary32 vfadd/vfsub/vfmul) but it is driven through its own CSR
-      window at 0x780-0x78F, not through RVV instruction encodings. misa.V would
-      promise that rv64gcv binaries run; they do not.
+      A limited native OP-V subset supports M-mode vsetvli/vsetivli and
+      unmasked LMUL=1 integer add/sub/and/or/xor at SEW=8/16/32/64. The 32x64
+      vector file and CSR window at 0x780-0x78F remain available. The probe
+      below executes before vtype is configured and raises an illegal
+      instruction exception. VLEN=64, limited instruction coverage and
+      missing vector context management leave the full V extension unclaimed.
     probe: {name: vadd.vv v1,v2,v3, word: 0x02208057}
     expect: traps
 

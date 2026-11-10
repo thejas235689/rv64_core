@@ -53,6 +53,23 @@ module rv64_decoder (
     ctrl = ctrl_default();
 
     unique case (opcode)
+      // Native integer vector subset. Unsupported OP-V encodings remain illegal.
+      7'h57: begin
+        if (funct3 == 3'b111) begin
+          ctrl.is_rvv = !insn[31] || insn[31:30] == 2'b11;
+          ctrl.reg_we = ctrl.is_rvv;
+        end else if (insn[25]) begin
+          case (funct6)
+            6'b000000, 6'b001001, 6'b001010, 6'b001011:
+              ctrl.is_rvv = funct3 == 3'b000 || funct3 == 3'b011 || funct3 == 3'b100;
+            6'b000010:
+              ctrl.is_rvv = funct3 == 3'b000 || funct3 == 3'b100;
+            default: ;
+          endcase
+        end
+        ctrl.illegal = !ctrl.is_rvv;
+      end
+
       // ------------------------------------------------------------------ LUI
       7'b0110111: begin
         ctrl.imm_sel = IMM_U;
@@ -558,17 +575,7 @@ module rv64_decoder (
       7'b1110011: begin
         if (funct3 == 3'b000) begin
           if (funct7 == 7'b0001001) begin
-            // SFENCE.VMA rs1, rs2 (privileged spec 1.12). It was missing here and
-            // 0x12000073 trapped with cause 2 at pc 0x8 -- measured, not inferred.
-            //
-            // No TLB is in the datapath to invalidate: rv64_mmu is not
-            // instantiated in riscv_core_top, the LSU never consults satp, and
-            // satp resets to 0 (MODE=Bare), so every access is already bare.
-            // Retiring the fence as an ordering no-op is what the spec permits an
-            // implementation with no cached translations to do; trapping it as
-            // illegal is not permitted, since sfence.vma is mandatory once Sv39 is
-            // implemented. When the MMU is wired into the address path this must
-            // pulse its TLB flush instead.
+            // The core serializes SFENCE.VMA and invalidates both TLBs.
             ctrl.is_fence = 1'b1;
           end else unique case (imm12)
             12'h000: ctrl.is_ecall  = 1'b1;
