@@ -9,11 +9,11 @@
 //
 // WHAT IS NOT HERE, stated plainly: the abstract-command layer. There is no
 // progbuf, no command queue and no system-bus access master. Register access is
-// direct -- write the index to REGSEL, then read or write DATA0 -- which is
+// direct -- write the index to REGSEL, then read DATA0 -- which is
 // enough to halt, inspect and resume, and is not a complete RISC-V debug module.
 //
 // DMI addresses:
-//   0x04 DATA0      GPR data (read or write)
+//   0x04 DATA0      selected GPR low word
 //   0x10 DMCONTROL  [31] haltreq, [30] resumereq, [26] step, [1] ndmreset
 //   0x11 DMSTATUS   [9] allhalted, [8] allrunning
 //   0x20 REGSEL     GPR index for DATA0
@@ -64,7 +64,6 @@ module rv64_dmi (
   assign idcode = 32'h1CA1_0D01;  // version 1, part 0xCA10, mfr 0x001
 
   // ---- DMI registers -------------------------------------------------------
-  logic [63:0] reg_data0;
   logic [4:0]  regsel;
   logic        haltreq_q, resumereq_q, step_q, ndmreset_q;
 
@@ -95,7 +94,7 @@ module rv64_dmi (
   logic [31:0] data0_out;
   always_comb begin
     case (dmi_addr)
-      7'h04:   data0_out = (reg_data0 != 64'd0) ? reg_data0[31:0] : dbg_reg_data[31:0];
+      7'h04:   data0_out = dbg_reg_data[31:0];
       7'h10:   data0_out = {haltreq_q, resumereq_q, 3'd0, step_q, 24'd0, ndmreset_q, 1'b0};
       7'h11:   data0_out = {22'd0, dbg_halted, ~dbg_halted, 8'd0};
       7'h20:   data0_out = {27'd0, regsel};
@@ -119,14 +118,14 @@ module rv64_dmi (
         T_CAP_DR: begin
           if (tms) st <= T_EX1_DR; else st <= T_SHIFT_DR;
           // Capture-DR loads the response word for a DMI read
-          if (ir == IR_DMI) dmi_shift <= {2'b10, data0_out[31:0], dmi_addr};
+          if (ir == IR_DMI) dmi_shift <= {2'b00, data0_out, dmi_addr};
+          else if (ir == IR_IDCODE) dmi_shift <= {9'b0, idcode};
+          else if (ir == IR_DTMCS) dmi_shift <= {9'b0, 22'b0, 6'd7, 4'd1};
+          else dmi_shift <= '0;
         end
         T_SHIFT_DR: begin
           if (tms) st <= T_EX1_DR;
-          else begin
-            dmi_shift <= {tdi, dmi_shift[40:1]};
-            ir_shift  <= {tdi, ir_shift[4:1]};
-          end
+          dmi_shift <= {tdi, dmi_shift[40:1]};
         end
         T_EX1_DR:  if (tms) st <= T_UPD_DR; else st <= T_PAUSE_DR;
         T_PAUSE_DR:if (tms) st <= T_EX2_DR; else st <= T_PAUSE_DR;
@@ -137,10 +136,13 @@ module rv64_dmi (
           if (ir == IR_DMI) dmi_reg <= dmi_shift;
         end
         T_SEL_IR:  if (tms) st <= T_RESET; else st <= T_CAP_IR;
-        T_CAP_IR:  if (tms) st <= T_EX1_IR; else st <= T_SHIFT_IR;
+        T_CAP_IR: begin
+          if (tms) st <= T_EX1_IR; else st <= T_SHIFT_IR;
+          ir_shift <= 5'b00001;
+        end
         T_SHIFT_IR:begin
           if (tms) st <= T_EX1_IR;
-          else     ir_shift <= {tdi, ir_shift[4:1]};
+          ir_shift <= {tdi, ir_shift[4:1]};
         end
         T_EX1_IR:  if (tms) st <= T_UPD_IR; else st <= T_PAUSE_IR;
         T_PAUSE_IR:if (tms) st <= T_EX2_IR; else st <= T_PAUSE_IR;
@@ -158,7 +160,7 @@ module rv64_dmi (
   logic tdo_r;
   always_ff @(posedge tck or negedge trst_n) begin
     if (!trst_n) tdo_r <= 1'b0;
-    else if (st == T_SHIFT_DR) tdo_r <= (ir == IR_DMI) ? dmi_shift[0] : idcode[0];
+    else if (st == T_SHIFT_DR) tdo_r <= dmi_shift[0];
     else if (st == T_SHIFT_IR) tdo_r <= ir_shift[0];
   end
   assign tdo = tdo_r;
@@ -172,7 +174,6 @@ module rv64_dmi (
   // ---- DMI register semantics ---------------------------------------------
   always_ff @(posedge tck or negedge trst_n) begin
     if (!trst_n) begin
-      reg_data0   <= 64'd0;
       regsel      <= 5'd0;
       haltreq_q   <= 1'b0;
       resumereq_q <= 1'b0;
@@ -185,7 +186,6 @@ module rv64_dmi (
 
       if (dmi_update && dmi_wr) begin
         unique case (dmi_addr)
-          7'h04: reg_data0 <= {32'd0, dmi_wdata};
           7'h10: begin
             haltreq_q   <= dmi_wdata[31];
             resumereq_q <= dmi_wdata[30];

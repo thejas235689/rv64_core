@@ -26,7 +26,8 @@ module riscv_core_top #(
   // reference: my Python HMAC disagreed for this image and I could not resolve why,
   // so the value below is the one the verified block produces.
   parameter logic [255:0] BOOT_MAC        = 256'h05265470_dfec59e6_a65093fd_96de0abb_ca82d579_cacc24cc_684a6435_245c5aa2,
-  parameter logic [31:0] BOOT_WORDS        = 32'd2
+  parameter logic [31:0] BOOT_WORDS        = 32'd2,
+  parameter bit          ENABLE_SYNC_DMI  = 1'b0
 ) (
   input  logic        clk,
   input  logic        rst_n,
@@ -166,8 +167,33 @@ module riscv_core_top #(
   input  logic        task_done_valid,
   input  logic [1:0]  task_done_slot,
   input  logic [63:0] task_done_result,
-  output logic        task_irq_o
+  output logic        task_irq_o,
+
+  // Synchronous TAP prototype. Drive TMS/TDI relative to clk.
+  input  logic        jtag_tms,
+  input  logic        jtag_tdi,
+  output logic        jtag_tdo,
+  output logic        jtag_ndmreset
 );
+
+  logic halt_req, resume_req, step_req;
+  logic [4:0] debug_read_addr;
+
+  if (ENABLE_SYNC_DMI) begin : g_sync_dmi
+    rv64_dmi u_dmi (
+      .tck(clk), .tms(jtag_tms), .tdi(jtag_tdi), .tdo(jtag_tdo), .trst_n(rst_n),
+      .dbg_halt_req(halt_req), .dbg_resume_req(resume_req), .dbg_step(step_req),
+      .dbg_halted(dbg_halted), .dbg_reg_addr(debug_read_addr),
+      .dbg_reg_data(dbg_reg_data), .ndmreset(jtag_ndmreset)
+    );
+  end else begin : g_direct_debug
+    assign halt_req = dbg_halt_req;
+    assign resume_req = dbg_resume_req;
+    assign step_req = dbg_step;
+    assign debug_read_addr = dbg_reg_addr;
+    assign jtag_tdo = 1'b0;
+    assign jtag_ndmreset = 1'b0;
+  end
 
   // ---- CLINT / UART declarations (must precede the instances) ----
   localparam logic [11:0] CSR_CLINT_BASE = 12'h7D9;
@@ -262,7 +288,9 @@ module riscv_core_top #(
   logic [1:0]  cur_priv;
   logic        trap_to_s;
   logic [63:0] csr_stvec, csr_satp;
-  logic        mstatus_mprv;
+  logic        mstatus_mprv, mstatus_sum, mstatus_mxr;
+  logic [1:0]  mstatus_mpp, data_priv;
+  assign data_priv = (cur_priv == 2'b11 && mstatus_mprv) ? mstatus_mpp : cur_priv;
   logic [63:0] redirect_pc_ex;
   logic [63:0] trap_cause_sel, trap_pc_sel, trap_tval_sel;
   logic [63:0] irq_cause;
@@ -700,7 +728,7 @@ module riscv_core_top #(
     .we       (mem_wb_v && mem_wb_reg_we && !mem_wb_is_fp),
     .rd_addr  (mem_wb_rd),
     .rd_data  (mem_wb_wdata),
-    .dbg_addr (dbg_reg_addr),
+    .dbg_addr (debug_read_addr),
     .dbg_data (dbg_reg_data)
   );
 
@@ -1313,7 +1341,7 @@ module riscv_core_top #(
   // ===========================================================================
   // MEM stage
   // ===========================================================================
-  logic        lsu_busy, lsu_done, lsu_fault;
+  logic        lsu_busy, lsu_done, lsu_fault, lsu_page_fault;
   logic [63:0] lsu_load_data;
   logic        lsu_start;
   logic        d_pmp_ok;
@@ -1337,10 +1365,10 @@ module riscv_core_top #(
     .req_atomic    (ex_mem_atomic_kind),
     .req_amo_op    (ex_mem_amo_op),
     .satp          (csr_satp),
-    .priv          (cur_priv),
-    .mprv          (mstatus_mprv),
-    .sum           (1'b0),
-    .mxr           (1'b0),
+    .priv          (data_priv),
+    .mprv          (1'b0),
+    .sum           (mstatus_sum),
+    .mxr           (mstatus_mxr),
     .pmp_ok        (d_pmp_ok),
     .mem_req_valid (dc_req_valid),
     .mem_req_addr  (dc_req_addr),
@@ -1354,6 +1382,7 @@ module riscv_core_top #(
     .busy          (lsu_busy),
     .done          (lsu_done),
     .fault         (lsu_fault),
+    .page_fault    (lsu_page_fault),
     .load_data     (lsu_load_data)
   );
 
@@ -1401,6 +1430,10 @@ module riscv_core_top #(
     .accel_csr_sel  (accel_csr_sel),
     .accel_csr_rdata(accel_csr_rdata),
     .mstatus_mie    (csr_mstatus_mie),
+    .mstatus_mprv   (mstatus_mprv),
+    .mstatus_mpp    (mstatus_mpp),
+    .mstatus_sum    (mstatus_sum),
+    .mstatus_mxr    (mstatus_mxr),
     .irq_pending    (csr_irq_pending),
     // The sticky flags are written from EX, the same stage that performs a
     // csrw fflags.  Doing it at WB would be three cycles late, so a csrw fflags
@@ -1477,6 +1510,7 @@ module riscv_core_top #(
   always_comb begin
     if (mem_trap) begin
       trap_cause_sel = ex_mem_exc ? ex_mem_exc_cause
+                                  : lsu_page_fault ? (ex_mem_is_store ? 64'd15 : 64'd13)
                                   : (ex_mem_is_store ? CAUSE_STORE_ACCESS : CAUSE_LOAD_ACCESS);
       trap_pc_sel    = ex_mem_pc;
       trap_tval_sel  = ex_mem_exc ? ex_mem_exc_tval : ex_mem_addr;
@@ -1576,7 +1610,7 @@ module riscv_core_top #(
   logic        flush_front;
   logic        dbg_resume_pulse;
 
-  assign dbg_resume_pulse = dbg_resume_req && halted_q;
+  assign dbg_resume_pulse = resume_req && halted_q;
   // MRET and EBREAK both redirect the front end: whatever was fetched behind
   // them is wrong-path and must be squashed, exactly like a branch redirect.
   assign flush_front = trap_taken || redirect_ex || ebreak_commit || mret_commit || fence_i_commit;
@@ -1831,7 +1865,7 @@ module riscv_core_top #(
       wfi_rvc_q      <= 1'b0;
     end else begin
       // ---- halt request / ebreak entry ------------------------------------
-      if ((dbg_halt_req || ebreak_commit) && !halted_q) halt_pending_q <= 1'b1;
+      if ((halt_req || ebreak_commit) && !halted_q) halt_pending_q <= 1'b1;
 
       // ---- pipeline drained: enter debug ----------------------------------
       if (halt_pending_q && !id_ex_v && !ex_mem_v && !lsu_busy) begin
@@ -1842,8 +1876,8 @@ module riscv_core_top #(
       // ---- resume ---------------------------------------------------------
       if (dbg_resume_pulse) begin
         halted_q    <= 1'b0;
-        step_mode_q <= dbg_step;
-        step_wait_q <= dbg_step;      // arm after one cycle
+        step_mode_q <= step_req;
+        step_wait_q <= step_req;      // arm after one cycle
       end else if (step_wait_q) begin
         step_wait_q <= 1'b0;
       end

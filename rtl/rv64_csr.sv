@@ -45,6 +45,9 @@ module rv64_csr (
   input  logic        accel_csr_sel,
   input  logic [63:0] accel_csr_rdata,
   output logic        mstatus_mie,
+  output logic        mstatus_mprv,
+  output logic [1:0]  mstatus_mpp,
+  output logic        mstatus_sum, mstatus_mxr,
   output logic        irq_pending,   // enabled and pending, MIE masked out
 
   // ---- floating-point status ------------------------------------------------
@@ -71,7 +74,7 @@ module rv64_csr (
   import rv64_pkg::*;
 
   // ---- architectural state --------------------------------------------------
-  logic        mstatus_mie_q, mstatus_mpie_q;
+  logic        mstatus_mie_q, mstatus_mpie_q, mstatus_mprv_q;
   logic [1:0]  mstatus_mpp_q;
   // Floating-point state. FS is required by the privileged spec so an OS can save
   // and restore FP state lazily; fcsr carries frm and fflags.
@@ -114,7 +117,7 @@ module rv64_csr (
     csr_rdata = 64'd0;
     csr_impl  = 1'b1;
     unique case (csr_addr)
-      CSR_MSTATUS:    csr_rdata = {49'd0, mstatus_fs_q, mstatus_mpp_q, 3'd0, mstatus_mpie_q, 3'd0, mstatus_mie_q, 3'd0};
+      CSR_MSTATUS:    csr_rdata = {44'd0, mstatus_mxr_q, mstatus_sum_q, mstatus_mprv_q, 2'd0, mstatus_fs_q, mstatus_mpp_q, 3'd0, mstatus_mpie_q, 3'd0, mstatus_mie_q, 3'd0};
       // MXL=2 (RV64), then A(0), C(2), D(3), F(5), I(8), M(12), S(18), U(20).
       //   A(0)=1 + C(2)=4 + D(3)=8 + F(5)=32 + I(8)=256 + M(12)=4096
       //   + S(18)=262144 + U(20)=1048576  = 0x14112D, plus MXL
@@ -241,11 +244,16 @@ module rv64_csr (
   assign irq_enabled = mie_q & mip_q;
   assign irq_pending = |irq_enabled;
   assign mstatus_mie = mstatus_mie_q;
+  assign mstatus_mprv = mstatus_mprv_q;
+  assign mstatus_mpp = mstatus_mpp_q;
+  assign mstatus_sum = mstatus_sum_q;
+  assign mstatus_mxr = mstatus_mxr_q;
 
   // ---- sequential -----------------------------------------------------------
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
       mstatus_mie_q  <= 1'b0;
+      mstatus_mprv_q <= 1'b0;
       mstatus_mpie_q <= 1'b0;
       mstatus_mpp_q  <= 2'b11;
       mstatus_fs_q   <= 2'b01;   // FS = Initial
@@ -316,6 +324,7 @@ module rv64_csr (
         mstatus_mie_q  <= mstatus_mpie_q;
         mstatus_mpie_q <= 1'b1;
         priv_q         <= mstatus_mpp_q;
+        if (mstatus_mpp_q != 2'b11) mstatus_mprv_q <= 1'b0;
         mstatus_mpp_q  <= 2'b00;
       end else if (sret_valid) begin
         sstatus_sie_q  <= sstatus_spie_q;
@@ -326,6 +335,7 @@ module rv64_csr (
         unique case (csr_addr)
           CSR_MSTATUS: begin
             mstatus_mie_q  <= csr_wval[3];
+            mstatus_mprv_q <= csr_wval[17];
             mstatus_mpie_q <= csr_wval[7];
             mstatus_mpp_q  <= csr_wval[12:11];
             mstatus_sum_q  <= csr_wval[18];
@@ -347,11 +357,12 @@ module rv64_csr (
           CSR_SEPC:       sepc_q       <= {csr_wval[63:2], 2'b00};
           CSR_SCAUSE:     scause_q     <= csr_wval;
           CSR_STVAL:      stval_q      <= csr_wval;
-          // only MODE=0 (bare) and MODE=8 (Sv39) are accepted; anything else
+          // Bare, Sv39 and Sv48 are accepted; anything else
           // keeps the old value rather than putting the core in a mode it does
           // not implement
           CSR_SATP: begin
-            if ((csr_wval[63:60] == 4'd0) || (csr_wval[63:60] == 4'd8))
+            if ((csr_wval[63:60] == 4'd0) || (csr_wval[63:60] == 4'd8) ||
+                (csr_wval[63:60] == 4'd9))
               satp_q <= csr_wval;
           end
           CSR_MTVEC:      mtvec_q      <= {csr_wval[63:2], 2'b00};   // direct mode only

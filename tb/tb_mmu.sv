@@ -69,6 +69,7 @@ module tb_mmu;
   task automatic xlate(input logic [63:0] va, input logic [1:0] acc,
                        output logic [63:0] pa, output logic flt, output logic [63:0] cause);
     begin
+      @(negedge clk);
       req_valid = 1; vaddr = va; acc_type = acc;
       @(posedge clk); #1; req_valid = 0;
       // The settling delay has to be INSIDE the loop: evaluating resp_valid
@@ -191,6 +192,17 @@ module tb_mmu;
     xlate(64'h0000_0000_0000_1000, 2'd1, pa, flt, cause);
     chk("M-mode MPRV: load translated", pa, 64'h8000);
     mprv = 0;
+
+    // Sv48 level-3 leaf with physical PPN bits above the old truncated slice.
+    priv = 2'b01;
+    satp = 64'h9000_0000_0000_0001;
+    mem[(64'h1000 + 8) >> 3] = pte_leaf(44'h00008000000, 1, 1, 0, 0);
+    xlate(64'h0000_0080_0000_1234, 2'd1, pa, flt, cause);
+    chk("Sv48 superpage: no fault", flt, 0);
+    chk("Sv48 superpage: high physical bits", pa, 64'h0000_0080_0000_1234);
+    xlate(64'h0001_0000_0000_1234, 2'd1, pa, flt, cause);
+    chk("Sv48 noncanonical: fault", flt, 1);
+    chk("Sv48 noncanonical: load page fault", cause, 13);
 
     $display("tb_mmu: %0d checks, %0d mismatches", checks, errors);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

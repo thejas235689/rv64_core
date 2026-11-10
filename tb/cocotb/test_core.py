@@ -1646,9 +1646,9 @@ async def test_sv39_identity(dut):
     # csrrw x0, satp(0x180), x7 -- encoded directly: the assembler has no name
     # for satp
     L.append(f".word 0x{(0x180 << 20) | (7 << 15) | (1 << 12) | 0x73:08x}")
-    L.extend(li64(8, 0x20000))             # mstatus.MPRV (bit 17)
-    # csrrs x0, mstatus(0x300), x8
-    L.append(f".word 0x{(0x300 << 20) | (8 << 15) | (2 << 12) | 0x73:08x}")
+    L.extend(li64(8, 0x20800))             # MPRV and MPP=S
+    # csrrw x0, mstatus(0x300), x8
+    L.append(f".word 0x{(0x300 << 20) | (8 << 15) | (1 << 12) | 0x73:08x}")
     # now every load and store below goes through the walker
     L.extend(li64(9, 0x2000))
     L.extend(li64(10, 0x1234))
@@ -2847,3 +2847,34 @@ async def test_fence_i_self_modifying_code(dut):
     await h.reset()
     await h.run(max_cycles=2000, stop_on_ecall=True)
     assert await halt_and_read(h, [7, 8]) == {7: 2, 8: 1}
+
+
+@cocotb.test()
+async def test_sv48_four_level_data_walk(dut):
+    """Use VPN[3] = 1 and walk four levels to a non-identity physical page."""
+    source = ["li x5, 0x1000"]
+    for offset, pte in [(8, 0x801), (0x1000, 0xC01), (0x2000, 0x1001),
+                        (0x3010, 0x14C7)]:
+        source += [f"li x6, {offset}", "add x6, x5, x6",
+                   f"li x7, {pte}", "sd x7, 0(x6)"]
+    source += ["li x6, 0x5000", "li x7, 0x12345678", "sd x7, 0(x6)"]
+    source += li64(7, 0x9000000000000001)
+    source += [f".word {((0x180 << 20) | (7 << 15) | (1 << 12) | 0x73):#x}",
+               "li x8, 0x20800", "csrrw x0, mstatus, x8"]
+    source += li64(9, 0x8000002000)
+    source += ["ld x11, 0(x9)", "ld x12, 0(x9)"]
+    source += li64(9, 0x1000000000000)
+    source += ["ld x13, 0(x9)"]
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    for _ in range(4000):
+        await h.run(max_cycles=1, stop_on_ecall=False)
+        if h.traps:
+            break
+    values = await halt_and_read(h, [11, 12])
+    assert values == {11: 0x12345678, 12: 0x12345678}
+    assert any(cause == 13 for _, cause in h.traps)
