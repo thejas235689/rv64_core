@@ -43,6 +43,7 @@ module rv64_lsu (
   output logic        busy,
   output logic        done,
   output logic        fault,
+  output logic        page_fault,
   output logic [63:0] load_data
 );
   import rv64_pkg::*;
@@ -56,7 +57,7 @@ module rv64_lsu (
   logic [63:0] addr_q, wdata_q;
   logic [2:0]  size_q;
   logic        uns_q, we_q;
-  logic        fault_q;
+  logic        fault_q, page_fault_q;
   logic [63:0] data_q;
   logic        done_q_r;
   logic [63:0] data_lat;
@@ -269,6 +270,7 @@ module rv64_lsu (
       uns_q   <= 1'b0;
       we_q    <= 1'b0;
       fault_q <= 1'b0;
+      page_fault_q <= 1'b0;
       done_q_r<= 1'b0;
       data_lat<= 64'd0;
       resv_valid <= 1'b0;
@@ -293,6 +295,7 @@ module rv64_lsu (
             atomic_q  <= req_atomic;
             amo_op_q  <= req_amo_op;
             fault_q   <= !pmp_ok;
+            page_fault_q <= 1'b0;
             sc_ok_q   <= 1'b1;
             // An SC only touches memory when the reservation still matches;
             // a failed SC returns 1 and performs no bus access at all.
@@ -311,6 +314,7 @@ module rv64_lsu (
           if (mmu_resp) begin
             if (mmu_fault) begin
               fault_q <= 1'b1;
+              page_fault_q <= 1'b1;
               state   <= S_DONE;
             end else begin
               paddr_q <= mmu_paddr;
@@ -407,6 +411,7 @@ module rv64_lsu (
   assign busy      = (state != S_IDLE) || done_q_r;
   assign done      = done_q_r;
   assign fault     = fault_q && done_q_r;
+  assign page_fault = page_fault_q && done_q_r;
   // An SC reports 0 on success and 1 on failure; everything else reports the
   // value captured from the bus.
   assign load_data = (atomic_q == AT_SC) ? {63'd0, !sc_ok_q} : data_lat;

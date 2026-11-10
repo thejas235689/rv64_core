@@ -48,4 +48,5 @@ rv64_vunit.sv
 rv64_qisa.sv
 rv64_aiacc.sv
 rv64_xcetask.sv
+rv64_dmi.sv
 riscv_core_top.sv
