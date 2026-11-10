@@ -533,8 +533,8 @@ module rv64_decoder (
 
       // ------------------------------------------------------------ MISC-MEM
       7'b0001111: begin
-        // fence / fence.i / pause are accepted as ordering no-ops; the memory
-        // model is strongly ordered for a single hart.
+        // FENCE and PAUSE need no extra ordering in this core. FENCE.I
+        // invalidates the instruction cache when it reaches MEM.
         ctrl.is_fence = 1'b1;
         if (funct3 > 3'b001) begin
           // Zicbom: cbo.inval (rs2=0), cbo.clean (1), cbo.flush (2).
