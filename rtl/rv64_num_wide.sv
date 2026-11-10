@@ -90,6 +90,12 @@ module rv64_num_wide (
       rns_y[7:5]  = mod7({1'b0, a7} + {1'b0, b7});
       if (fmt != 3'd1) rns_y[11:8] = mod11({1'b0, a11} + {1'b0, b11});
       if (fmt == 3'd2) rns_y[15:12] = mod13({1'b0, a13} + {1'b0, b13});
+    end else if (op == NUM_RSUB) begin
+      rns_y[1:0] = mod3(3'd3 + {1'b0, a3} - {1'b0, b3});
+      rns_y[4:2] = mod5(6'd10 + 6'(a5) - 6'(b5));
+      rns_y[7:5] = mod7(7'd7 + 7'(a7) - 7'(b7));
+      if (fmt != 3'd1) rns_y[11:8] = mod11(8'd22 + 8'(a11) - 8'(b11));
+      if (fmt == 3'd2) rns_y[15:12] = mod13(9'd26 + 9'(a13) - 9'(b13));
     end else begin
       rns_y[1:0]  = mod3(a3 * b3);
       rns_y[4:2]  = mod5(a5 * b5);
@@ -584,6 +590,31 @@ module rv64_num_wide (
     posit_y = {32'd0, posit_encode(pres, pos_n)};
   end
 
+  // BF16 operands widen exactly into binary32. Truncation plus the FP32
+  // inexact flag preserves the sticky bit needed to round once to BF16.
+  wire bf_mul = op == NUM_BFMUL;
+  wire bf_active = bf_mul || op == NUM_BFADD || op == NUM_BFSUB;
+  wire [63:0] bf_a = bf_active ? {32'b0, a[15:0], 16'b0} : 64'b0;
+  wire [63:0] bf_b = bf_active ? {32'b0, b[15:0], 16'b0} : 64'b0;
+  logic [63:0] bf_add_raw, bf_mul_raw;
+  logic [4:0] bf_add_exc, bf_mul_exc;
+  rv64_fp_add u_bf_add (
+    .fmt(1'b0), .sub(op == NUM_BFSUB), .rm(3'd1),
+    .a(bf_a), .b(bf_b), .result(bf_add_raw), .flags(bf_add_exc)
+  );
+  rv64_fp_mul u_bf_mul (
+    .fmt(1'b0), .rm(3'd1), .a(bf_a), .b(bf_b),
+    .result(bf_mul_raw), .flags(bf_mul_exc)
+  );
+
+  wire [31:0] bf_raw = bf_mul ? bf_mul_raw[31:0] : bf_add_raw[31:0];
+  wire [4:0] bf_exc = bf_mul ? bf_mul_exc : bf_add_exc;
+  wire bf_finite = bf_raw[30:23] != 8'hff;
+  wire bf_lost = bf_exc[0] || (|bf_raw[15:0]);
+  wire bf_up = bf_finite && bf_raw[15] &&
+               (bf_raw[16] || (|bf_raw[14:0]) || bf_exc[0]);
+  wire [15:0] bf_y = bf_raw[31:16] + {15'b0, bf_up};
+
   // ===========================================================================
   // Select -- a single procedural block drives `flags`: two always_comb blocks
   // assigning the same variable is a multiple-driver conflict, and an arm can
@@ -593,7 +624,7 @@ module rv64_num_wide (
     y     = 64'd0;
     flags = 8'd0;
     case (op)
-      NUM_RADD, NUM_RMUL: begin
+      NUM_RADD, NUM_RMUL, NUM_RSUB: begin
         y = rns_y;
         // per-channel modular arithmetic is exact: no flags
       end
@@ -605,6 +636,13 @@ module rv64_num_wide (
       NUM_PADD, NUM_PSUB, NUM_PMUL, NUM_PDIV: begin
         y     = posit_y;
         flags = posit_flags;
+      end
+      NUM_BFADD, NUM_BFSUB, NUM_BFMUL: begin
+        y = {48'b0, bf_y};
+        flags[FLAG_INVALID] = bf_exc[4];
+        flags[FLAG_INEXACT] = bf_finite && bf_lost;
+        flags[FLAG_OVERFLOW] = bf_exc[2] || (bf_finite && bf_y[14:7] == 8'hff);
+        flags[FLAG_UNDERFLOW] = bf_finite && bf_lost && bf_y[14:7] == 8'b0;
       end
       NUM_FADD, NUM_FMUL: begin
         y     = fp_y;

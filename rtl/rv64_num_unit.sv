@@ -271,8 +271,8 @@ module rv64_num_unit (
       NUM_TOINT, NUM_FROMINT: y = 64'd0;
 
       NUM_PADD, NUM_PSUB, NUM_PMUL, NUM_PDIV,
-      NUM_LNMUL, NUM_LNDIV, NUM_RADD, NUM_RMUL,
-      NUM_FADD, NUM_FMUL: begin
+      NUM_LNMUL, NUM_LNDIV, NUM_RADD, NUM_RMUL, NUM_RSUB,
+      NUM_FADD, NUM_FMUL, NUM_BFADD, NUM_BFSUB, NUM_BFMUL: begin
         y     = wide_y;
         flags = wide_flags;
       end
