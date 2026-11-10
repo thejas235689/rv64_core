@@ -2823,3 +2823,27 @@ async def test_scalar_fma_in_core(dut):
     await h.run(max_cycles=4000, stop_on_ecall=True)
     values = await halt_and_read(h, list(expected))
     assert values == expected
+
+
+@cocotb.test()
+async def test_fence_i_self_modifying_code(dut):
+    """Execute cached code, rewrite its first instruction, then refetch it."""
+    h = Harness(dut)
+    await h.startup()
+    src = """
+    jal x1, patch
+    addi x8, x7, 0
+    li x5, 0x00200393
+    addi x6, x0, 64
+    sw x5, 0(x6)
+    fence.i
+    jal x1, patch
+    ecall
+    """
+    words, _ = assemble(src + "\n" + "nop\n" * 7 + "patch: addi x7, x0, 1\njalr x0, 0(x1)")
+    assert words[16] == 0x00100393
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=2000, stop_on_ecall=True)
+    assert await halt_and_read(h, [7, 8]) == {7: 2, 8: 1}
