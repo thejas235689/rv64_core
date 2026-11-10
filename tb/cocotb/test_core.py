@@ -2790,3 +2790,41 @@ async def test_mixed_workload(dut):
                 dut._log.warning(f"{name}: ALL = { {k: (hex(v) if v is not None else None) for k, v in sorted(vals.items())} }")
             assert got == want, f"{name}: x{reg} = {got if got is None else hex(got)}, want {hex(want)}"
         dut._log.info(f"{name}: ok")
+
+
+@cocotb.test()
+async def test_bf16_and_residue_subtract(dut):
+    """Exercise custom opcodes through integer bridges and check sticky flags."""
+    cases = [
+        (20, 0, 0x3F80, 0x4000, 0x4040),  # 1 + 2
+        (21, 0, 0x3F80, 0x4000, 0xBF80),  # 1 - 2
+        (22, 0, 0x3FC0, 0x4000, 0x4040),  # 1.5 * 2
+        (20, 0, 0x3F80, 0x3B80, 0x3F80),  # halfway, even result
+        (20, 0, 0x3F81, 0x3B80, 0x3F82),  # halfway, odd result
+        (20, 0, 0x0001, 0x0001, 0x0002),  # exact subnormal
+        (22, 0, 0x0001, 0x3F00, 0x0000),  # tiny halfway rounds to zero
+        (22, 0, 0x7F7F, 0x4000, 0x7F80),  # overflow
+        (22, 0, 0x7F80, 0x0000, 0x7FC0),  # invalid infinity times zero
+        (23, 2, 0, 0x1125, 0xCAD2),        # channel-wise 0 - 1
+    ]
+    source = []
+    for rd, (op, fmt, a, b, _) in enumerate(cases, 10):
+        for reg, value in ((1, a), (2, b)):
+            upper = (value + 0x800) >> 12
+            source += [f"lui x{reg}, {upper}",
+                       f"addi x{reg}, x{reg}, {value - (upper << 12)}",
+                       f".word 0x{num_insn(NUM_FROMINT, rd=reg, rs1=reg):08x}"]
+        source += [f".word 0x{num_insn(op, fmt, 3, 1, 2):08x}",
+                   f".word 0x{num_insn(NUM_TOINT, rd=rd, rs1=3):08x}"]
+    source += ["csrrs x20, nflags, x0", "ecall"]
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=4000, stop_on_ecall=True)
+    values = await halt_and_read(h, range(10, 21))
+    for rd, case in enumerate(cases, 10):
+        assert values[rd] == case[-1], f"case {case}: got {values[rd]:#x}"
+    assert values[20] == 0xF
