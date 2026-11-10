@@ -240,6 +240,7 @@ package rv64_pkg;
   localparam logic [4:0] FP_MV_X_D     = 5'd19;
   localparam logic [4:0] FP_MV_W_X     = 5'd20;
   localparam logic [4:0] FP_MV_D_X     = 5'd21;
+  localparam logic [4:0] FP_FMA        = 5'd22;
 
   // ------------------------------------------------------------------ control
   // Everything the decoder produces for one instruction, carried down the pipe.

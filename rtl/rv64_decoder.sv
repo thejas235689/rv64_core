@@ -269,6 +269,16 @@ module rv64_decoder (
       // for fp->integer, the DESTINATION for integer->fp and for fcvt.s.d /
       // fcvt.d.s.  That is what the ISA specifies and it is why fp_single alone
       // is enough to describe every fcvt form.
+      7'h43, 7'h47, 7'h4b, 7'h4f: begin
+        ctrl.fp_f3 = funct3;
+        ctrl.fp_single = ~insn[25];
+        ctrl.fp_op = FP_FMA;
+        ctrl.is_fp = 1'b1;
+        ctrl.fp_src = 1'b1;
+        ctrl.reg_we = 1'b1;
+        ctrl.illegal = insn[26] || funct3 == 3'd5 || funct3 == 3'd6;
+      end
+
       7'b1010011: begin
         ctrl.fp_f3     = funct3;
         ctrl.fp_single = ~funct7[0];

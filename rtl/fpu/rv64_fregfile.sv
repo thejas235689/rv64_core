@@ -13,9 +13,7 @@
 // lives in rv64_fp_unbox, because only the consumer knows whether it is running a
 // single- or double-precision operation.
 //
-// This is deliberately a plain two-read/one-write register file: the FPU's
-// operations hold their operands themselves, so no forwarding network is needed
-// here yet.
+// Three read ports support fused operations, with write-through bypass.
 // =============================================================================
 `default_nettype none
 
@@ -31,7 +29,9 @@ module rv64_fregfile (
   input  logic [4:0]  raddr_a,
   output logic [63:0] rdata_a,
   input  logic [4:0]  raddr_b,
-  output logic [63:0] rdata_b
+  output logic [63:0] rdata_b,
+  input  logic [4:0]  raddr_c,
+  output logic [63:0] rdata_c
 );
   localparam logic [31:0] BOX_HI = 32'hFFFF_FFFF;
 
@@ -46,6 +46,8 @@ module rv64_fregfile (
   // is why `fadd.d f3,f1,f2` followed by `fmv.x.d x7,f3` read a stale f3.
   assign rdata_a = (we && (waddr == raddr_a)) ? wdata_boxed : regs_q[raddr_a];
   assign rdata_b = (we && (waddr == raddr_b)) ? wdata_boxed : regs_q[raddr_b];
+
+  assign rdata_c = (we && (waddr == raddr_c)) ? wdata_boxed : regs_q[raddr_c];
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
