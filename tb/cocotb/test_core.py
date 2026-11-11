@@ -3094,6 +3094,38 @@ async def test_native_rvv_integer(dut):
 
 
 @cocotb.test()
+async def test_native_rvv_masked_integer(dut):
+    """Packed v0 mask selects active e16 lanes and protects masked v0 writes."""
+    code = []
+    for index, data in (
+        (0, 0b0101), (1, 0x0004000300020001),
+        (2, 0x0040003000200010), (3, 0x4444333322221111),
+    ):
+        code += li64(5, index) + [csrw(0x786, 5)]
+        code += li64(5, data) + [csrw(0x787, 5)]
+    code += [
+        ".word 0xc081f3d7",  # vsetivli x7, 3, e16,m1,tu,mu
+        ".word 0x002081d7",  # vadd.vv v3, v2, v1, v0.t
+    ]
+    forbidden_pc = len(assemble("\n".join(code))[0]) * 4
+    code.append(".word 0x00208057")  # vadd.vv v0, v2, v1, v0.t is reserved
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(code))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    for _ in range(1500):
+        await h.run(max_cycles=1, stop_on_ecall=False)
+        if h.traps:
+            break
+    regs = dut.u_core.u_rvv.u_vrf.regs
+    assert int(regs[3].value) == 0x4444003322220011
+    assert int(regs[0].value) == 0b0101
+    assert h.traps == [(forbidden_pc, 2)]
+
+
+@cocotb.test()
 async def test_native_rvv_invalid_config(dut):
     """An unsupported LMUL gives vl=0 and prevents vector arithmetic."""
     h = Harness(dut)
