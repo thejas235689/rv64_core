@@ -45,6 +45,7 @@ module rv64_vunit (
   output logic [6:0]  native_vl,
   output logic        native_illegal,
   output logic        native_busy,
+  output logic        native_done,
 
   // ---- element memory port (vle / vse) ------------------------------------
   // One 64-bit beat per element. The base address comes from the control window
@@ -122,24 +123,31 @@ module rv64_vunit (
   wire native_setvl = native_insn[14:12] == 3'b111;
   wire native_immediate = native_insn[31:30] == 2'b11;
   wire [7:0] native_type = native_insn[27:20];
-  wire [6:0] native_max = 7'd8 >> native_type[4:3];
+  wire [6:0] native_max = (7'd8 << native_type[1:0]) >> native_type[4:3];
+  wire [6:0] current_max = (7'd8 << lmul_sel[1:0]) >> sew_sel;
   wire [63:0] native_avl = native_immediate ? {59'd0, native_insn[19:15]}
                           : native_insn[19:15] != 0 ? native_scalar
                           : native_insn[11:7] != 0 ? {57'd0, native_max}
                           : {57'd0, vl_q};
   wire native_keep_vl = !native_immediate && native_insn[19:15] == 0
                        && native_insn[11:7] == 0;
-  wire native_bad_type = native_type[5] || native_type[2:0] != 0
+  wire native_bad_type = native_type[5] || native_type[2]
                         || (native_immediate ? |native_insn[29:28] : |native_insn[30:28])
-                        || (native_keep_vl && (native_vill_q || native_type[4:3] != sew_sel));
+                        || (native_keep_vl && (native_vill_q || native_max != current_max));
 
   assign native_vl = native_bad_type ? 7'd0
                    : native_avl >= {57'd0, native_max} ? native_max : native_avl[6:0];
-  // A masked integer operation cannot overwrite the register holding its mask.
+  // Equal-width operand groups may overlap completely, but their bases
+  // must be aligned to LMUL. A masked destination must also leave v0 intact.
+  wire [4:0] native_group_mask = {1'b0, lmul} - 5'd1;
+  wire native_misaligned = (|(native_insn[11:7] & native_group_mask)) ||
+                           (|(native_insn[24:20] & native_group_mask)) ||
+                           (native_insn[14:12] == 3'b000 &&
+                            (|(native_insn[19:15] & native_group_mask)));
   wire native_mask_overlap = !native_insn[25] && native_insn[11:7] == 0;
   assign native_illegal = !native_setvl &&
-                          (native_vill_q || vtype_q[5] || lmul_sel != 0 ||
-                           vstart_q != 0 || native_mask_overlap);
+                          (native_vill_q || vtype_q[5] || lmul_sel[2] ||
+                           vstart_q != 0 || native_misaligned || native_mask_overlap);
   assign native_busy = go_q || native_go_q || el_walk_q || grp_walk_q || grp_commit_q || load_we_q;
 
   // ---- register file -------------------------------------------------------
@@ -159,7 +167,7 @@ module rv64_vunit (
     .raddr1(grp_a), .rdata1(rdata2),      // vs2 is the first source
     .raddr2(grp_b), .rdata2(rdata1),      // vs1 is the second source
     .raddr3(grp_d), .rdata3(rdata3),      // destination, for the tail
-    .raddr_mask({1'b0, grp_q}),           // v0 advances with the group
+    .raddr_mask(native_go_q ? 5'd0 : {1'b0, grp_q}),
     .rdata_mask(rdata_mask),
     .waddr(vd_addr), .wdata(vd_new), .we(vd_we),
     .caddr(caddr_q), .cdata(cdata),
@@ -679,7 +687,10 @@ module rv64_vunit (
         vd_we = 1'b1;
         for (int i = 0; i < 8; i++) begin
           // masking: with vm=0 only elements whose v0 bit is set are written
-          if ((i < vl_q) && (i < nelem) && (vm || mask_bit(i[2:0], sew_sel))) begin
+          int element;
+          element = native_go_q ? (int'(grp_q) * int'(nelem)) + i : i;
+          if ((element < int'(vl_q)) && (i < nelem) &&
+              (vm || (native_go_q ? rdata_mask[element[5:0]] : mask_bit(i[2:0], sew_sel)))) begin
             a_e = get_elem(rdata2, i[2:0], sew_sel);
             // .vv takes element i of vs1; .vx/.vi replicate one scalar
             b_e = (funct3 == 3'b000) ? get_elem(rdata1, i[2:0], sew_sel)
@@ -749,6 +760,7 @@ module rv64_vunit (
       insn_q      <= 32'd0;
       go_q        <= 1'b0;
       native_go_q <= 1'b0;
+      native_done <= 1'b0;
       native_vill_q <= 1'b1;
       native_insn_q <= '0;
       native_scalar_q <= '0;
@@ -769,7 +781,7 @@ module rv64_vunit (
       illegal_q   <= 1'b0;
     end else begin
       go_q <= 1'b0;
-      native_go_q <= 1'b0;
+      native_done <= 1'b0;
       if (native_issue) begin
         insn_count_q <= insn_count_q + 32'd1;
         if (native_setvl) begin
@@ -779,6 +791,7 @@ module rv64_vunit (
           native_vill_q <= native_bad_type;
         end else begin
           native_go_q <= 1'b1;
+          grp_q <= 4'd0;
           native_insn_q <= native_insn;
           native_scalar_q <= native_scalar;
         end
@@ -787,7 +800,15 @@ module rv64_vunit (
       // ---- register-group walk (vlmul) ----------------------------------
       // A grouped op takes `lmul` cycles, one register per cycle. Element indices
       // for masking are per register because v0 is grouped too.
-      if (grp_walk_q) begin
+      if (native_go_q) begin
+        if (grp_q + 4'd1 == lmul) begin
+          grp_q <= 4'd0;
+          native_go_q <= 1'b0;
+          native_done <= 1'b1;
+        end else begin
+          grp_q <= grp_q + 4'd1;
+        end
+      end else if (grp_walk_q) begin
         if (grp_q + 4'd1 >= lmul) begin
           grp_walk_q   <= 1'b0;
           grp_commit_q <= 1'b1;

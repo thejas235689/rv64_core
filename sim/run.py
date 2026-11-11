@@ -12,6 +12,7 @@ The equivalent Makefile is in sim/Makefile for environments that have make.
 import argparse
 import os
 import sys
+from xml.etree import ElementTree
 
 from cocotb_tools.runner import get_runner
 
@@ -83,16 +84,18 @@ def main():
                     help="print the RTL source list and exit (used by CI lint)")
     ap.add_argument("--suite", default="core",
                     choices=["core", "plic", "pmp", "fpu", "dcache", "icache", "l2arb", "l2sys",
-                             "conformance"],
+                             "conformance", "stride"],
                     help="core: full CPU regression; plic: interrupt controller unit test; "
                          "pmp: PMP matcher unit test; fpu: scalar FPU unit test; "
                          "dcache/icache/l2arb: block-level unit suites that drive the "
                          "block's own ports; l2sys: the cache subsystem topology "
                          "(I-cache + D-cache -> L2 arbiter -> memory); conformance: "
                          "the ISA profile (isa/rv64_profile.yaml) checked against "
-                         "the RTL, the ISS and the docs")
+                         "the RTL, the ISS and the docs; stride: core stride-prefetch authorization")
     ap.add_argument("--testcase", action="append", default=None,
                     help="run only this test (repeatable)")
+    ap.add_argument("--fetch-stage", action="store_true",
+                    help="enable the optional fetch pipeline register in the core testbench")
     ap.add_argument("--clean", action="store_true")
     args = ap.parse_args()
 
@@ -141,7 +144,8 @@ def main():
     else:
         sources = [os.path.join(RTL_DIR, f) for f in RTL_SRCS]
         sources.append(os.path.join(TB_DIR, "tb_core_top.sv"))
-        toplevel, module = "tb_core_top", "test_core"
+        toplevel = "tb_core_top"
+        module = "test_stride_platform" if args.suite == "stride" else "test_core"
     # `args.testcase or []`: without it, `run.py` with no --testcase raised
     # TypeError instead of running the whole suite.
     tests = args.testcase or []
@@ -170,7 +174,10 @@ def main():
     if any(t.startswith("test_fpu_integration") for t in tests):
         toplevel, module = "tb_core_top", "test_fpu_integration"
 
-    build_dir = os.path.join(SIM_DIR, f"sim_build_{args.sim}_{args.suite}")
+    if args.fetch_stage and toplevel != "tb_core_top":
+        ap.error("--fetch-stage requires the core testbench")
+    variant = "_fetch_stage" if args.fetch_stage else ""
+    build_dir = os.path.join(SIM_DIR, f"sim_build_{args.sim}_{args.suite}{variant}")
     if args.sim == "icarus":
         build_args = ["-g2012"]
     elif args.sim == "verilator":
@@ -180,10 +187,17 @@ def main():
     else:
         build_args = []
 
+    parameters = {}
+    if args.suite == "stride":
+        parameters["ENABLE_STRIDE_PREFETCH"] = 1
+    if args.fetch_stage:
+        parameters["ENABLE_FETCH_STAGE"] = 1
+
     runner = get_runner(args.sim)
     runner.build(
         sources=sources,
         hdl_toplevel=toplevel,
+        parameters=parameters,
         build_dir=build_dir,
         build_args=build_args,
         always=args.clean or True,
@@ -191,12 +205,19 @@ def main():
 
     sys.path.insert(0, os.path.join(TB_DIR, "cocotb"))
     sys.path.insert(0, os.path.join(TB_DIR, "pyuvm"))
-    runner.test(
+    results = runner.test(
         hdl_toplevel=toplevel,
         test_module=module,
         testcase=_cocotb_filter(args.testcase),
         build_dir=build_dir,
     )
+    tests = ElementTree.parse(results).findall(".//testcase")
+    if not tests:
+        raise SystemExit(f"No test cases recorded in {results}")
+    failed = sum(test.find("failure") is not None or test.find("error") is not None
+                 for test in tests)
+    if failed:
+        raise SystemExit(f"{failed} test(s) failed. Results: {results}")
 
 
 if __name__ == "__main__":

@@ -2985,6 +2985,101 @@ async def test_posit8_quire_in_core(dut):
 
 
 @cocotb.test()
+async def test_posit8_quire_rounded_readback(dut):
+    """Read exact quire sums as posit8, including midpoint and range edges."""
+    source = []
+
+    def product(a, b):
+        for reg, value in ((1, a), (2, b)):
+            source.extend([f"addi x{reg}, x0, {value}",
+                           f".word {num_insn(NUM_FROMINT, rd=reg, rs1=reg):#x}"])
+        source.append(f".word {num_insn(27, rs1=1, rs2=2):#x}")
+
+    def read(rd, fmt=3):
+        source.extend([f".word {num_insn(28, fmt=fmt, rd=3):#x}",
+                       f".word {num_insn(NUM_TOINT, rd=rd, rs1=3):#x}"])
+
+    product(0x40, 0x40)
+    read(10)
+    product(0x40, 0x0C)  # 1 + 1/32, tie rounds down to 1.0
+    read(11)
+    read(12, fmt=0)     # Rounded read leaves the raw accumulator intact
+    product(0x01, 0x01) # One quire LSB above the same midpoint
+    read(13)
+    source.append(f".word {num_insn(26):#x}")
+    product(0xC0, 0x40)
+    product(0xC0, 0x14) # -1 - 3/32, tie rounds to -1.125
+    read(14)
+    source.append(f".word {num_insn(26):#x}")
+    product(0x01, 0x01) # Smaller than half a minpos
+    read(15)
+    source.append(f".word {num_insn(26):#x}")
+    product(0x7F, 0x7F) # Larger than maxpos
+    read(16)
+    source += ["csrrs x17, nflags, x0", "ecall"]
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=2000, stop_on_ecall=True)
+    assert await halt_and_read(h, list(range(10, 18))) == {
+        10: 0x40, 11: 0x40, 12: (1 << 24) + (1 << 19), 13: 0x41,
+        14: 0xBE, 15: 0, 16: 0x7F, 17: (1 << 5) | (1 << 2),
+    }
+
+
+@cocotb.test()
+async def test_posit16_quire_in_core(dut):
+    """Check exact posit16 products, split readback and isolated posit8 state."""
+    source = [f".word {num_insn(26, fmt=1):#x}"]
+
+    def product(a, b, fmt=1):
+        for reg, value in ((1, a), (2, b)):
+            source.extend(li64(reg, value))
+            source.append(f".word {num_insn(NUM_FROMINT, rd=reg, rs1=reg):#x}")
+        source.append(f".word {num_insn(27, fmt=fmt, rs1=1, rs2=2):#x}")
+
+    def read(rd, fmt):
+        source.extend([f".word {num_insn(28, fmt=fmt, rd=3):#x}",
+                       f".word {num_insn(NUM_TOINT, rd=rd, rs1=3):#x}"])
+
+    product(0x40, 0x40, fmt=0)
+    product(0x0001, 0x0001)  # One Q72.56 LSB
+    product(0x7FFF, 0x7FFF)  # 2^56 in real units, bit 112 of raw accumulator
+    read(10, 1)
+    read(11, 4)
+    product(0x8001, 0x7FFF)  # Cancel the maxpos product exactly
+    read(12, 1)
+    read(13, 4)
+    product(0x8001, 0x7FFF)  # Negative quire sum crosses the split boundary
+    read(14, 1)
+    read(15, 4)
+    product(0x8000, 0x4000)  # NaR sets invalid and leaves the sum intact
+    read(16, 4)
+    source.append("csrrs x17, nflags, x0")
+    source.append(f".word {num_insn(26, fmt=1):#x}")
+    product(0x4400, 0x4400)  # 1.25 squared = 25/16
+    read(18, 1)
+    read(19, 0)
+    source.append("ecall")
+
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=4000, stop_on_ecall=True)
+    high_negative = (1 << 64) - (1 << 48)
+    assert await halt_and_read(h, list(range(10, 20))) == {
+        10: 1, 11: 1 << 48, 12: 1, 13: 0, 14: 1, 15: high_negative,
+        16: high_negative, 17: 8, 18: 25 << 52, 19: 1 << 24,
+    }
+
+
+@cocotb.test()
 async def test_lns_add_sub_abi(dut):
     """Execute LNS add/subtract with exact and approximate log-space cases."""
     import math
@@ -3126,12 +3221,63 @@ async def test_native_rvv_masked_integer(dut):
 
 
 @cocotb.test()
+async def test_native_rvv_grouped_integer(dut):
+    """Check group alignment, cross-register mask indexing, and dependent issue."""
+    def vadd(vd, vs2, vs1, unmasked):
+        return f".word {(unmasked << 25) | (vs2 << 20) | (vs1 << 15) | (vd << 7) | 0x57:#x}"
+
+    code = []
+    for index, data in (
+        (0, 0x8000000000000001), (16, 1), (23, 0x0200000000000000),
+        (24, 0x44), (31, 0x7700000000000088),
+    ):
+        code += li64(5, index) + [csrw(0x786, 5)]
+        code += li64(5, data) + [csrw(0x787, 5)]
+    code += [
+        "addi x10, x0, 64",
+        ".word 0x00357357",  # vsetvli x6, x10, e8,m8,tu,mu
+        f".word {(16 << 20) | (1 << 15) | (3 << 12) | (24 << 7) | 0x57:#x}",  # vadd.vi v24, v16, 1, v0.t
+    ]
+    for index, data in (
+        (0, 0xD1), (1, 0xF),
+        (2, 0x0004000300020001), (3, 0x0008000700060005),
+        (4, 0x0040003000200010), (5, 0x0080007000600050),
+        (6, 0x4444333322221111), (7, 0x8888777766665555),
+    ):
+        code += li64(5, index) + [csrw(0x786, 5)]
+        code += li64(5, data) + [csrw(0x787, 5)]
+    code += [
+        ".word 0xc093f3d7",  # vsetivli x7, 7, e16,m2,tu,mu
+        vadd(6, 4, 2, 0),   # vadd.vv v6, v4, v2, v0.t
+        vadd(8, 6, 2, 1),   # consumes both destination registers from the prior op
+    ]
+    invalid_pc = len(assemble("\n".join(code))[0]) * 4
+    code.append(vadd(9, 4, 2, 1))  # misaligned destination group
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(code))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    for _ in range(3000):
+        await h.run(max_cycles=1, stop_on_ecall=False)
+        if h.traps:
+            break
+    regs = dut.u_core.u_rvv.u_vrf.regs
+    assert [int(regs[i].value) for i in (24, 31)] == [2, 0x0300000000000088]
+    assert [int(regs[i].value) for i in (6, 7)] == [0x4444333322220011, 0x8888007766660055]
+    assert [int(regs[i].value) for i in (8, 9)] == [0x4448333622240012, 0x007E666C005A]
+    assert await halt_and_read(h, [6, 7]) == {6: 64, 7: 7}
+    assert h.traps == [(invalid_pc, 2)]
+
+
+@cocotb.test()
 async def test_native_rvv_invalid_config(dut):
     """An unsupported LMUL gives vl=0 and prevents vector arithmetic."""
     h = Harness(dut)
     await h.startup()
     words, _ = assemble("\n".join([
-        ".word 0xc01173d7",  # vsetivli x7, 2, e8,m2,tu,mu
+        ".word 0xc07173d7",  # vsetivli x7, 2, e8,mf2,tu,mu
         ".word 0x022081d7",  # vadd.vv v3, v2, v1
     ]))
     h.clear()
@@ -3184,3 +3330,71 @@ async def test_instruction_translation_sv39_sv48(dut):
         assert h.traps == [(bad_va, 12)], (mode, h.traps, h.trace[-8:])
         assert any(t[0] == start_va and t[3] == 11 and t[4] == 93
                    for t in h.trace), (mode, h.trace[-8:])
+
+
+@cocotb.test()
+async def test_signed_lns_abi(dut):
+    """Check signed log arithmetic and canonical cancellation in both formats."""
+    source, expected = [], {}
+    rd = 10
+    for fmt, width, frac in ((3, 32, 16), (4, 16, 8)):
+        sign, unit, zero = 1 << width, 1 << frac, 1 << (width - 1)
+        for op, a, b, result in (
+            (29, sign | unit, sign | unit, sign | (2 * unit)),  # -2 + -2
+            (29, 0, sign | unit, sign),                        # 1 + -2
+            (30, sign | unit, sign, sign),                     # -2 - -1
+            (30, zero, unit, sign | unit),                     # 0 - 2
+            (29, sign | unit, unit, zero),                     # -2 + 2
+            (12, sign | unit, unit, sign | (2 * unit)),        # -2 * 2
+            (13, sign | (2 * unit), sign | unit, unit),        # -4 / -2
+        ):
+            for reg, value in ((1, a), (2, b)):
+                source.extend(li64(reg, value))
+                source.append(f".word {num_insn(NUM_FROMINT, rd=reg, rs1=reg):#x}")
+            source.extend([f".word {num_insn(op, fmt, 3, 1, 2):#x}",
+                           f".word {num_insn(NUM_TOINT, rd=rd, rs1=3):#x}"])
+            expected[rd] = result
+            rd += 1
+    source.append("ecall")
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=4000, stop_on_ecall=True)
+    assert await halt_and_read(h, list(expected)) == expected
+
+
+@cocotb.test()
+async def test_unum_bounded_add_sub(dut):
+    """Check exact values, interval results and exceptional operands."""
+    cases = [
+        (0, 0x0064, 0x0e0f, 0x108f),  # mixed widths: 1.5 + 1 = 2.5
+        (0, 0x0e0f, 0x040f, 0x0e1f),  # 1 + 1/32 lies between 1 and 17/16
+        (1, 0x2e0f, 0x040f, 0x2e1f),  # negative interval
+        (1, 0x0e0f, 0x0e0f, 0x000f),  # exact cancellation
+        (0, 0x002f, 0x002f, 0x004f),  # exact subnormal
+        (0, 0x1def, 0x1def, 0),       # overflow
+        (0, 0x0e1f, 0x0e0f, 0),       # interval operand unsupported
+        (0, 0x1e0f, 0x0e0f, 0),       # reserved exponent
+        (2, 0x0e0f, 0x0e0f, 0),       # unsupported operation selector
+    ]
+    source = []
+    for rd, (fmt, a, b, _) in enumerate(cases, 10):
+        for reg, operand in ((1, a), (2, b)):
+            source += li64(reg, operand)
+            source.append(f".word {num_insn(NUM_FROMINT, rd=reg, rs1=reg):#x}")
+        source += [f".word {num_insn(31, fmt, 3, 1, 2):#x}",
+                   f".word {num_insn(NUM_TOINT, rd=rd, rs1=3):#x}"]
+    source += ["csrrs x19, nflags, x0", "ecall"]
+    h = Harness(dut)
+    await h.startup()
+    words, _ = assemble("\n".join(source))
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=2500, stop_on_ecall=True)
+    expected = {rd: case[-1] for rd, case in enumerate(cases, 10)}
+    expected[19] = 0xD
+    assert await halt_and_read(h, list(expected)) == expected

@@ -44,7 +44,7 @@ module tb_vunit;
     .csr_we(csr_we), .csr_addr(csr_addr), .csr_wdata(csr_wdata),
     .csr_rdata(csr_rdata), .insn_count(insn_count), .illegal(illegal),
     .native_issue(1'b0), .native_insn(32'd0), .native_scalar(64'd0),
-    .native_vl(), .native_illegal(), .native_busy(),
+    .native_vl(), .native_illegal(), .native_busy(), .native_done(),
     .mem_req_valid(m_req_valid), .mem_req_addr(m_req_addr), .mem_req_we(m_req_we),
     .mem_req_wstrb(m_req_wstrb), .mem_req_wdata(m_req_wdata),
     .mem_req_ready(m_req_ready), .mem_rsp_valid(m_rsp_valid),

@@ -2,7 +2,8 @@
 // =============================================================================
 // Configurable instruction cache with 64 sets and one 64-bit beat per line.
 // Invalid ways are filled first. Full sets use round-robin replacement.
-// The refill bus permits one outstanding accepted request.
+// The refill bus permits one outstanding accepted request. The optional tagged
+// interface can return cache hits ahead of a pending demand refill.
 `default_nettype none
 
 module rv64_icache #(
@@ -10,7 +11,9 @@ module rv64_icache #(
   parameter bit ENABLE_STRIDE_PREFETCH = 1'b0,
   // The platform must mark an idempotent physical instruction-memory region.
   parameter logic [63:0] PREFETCH_BASE = 64'd0,
-  parameter logic [63:0] PREFETCH_LIMIT = 64'd0
+  parameter logic [63:0] PREFETCH_LIMIT = 64'd0,
+  parameter bit ENABLE_HIT_UNDER_MISS = 1'b0,
+  parameter int REQ_ID_WIDTH = 4
 ) (
   input  logic        clk,
   input  logic        rst_n,
@@ -18,7 +21,7 @@ module rv64_icache #(
   // ---- core side -----------------------------------------------------------
   input  logic        req_valid,
   input  logic [63:0] req_addr,
-  output logic        req_ready,      // only accept while idle
+  output logic        req_ready,
   output logic        resp_valid,
   output logic [63:0] resp_data,
   output logic        resp_miss,      // this access had to fill
@@ -39,7 +42,12 @@ module rv64_icache #(
 
   // ---- counters ------------------------------------------------------------
   output logic [31:0] hit_count,
-  output logic [31:0] miss_count
+  output logic [31:0] miss_count,
+
+  // Tag every demand with a unique ID until its response is observed.
+  // Consumers of the optional interface must accept out-of-order responses.
+  input  logic [REQ_ID_WIDTH-1:0] req_id,
+  output logic [REQ_ID_WIDTH-1:0] resp_id
 );
   localparam int SETS = 64;
   localparam int WAY_BITS = WAYS > 1 ? $clog2(WAYS) : 1;
@@ -72,6 +80,9 @@ module rv64_icache #(
   logic [63:0] addr_q, response_q;
   way_t victim_q;
   logic miss_q, err_q;
+  logic [REQ_ID_WIDTH-1:0] demand_id_q, hit_id_q;
+  logic [63:0] hit_data_q;
+  logic hit_response_q;
 
   // Track the last accepted demand and require two consecutive equal,
   // nonzero strides. Keep speculation in a one-beat buffer, so it cannot
@@ -89,13 +100,22 @@ module rv64_icache #(
                       candidate >= PREFETCH_BASE && candidate < PREFETCH_LIMIT &&
                       PREFETCH_LIMIT - candidate >= 64'd8;
 
-  assign req_ready  = state_q == C_IDLE && !invalidate;
-  assign fill_valid = state_q == C_REQUEST && !invalidate;
+  // A refill response owns the response register on its arrival edge.
+  // A hit accepted earlier can retire while the refill is being captured.
+  wire hit_under_miss = ENABLE_HIT_UNDER_MISS && state_q == C_WAIT &&
+                        !speculative_q && hit && !fill_rsp_valid;
+  assign req_ready = (state_q == C_IDLE || hit_under_miss) && !invalidate;
+
+  // A speculative request can be withdrawn before acceptance. Once accepted,
+  // the slot remains owned until the response arrives, even after revocation.
+  wire cancel_prefetch = speculative_q && !prefetch_active;
+  assign fill_valid = state_q == C_REQUEST && !invalidate && !cancel_prefetch;
   assign fill_addr  = {addr_q[63:3], 3'b000};
-  assign resp_valid = state_q == C_DONE && !invalidate;
-  assign resp_data  = response_q;
-  assign resp_miss  = miss_q;
-  assign resp_error = err_q;
+  assign resp_valid = (state_q == C_DONE || hit_response_q) && !invalidate;
+  assign resp_data  = hit_response_q ? hit_data_q : response_q;
+  assign resp_miss  = !hit_response_q && miss_q;
+  assign resp_error = !hit_response_q && err_q;
+  assign resp_id    = hit_response_q ? hit_id_q : demand_id_q;
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -115,6 +135,10 @@ module rv64_icache #(
       prefetch_data_q <= '0;
       miss_q <= 1'b0;
       err_q <= 1'b0;
+      demand_id_q <= '0;
+      hit_id_q <= '0;
+      hit_data_q <= '0;
+      hit_response_q <= 1'b0;
       hit_count <= '0;
       miss_count <= '0;
       for (int set_id = 0; set_id < SETS; set_id++) begin
@@ -122,6 +146,7 @@ module rv64_icache #(
         for (int way = 0; way < WAYS; way++) valid_q[set_id][way] <= 1'b0;
       end
     end else if (invalidate) begin
+      hit_response_q <= 1'b0;
       last_valid_q <= 1'b0;
       stride_valid_q <= 1'b0;
       stride_confident_q <= 1'b0;
@@ -136,6 +161,12 @@ module rv64_icache #(
       state_q <= ((state_q == C_WAIT || state_q == C_DRAIN) && !fill_rsp_valid)
                  ? C_DRAIN : C_IDLE;
     end else begin
+      hit_response_q <= hit_under_miss && req_valid;
+      if (hit_under_miss && req_valid) begin
+        hit_data_q <= data_q[idx][hit_way];
+        hit_id_q <= req_id;
+        hit_count <= hit_count + 32'd1;
+      end
       if (!prefetch_active) begin
         last_valid_q <= 1'b0;
         stride_valid_q <= 1'b0;
@@ -154,6 +185,7 @@ module rv64_icache #(
             candidate_issued_q <= 1'b0;
           end
           addr_q <= req_addr;
+          if (ENABLE_HIT_UNDER_MISS) demand_id_q <= req_id;
           miss_q <= !(hit || prefetch_hit);
           err_q <= 1'b0;
           if (hit || prefetch_hit) begin
@@ -172,8 +204,11 @@ module rv64_icache #(
           state_q <= C_REQUEST;
         end
         C_REQUEST, C_WAIT: begin
-          if (state_q == C_REQUEST && fill_ready) state_q <= C_WAIT;
-          if (fill_rsp_valid && (state_q == C_WAIT || fill_ready)) begin
+          if (state_q == C_REQUEST && cancel_prefetch) state_q <= C_IDLE;
+          else if (state_q == C_REQUEST && fill_ready) state_q <= C_WAIT;
+          else if (state_q == C_WAIT && cancel_prefetch && !fill_rsp_valid)
+            state_q <= C_DRAIN;
+          if (fill_rsp_valid && (state_q == C_WAIT || (fill_valid && fill_ready))) begin
             if (speculative_q) begin
               if (!fill_rsp_error && prefetch_active) begin
                 prefetch_data_q <= fill_rsp_data;

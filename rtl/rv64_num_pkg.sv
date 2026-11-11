@@ -68,12 +68,16 @@ package rv64_num_pkg;
   localparam logic [4:0] NUM_SDADD = 5'd24;
   localparam logic [4:0] NUM_SDSUB = 5'd25;
 
-  // Exact posit<8,1> dot-product accumulator. Format field must be zero.
+  // Exact dot-product accumulators for posit<8,1> and posit<16,1>.
   localparam logic [4:0] NUM_PQCLR = 5'd26;
   localparam logic [4:0] NUM_PQACC = 5'd27;
-  localparam logic [4:0] NUM_PQGET = 5'd28; // raw signed Q40.24 readback
+  localparam logic [4:0] NUM_PQGET = 5'd28; // raw or rounded readback
+  localparam logic [2:0] FMT_PQ_ROUND_P8 = 3'd3; // only for NUM_PQGET
+  localparam logic [2:0] FMT_PQ_HIGH_P16 = 3'd4; // only for NUM_PQGET
   localparam logic [4:0] NUM_LNADD = 5'd29; // log2(2^a + 2^b)
   localparam logic [4:0] NUM_LNSUB = 5'd30; // log2(2^a - 2^b), a >= b
+
+  localparam logic [4:0] NUM_UNUM = 5'd31; // bounded Type-I Unum add/sub
 
   // ------------------------------------------------------------------ ncfg
   // Configuration CSR layout.

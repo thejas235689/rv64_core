@@ -12,7 +12,9 @@
 `default_nettype none
 
 module tb_core_top #(
-  parameter int MEM_WORDS = 16384        // 64-bit words => 128 KiB
+  parameter int MEM_WORDS = 16384,       // 64-bit words => 128 KiB
+  parameter bit ENABLE_STRIDE_PREFETCH = 1'b0,
+  parameter bit ENABLE_FETCH_STAGE = 1'b0
 ) ();
   // ---- clock / reset (driven by cocotb) -------------------------------------
   logic clk;
@@ -194,7 +196,10 @@ module tb_core_top #(
 
   // ---- DUT ------------------------------------------------------------------
   riscv_core_top #(
-    .RESET_PC (64'h0000_0000_0000_0000)
+    .RESET_PC (64'h0000_0000_0000_0000),
+    .ENABLE_STRIDE_PREFETCH(ENABLE_STRIDE_PREFETCH),
+    .PREFETCH_BASE(64'h10), .PREFETCH_LIMIT(64'h40),
+    .ENABLE_FETCH_STAGE (ENABLE_FETCH_STAGE)
   ) u_core (
     .clk            (clk),
     .rst_n          (rst_n),

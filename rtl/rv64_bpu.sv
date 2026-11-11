@@ -26,6 +26,7 @@ module rv64_bpu (
   input  logic [63:0] upd_target,
   input  logic        upd_is_cond,     // conditional branch
   input  logic        upd_is_uncond,   // jal / jalr
+  input  logic        upd_is_indirect, // jalr
   input  logic        upd_is_call,
   input  logic        upd_is_ret
 );
@@ -36,10 +37,33 @@ module rv64_bpu (
   logic [1:0]   cho [0:255];
 
   logic         btb_v    [0:63];
-  logic [55:0]  btb_tag  [0:63];
+  logic [56:0]  btb_tag  [0:63];
   logic [63:0]  btb_tgt  [0:63];
   logic         btb_unc  [0:63];
   logic         btb_ret  [0:63];
+  logic         btb_indirect [0:63];
+
+  // Non-return JALR targets can depend on the path leading to the call site.
+  // Tag each entry with both the halfword PC and the resolved branch history.
+  localparam int INDIRECT_ENTRIES = 32;
+  logic        indirect_valid [0:INDIRECT_ENTRIES-1];
+  logic [62:0] indirect_pc [0:INDIRECT_ENTRIES-1];
+  logic [7:0]  indirect_history [0:INDIRECT_ENTRIES-1];
+  logic [63:0] indirect_target [0:INDIRECT_ENTRIES-1];
+  logic [1:0]  indirect_confidence [0:INDIRECT_ENTRIES-1];
+
+  function automatic logic [4:0] indirect_index(input logic [63:0] pc,
+                                                 input logic [7:0] history);
+    return pc[5:1] ^ history[4:0] ^ {2'b0, history[7:5]};
+  endfunction
+
+  wire [4:0] indirect_lookup_index = indirect_index(lookup_pc, ghr);
+  wire [4:0] indirect_update_index = indirect_index(upd_pc, ghr);
+  wire indirect_lookup_hit = indirect_valid[indirect_lookup_index] &&
+                             indirect_pc[indirect_lookup_index] == lookup_pc[63:1] &&
+                             indirect_history[indirect_lookup_index] == ghr &&
+                             indirect_confidence[indirect_lookup_index][1];
+
 
   // ---- tagged history ------------------------------------------------------
   // A tag per gshare entry, so two branches that alias to the same index do not
@@ -94,7 +118,7 @@ module rv64_bpu (
   assign idx   = lookup_pc[9:2];
   assign gidx  = idx ^ ghr;
   assign bidx  = lookup_pc[7:2];
-  assign btb_hit = btb_v[bidx] && (btb_tag[bidx] == lookup_pc[63:8]);
+  assign btb_hit = btb_v[bidx] && (btb_tag[bidx] == {lookup_pc[63:8], lookup_pc[1]});
 
   wire [5:0] pc_tag   = lookup_pc[15:10];
   wire       tag_hit  = (gsh_tag[gidx] == pc_tag);
@@ -126,7 +150,8 @@ module rv64_bpu (
   always_comb begin
     if (btb_hit && btb_unc[bidx]) begin
       pred_taken  = 1'b1;
-      pred_target = btb_tgt[bidx];
+      pred_target = btb_indirect[bidx] && !btb_ret[bidx] && indirect_lookup_hit
+                  ? indirect_target[indirect_lookup_index] : btb_tgt[bidx];
     end else if (btb_hit && btb_ret[bidx]) begin
       pred_taken  = 1'b1;
       pred_target = ras[ras_sp];
@@ -170,10 +195,18 @@ module rv64_bpu (
       end
       for (int i = 0; i < 64; i++) begin
         btb_v[i]   <= 1'b0;
-        btb_tag[i] <= 56'd0;
+        btb_tag[i] <= '0;
         btb_tgt[i] <= 64'd0;
         btb_unc[i] <= 1'b0;
         btb_ret[i] <= 1'b0;
+        btb_indirect[i] <= 1'b0;
+      end
+      for (int i = 0; i < INDIRECT_ENTRIES; i++) begin
+        indirect_valid[i] <= 1'b0;
+        indirect_pc[i] <= '0;
+        indirect_history[i] <= '0;
+        indirect_target[i] <= '0;
+        indirect_confidence[i] <= '0;
       end
       for (int i = 0; i < 8; i++) ras[i] <= 64'd0;
       for (int i = 0; i < 32; i++)
@@ -253,13 +286,29 @@ module rv64_bpu (
         ghr <= {ghr[6:0], 1'b1};
       end
 
+      if (upd_valid && upd_taken && upd_is_uncond && upd_is_indirect && !upd_is_ret) begin
+        if (indirect_valid[indirect_update_index] &&
+            indirect_pc[indirect_update_index] == upd_pc[63:1] &&
+            indirect_history[indirect_update_index] == ghr &&
+            indirect_target[indirect_update_index] == upd_target) begin
+          indirect_confidence[indirect_update_index] <= sat_inc(indirect_confidence[indirect_update_index]);
+        end else begin
+          indirect_valid[indirect_update_index] <= 1'b1;
+          indirect_pc[indirect_update_index] <= upd_pc[63:1];
+          indirect_history[indirect_update_index] <= ghr;
+          indirect_target[indirect_update_index] <= upd_target;
+          indirect_confidence[indirect_update_index] <= 2'd1;
+        end
+      end
+
       // ---- BTB -------------------------------------------------------------
       if (upd_valid && (upd_is_cond || upd_is_uncond) && upd_taken) begin
         btb_v[upd_pc[7:2]]   <= 1'b1;
-        btb_tag[upd_pc[7:2]] <= upd_pc[63:8];
+        btb_tag[upd_pc[7:2]] <= {upd_pc[63:8], upd_pc[1]};
         btb_tgt[upd_pc[7:2]] <= upd_target;
         btb_unc[upd_pc[7:2]] <= upd_is_uncond;
         btb_ret[upd_pc[7:2]] <= upd_is_ret;
+        btb_indirect[upd_pc[7:2]] <= upd_is_indirect;
       end
     end
   end

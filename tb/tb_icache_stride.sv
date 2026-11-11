@@ -1,6 +1,7 @@
 `timescale 1ns/1ps
 module tb_icache_stride;
   logic clk = 0, rst_n = 0, req_valid = 0, invalidate = 0;
+  logic prefetch_enable = 1;
   logic req_ready, resp_valid, resp_miss, resp_error, fill_valid;
   logic fill_ready = 1, rsp_valid = 0, rsp_error = 0;
   logic [63:0] req_addr = 0, resp_data, fill_addr, rsp_data = 0;
@@ -15,7 +16,7 @@ module tb_icache_stride;
     .resp_miss(resp_miss), .resp_error(resp_error), .fill_valid(fill_valid),
     .fill_addr(fill_addr), .fill_ready(fill_ready), .fill_rsp_valid(rsp_valid),
     .fill_rsp_data(rsp_data), .fill_rsp_error(rsp_error), .invalidate(invalidate),
-    .prefetch_enable(1'b1), .hit_count(hits), .miss_count(misses)
+    .prefetch_enable(prefetch_enable), .hit_count(hits), .miss_count(misses)
   );
 
   task automatic fetch(input logic [63:0] addr, input logic expect_miss);
@@ -115,6 +116,42 @@ module tb_icache_stride;
     end
     error_response = 0;
     fetch(64'h1050, 1);
+    // Revoke authorization while the request is backpressured, then fetch
+    // the same beat architecturally. No speculative request may be accepted.
+    fetch(64'h10a0, 1);
+    fetch(64'h10a8, 1);
+    fetch(64'h10b0, 1);
+    @(negedge clk);
+    fill_ready = 0;
+    wait (fill_valid && fill_addr == 64'h10b8);
+    @(negedge clk);
+    prefetch_enable = 0;
+    fill_ready = 1;
+    @(negedge clk);
+    if (fill_valid || pending || !req_ready)
+      $fatal(1, "revoked prefetch reached the fill port");
+    prefetch_enable = 1;
+    fetch(64'h10b8, 1);
+
+    // Revoking an already accepted prefetch drains and discards the reply,
+    // including when authorization returns before the reply does.
+    fetch(64'h10c0, 1);
+    fetch(64'h10c8, 1);
+    @(negedge clk);
+    wait (fill_valid && fill_addr == 64'h10d0);
+    hold_response = 1;
+    wait (pending);
+    @(negedge clk);
+    prefetch_enable = 0;
+    @(negedge clk);
+    prefetch_enable = 1;
+    if (req_ready || resp_valid) $fatal(1, "accepted revoked fill did not drain");
+    hold_response = 0;
+    // 0x10d0 was filled by the boundary test, so check the speculative
+    // buffer directly to distinguish a cache hit from stale buffer reuse.
+    wait (req_ready);
+    if (dut.prefetch_valid_q) $fatal(1, "revoked response populated buffer");
+
     $display("I-cache stride prefetch checks passed");
     $finish;
   end

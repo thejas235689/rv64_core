@@ -103,3 +103,27 @@ Environment structure:
 * Anything in `docs/ROADMAP.md` that is not implemented (caches, OoO, Sv39,
   RVV, custom numeric, research blocks).
 * FPGA/ASIC timing closure — no synthesis or STA has been run.
+
+
+## Research RTL verification matrix
+
+The [RTL specification](RTL_FEATURE_SPEC.md) defines scope and acceptance
+criteria. Use `bash sim/verify_rtl.sh` to run the integrated configurations.
+The runner exits with failure if cocotb records a failed test or produces no
+test cases. Satya-dependent skips remain visible in the simulator summary.
+
+| Requirement | Executable check | Next coverage and assertions |
+| --- | --- | --- |
+| RTL-01 RVV | `test_native_rvv_grouped_integer`, `test_native_rvv_masked_integer`, `test_native_rvv_invalid_config` | Cross SEW, LMUL, mask position, tail policy, alignment and trap. Assert exactly one retirement per vector instruction and group writes complete first. |
+| RTL-02 Posit quire | `test_posit8_quire_in_core`, `test_posit8_quire_rounded_readback`, `test_posit16_quire_in_core` | Sweep exponent and regime boundaries, ties, cancellation and signed overflow against an independent exact model. Assert rejected updates preserve the accumulator. |
+| RTL-03 Signed LNS | `test_signed_lns_abi`, `test_lns_add_sub_abi` | Compare each format against a high-precision reference across sign, delta, zero, overflow and underflow. Measure approximation error separately from output quantization. |
+| RTL-04 Stride prefetch | `test_stride_prefetch_in_authorized_window`, `test_stride_prefetch_blocked_by_active_pmp`, `tb_icache_stride.sv` | Cross stride sign, PMP, privilege, page boundary, backpressure and invalidation. Assert every accepted speculative read belongs to the authorized range. |
+| RTL-05 Predictor | `tb_bpu_indirect.sv`, `test_control` | Cross history, source-PC alignment, target confidence and redirect outcome. Compare committed instruction traces when predictor entries alias. |
+| RTL-06 Frontend | `tb_fetch_cache.sv`, `test_fence_i_self_modifying_code`, `test_instruction_translation_sv39_sv48` | Cross compressed/uncompressed, redirect, page boundaries and refill errors. Assert an expansion-cache hit matches decoding the current raw encoding. |
+| RTL-07 Unum | `test_unum_bounded_add_sub` | Exhaust supported encoding widths against a rational reference, including cancellation, invalid inputs, saturation and interval containment. |
+| RTL-08 Cache | `tb_icache_hit_under_miss.sv`, `tb_icache_stride.sv` | Assert that every accepted ID returns once or is invalidated, with no refill data installed after invalidation. Add an independent scoreboard when multiple misses are implemented. |
+| RTL-09 Pipeline | `test_backpressure`, `test_debug`, `test_instruction_translation_sv39_sv48` with and without `--fetch-stage` | Assert queue stability on stall, one delivery per accepted instruction, and no retirement of flushed instructions. Cross branch, fence, trap and debug redirects with a full queue. |
+
+Run `bash sim/verify_rtl_units.sh` with Icarus Verilog and vvp to exercise the indirect predictor, hit-under-miss, stride prefetch, and fetch/cache benches. The core regression
+exercises CPU behavior. Assertion and coverage goals in the last column remain
+open until the corresponding checks and coverage results are recorded.

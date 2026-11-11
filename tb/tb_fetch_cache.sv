@@ -166,6 +166,28 @@ module tb_fetch_cache;
     fetch_at(64'h3004, got, ok);
     chk("redirect clears fusion history", tag_fusion_valid, 0);
 
+    // The same compressed encoding at another address can reuse expansion.
+    // A different encoding with the same index must miss and expand correctly.
+    mem[64'h3100 >> 3] = {16'h0001, 16'h0295, 16'h0285, 16'h0285};
+    fetch_at(64'h3100, got, ok);
+    chk("cold compressed fetch valid", ok, 1);
+    chk("cold compressed expansion", got, 32'h00128293);
+    chk("cold expansion misses", u_fetch.expansion_hit, 0);
+    consume = 1'b1;
+    @(posedge clk); #1;
+    fetch_at(64'h3102, got, ok);
+    chk("repeated encoding hits", u_fetch.expansion_hit, 1);
+    chk("hit returns compressed expansion", got, 32'h00128293);
+    mem[64'h3110 >> 3] = {48'b0, 16'h0685};
+    fetch_at(64'h3110, got, ok);
+    chk("new compressed encoding misses", u_fetch.expansion_hit, 0);
+    chk("different encoding expands", got, 32'h00168693);
+    redirect = 1'b1;
+    @(posedge clk); #1; redirect = 1'b0;
+    fetch_at(64'h3102, got, ok);
+    chk("refetched encoding hits after redirect", u_fetch.expansion_hit, 1);
+    chk("redirect hit returns correct expansion", got, 32'h00128293);
+
     $display("tb_fetch_cache: %0d checks, %0d mismatches (hits=%0d misses=%0d)",
              checks, errors, hits, misses);
     if (errors == 0) $display("RESULT: PASS"); else $display("RESULT: FAIL");

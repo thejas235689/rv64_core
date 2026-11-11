@@ -23,7 +23,7 @@ module tb_bpu_loop;
     .lookup_pc(lookup_pc), .pred_taken(pred_taken), .pred_target(pred_target),
     .upd_valid(upd_valid), .upd_pc(upd_pc), .upd_taken(upd_taken),
     .upd_target(upd_target), .upd_is_cond(upd_is_cond),
-    .upd_is_uncond(upd_is_uncond), .upd_is_call(upd_is_call), .upd_is_ret(upd_is_ret)
+    .upd_is_uncond(upd_is_uncond), .upd_is_indirect(1'b0), .upd_is_call(upd_is_call), .upd_is_ret(upd_is_ret)
   );
 
   int checks = 0, errors = 0;

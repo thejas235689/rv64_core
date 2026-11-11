@@ -39,6 +39,7 @@ rv64_plic_lite.sv
 rv64_num_pkg.sv
 rv64_num_wide.sv
 rv64_numfile.sv
+rv64_num_unum.sv
 rv64_num_unit.sv
 rv64_num_csr.sv
 rv64_xrv512_file.sv

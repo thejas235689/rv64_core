@@ -115,6 +115,16 @@ module rv64_num_wide (
   // ===========================================================================
   // fmt selects the log width and with it the Q format:
   //   0 -> Q16.16 in 32 bits   1 -> Q8.8 in 16 bits   2 -> Q32.32 in 64 bits
+  // Formats 3 and 4 add a sign immediately above the Q16.16 or Q8.8 log.
+  // The zero sentinel keeps its sign clear. Legacy formats retain their ABI.
+  wire lns_signed = fmt == 3'd3 || fmt == 3'd4;
+  wire [2:0] lns_fmt = fmt == 3'd3 ? 3'd0 : fmt == 3'd4 ? 3'd1 : fmt;
+  wire lns_sign_a = lns_signed && (fmt == 3'd3 ? a[32] : a[16]);
+  wire lns_sign_b = lns_signed && (fmt == 3'd3 ? b[32] : b[16]);
+  wire lns_addsub = op == NUM_LNADD || op == NUM_LNSUB;
+  wire lns_rhs_sign = lns_sign_b ^ (op == NUM_LNSUB);
+  wire lns_sub_magnitude = lns_signed ? lns_sign_a ^ lns_rhs_sign
+                                       : op == NUM_LNSUB;
   logic [6:0]          lns_w;
   logic signed [63:0]  lns_zero, lns_max, lns_min;
   logic signed [63:0]  la_w, lb_w;
@@ -130,7 +140,7 @@ module rv64_num_wide (
   logic [7:0]          lns_flags;
 
   always_comb begin
-    case (fmt)
+    case (lns_fmt)
       3'd1:    lns_w = 7'd16;
       3'd2:    lns_w = 7'd64;
       default: lns_w = 7'd32;
@@ -141,7 +151,7 @@ module rv64_num_wide (
 
     // sign-extend each operand at its own width, and zero-extend for the
     // zero-code comparison
-    case (fmt)
+    case (lns_fmt)
       3'd1: begin
         la_w = {{48{a[15]}}, a[15:0]};
         lb_w = {{48{b[15]}}, b[15:0]};
@@ -380,42 +390,46 @@ module rv64_num_wide (
                            $signed({la_w[63], la_w});
     delta_q32 = delta < 0 ? $unsigned(-delta) : $unsigned(delta);
     // Clamp first to prevent a large fixed-point delta wrapping on conversion.
-    case (fmt)
+    case (lns_fmt)
       3'd0: delta_q32 = delta_q32 >= (65'd16 << 16) ? (65'd16 << 32) : delta_q32 << 16;
       3'd1: delta_q32 = delta_q32 >= (65'd16 << 8) ? (65'd16 << 32) : delta_q32 << 24;
       default: ;
     endcase
     correction_q16 = 32'sd0;
-    if ((op == NUM_LNADD || op == NUM_LNSUB) && !la_zero && !lb_zero &&
-        (op == NUM_LNADD || delta > 0))
-      correction_q16 = lns_correction(delta_q32, op == NUM_LNSUB);
-    case (fmt)
+    if (lns_addsub && !la_zero && !lb_zero &&
+        (!lns_sub_magnitude || (lns_signed ? delta != 0 : delta > 0)))
+      correction_q16 = lns_correction(delta_q32, lns_sub_magnitude);
+    case (lns_fmt)
       3'd1: correction = (65'($signed(correction_q16)) + 65'sd128) >>> 8;
       3'd2: correction = 65'($signed(correction_q16)) <<< 16;
       default: correction = 65'($signed(correction_q16));
     endcase
   end
 
+  logic lns_result_sign;
   always_comb begin
+    lns_result_sign = lns_sign_a ^ lns_sign_b;
     lsum      = 65'sd0;
     lns_y     = 64'd0;
     lns_flags = 8'd0;
 
-    if (op == NUM_LNADD || op == NUM_LNSUB) begin
-      if (fmt > 3'd2) begin
+    if (lns_addsub) begin
+      lns_result_sign = lb_zero || (!la_zero && delta >= 0)
+                      ? lns_sign_a : lns_rhs_sign;
+      if (lns_fmt > 3'd2) begin
         lns_y = lns_zero;
         lns_flags[FLAG_INVALID] = 1'b1;
-      end else if (lb_zero || (op == NUM_LNADD && la_zero)) begin
+      end else if (lb_zero || ((lns_signed || op == NUM_LNADD) && la_zero)) begin
         lns_y = lb_zero ? a_w : b_w;
-      end else if (op == NUM_LNSUB && (la_zero || delta < 0)) begin
+      end else if (!lns_signed && op == NUM_LNSUB && (la_zero || delta < 0)) begin
         lns_y = lns_zero;
         lns_flags[FLAG_INVALID] = 1'b1;
-      end else if (op == NUM_LNSUB && delta == 0) begin
+      end else if (lns_sub_magnitude && delta == 0) begin
         lns_y = lns_zero;
       end else begin
         lsum = lns_base + correction;
         lns_flags[FLAG_INEXACT] = delta != 0 &&
-                                 !(op == NUM_LNSUB && delta_q32 == (65'd1 << 32));
+                                 !(lns_sub_magnitude && delta_q32 == (65'd1 << 32));
         if (lsum > lns_max65) begin
           lns_y = lns_max;
           lns_flags[FLAG_OVERFLOW] = 1'b1;
@@ -462,6 +476,8 @@ module rv64_num_wide (
         end
       end
     end
+    if (lns_signed && (lns_y & lns_mask) != (lns_zero & lns_mask))
+      lns_y = (lns_y & lns_mask) | (64'(lns_result_sign) << lns_w);
   end
 
   // ===========================================================================
@@ -913,7 +929,7 @@ module rv64_num_wide (
       end
       NUM_LNMUL, NUM_LNDIV, NUM_LNADD, NUM_LNSUB: begin
         // the result is the width-truncated log field, not the widened one
-        y     = lns_y & lns_mask;
+        y     = lns_signed ? lns_y : lns_y & lns_mask;
         flags = lns_flags;
       end
       NUM_PADD, NUM_PSUB, NUM_PMUL, NUM_PDIV: begin

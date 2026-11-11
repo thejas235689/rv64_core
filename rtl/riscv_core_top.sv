@@ -27,7 +27,13 @@ module riscv_core_top #(
   // so the value below is the one the verified block produces.
   parameter logic [255:0] BOOT_MAC        = 256'h05265470_dfec59e6_a65093fd_96de0abb_ca82d579_cacc24cc_684a6435_245c5aa2,
   parameter logic [31:0] BOOT_WORDS        = 32'd2,
-  parameter bit          ENABLE_SYNC_DMI  = 1'b0
+  parameter bit          ENABLE_SYNC_DMI  = 1'b0,
+  // A platform opting in must supply an idempotent physical instruction RAM
+  // window. PREFETCH_LIMIT is exclusive. An empty window disables prefetch.
+  parameter bit          ENABLE_STRIDE_PREFETCH = 1'b0,
+  parameter logic [63:0] PREFETCH_BASE = 64'd0,
+  parameter logic [63:0] PREFETCH_LIMIT = 64'd0,
+  parameter bit          ENABLE_FETCH_STAGE = 1'b0
 ) (
   input  logic        clk,
   input  logic        rst_n,
@@ -221,6 +227,8 @@ module riscv_core_top #(
 
   // IF/ID
   logic        if_id_v;
+  logic        fetch_stage_valid;
+  logic [63:0] fetch_stage_pc;
   logic [63:0] if_id_pc;
   logic        if_id_rvc;
   logic [31:0] if_id_insn;
@@ -418,6 +426,7 @@ module riscv_core_top #(
   logic        ic_req_ready, ic_resp_valid, ic_resp_miss, ic_resp_error;
   logic [63:0] ic_resp_data;
   logic        ic_fill_valid, ic_fill_ready, fence_i_commit;
+  logic        ic_prefetch_allowed;
   logic [63:0] ic_fill_addr;
   logic [31:0] ic_hits, ic_misses;
   logic        fetch_pmp_ok, fetch_pmp_fault;
@@ -511,7 +520,10 @@ module riscv_core_top #(
 
   assign ic_fill_ready = rom_sel ? rom_req_ready : if_req_ready;
 
-  rv64_icache u_icache (
+  rv64_icache #(
+    .ENABLE_STRIDE_PREFETCH(ENABLE_STRIDE_PREFETCH),
+    .PREFETCH_BASE(PREFETCH_BASE), .PREFETCH_LIMIT(PREFETCH_LIMIT)
+  ) u_icache (
     .clk            (clk),
     .rst_n          (rst_n),
     .req_valid      ((if_state == IF_IDLE && !if_xlate && f_req_valid) ||
@@ -529,6 +541,7 @@ module riscv_core_top #(
     .fill_rsp_data  (rom_sel_q ? rom_rsp_rdata : if_rsp_data),
     .fill_rsp_error (rom_sel_q ? rom_rsp_error : if_rsp_error),
     .invalidate     (fence_i_commit),
+    .prefetch_enable(ic_prefetch_allowed),
     .hit_count      (ic_hits),
     .miss_count     (ic_misses)
   );
@@ -553,6 +566,16 @@ module riscv_core_top #(
   assign fetch_stopped = halted_q || halt_pending_q || wfi_active_q ||
                          f_fault_valid || fetch_pmp_fault ||
                          (BOOT_ROM && !boot_released);
+
+  // This conservative policy needs no speculative PMP or translation port.
+  // Only bare machine-mode fetches with all PMP entries off may train and issue.
+  // Exclude any opt-in window that overlaps the on-core boot ROM.
+  assign ic_prefetch_allowed = ENABLE_STRIDE_PREFETCH &&
+                               PREFETCH_LIMIT > PREFETCH_BASE &&
+                               (!BOOT_ROM || PREFETCH_BASE >= 64'h800) &&
+                               cur_priv == 2'b11 && if_state == IF_IDLE &&
+                               (pmp_cfg & 64'h1818_1818_1818_1818) == 64'd0 &&
+                               !fetch_stopped && !f_redirect;
 
   rv64_fetch u_fetch (
     .clk         (clk),
@@ -606,6 +629,7 @@ module riscv_core_top #(
     .upd_target   (bpu_upd_target),
     .upd_is_cond  (bpu_upd_is_cond),
     .upd_is_uncond(bpu_upd_is_uncond),
+    .upd_is_indirect(id_ex_ctrl.is_jalr),
     .upd_is_call  (bpu_upd_is_call),
     .upd_is_ret   (bpu_upd_is_ret)
   );
@@ -1174,7 +1198,8 @@ module riscv_core_top #(
     .busy      (), .op_count()
   );
 
-  logic rvv_native_issue, rvv_native_illegal, rvv_native_busy;
+  logic rvv_native_issue, rvv_native_illegal, rvv_native_busy, rvv_native_done;
+  logic rvv_arith_in_ex;
   logic [6:0] rvv_native_vl;
 
   rv64_vunit u_rvv (
@@ -1185,6 +1210,7 @@ module riscv_core_top #(
     .native_issue(rvv_native_issue), .native_insn(id_ex_insn),
     .native_scalar(op_a), .native_vl(rvv_native_vl),
     .native_illegal(rvv_native_illegal), .native_busy(rvv_native_busy),
+    .native_done(rvv_native_done),
     // the element memory port is the core's dedicated vector port
     .mem_req_valid(v_req_valid), .mem_req_addr(v_req_addr),
     .mem_req_we(v_req_we), .mem_req_wstrb(v_req_wstrb),
@@ -1381,10 +1407,6 @@ module riscv_core_top #(
       default: fp_rm_reserved = 1'b0;
     endcase
   end
-
-  assign rvv_native_issue = id_ex_v && id_ex_ctrl.is_rvv && ex_advance &&
-                            !ex_exc && !trap_taken && !mret_commit && !sret_commit &&
-                            !ebreak_commit && !if_serialize;
 
   // ---- exception generation -------------------------------------------------
   always_comb begin
@@ -1595,12 +1617,14 @@ module riscv_core_top #(
   assign if_serialize = if_sfence_commit || fence_i_commit;
   assign irq_take = csr_mstatus_mie && csr_irq_pending && !mem_trap && !if_serialize && !halted_q &&
                     !halt_pending_q && id_ex_v && !id_ex_ctrl.illegal && !id_ex_ctrl.is_ebreak &&
-                    !id_ex_ctrl.is_mret;
+                    !id_ex_ctrl.is_mret &&
+                    !(rvv_arith_in_ex && (rvv_native_busy || rvv_native_done));
 
   assign wfi_irq_take = wfi_active_q && csr_irq_pending && csr_mstatus_mie &&
                         !id_ex_v && !ex_mem_v;
 
-  assign fetch_fault_take = (f_fault_valid || fetch_pmp_fault) && !if_id_v && !id_ex_v && !ex_mem_v;
+  assign fetch_fault_take = (f_fault_valid || fetch_pmp_fault) &&
+                            !fetch_stage_valid && !if_id_v && !id_ex_v && !ex_mem_v;
 
   assign trap_taken = mem_trap || irq_take || wfi_irq_take || fetch_fault_take;
   assign trap_to_csr = trap_taken;
@@ -1628,6 +1652,14 @@ module riscv_core_top #(
   end
 
   // ---- mispredict / return redirect ----------------------------------------
+  assign rvv_arith_in_ex = id_ex_v && id_ex_ctrl.is_rvv && id_ex_insn[14:12] != 3'b111;
+  assign rvv_native_issue = id_ex_v && id_ex_ctrl.is_rvv &&
+                            (rvv_arith_in_ex
+                             ? !mem_stall && !rvv_native_busy && !rvv_native_done
+                             : ex_advance) &&
+                            !ex_exc && !trap_taken && !mret_commit && !sret_commit &&
+                            !ebreak_commit && !if_serialize;
+
   assign ex_advance = !mem_stall && !ex_hold && !if_serialize && !sret_commit;
 
   assign redirect_ex = ex_advance && id_ex_v && !trap_taken &&
@@ -1664,7 +1696,8 @@ module riscv_core_top #(
   // ---- stalls ---------------------------------------------------------------
   assign csr_vs_mret = mret_commit && id_ex_v && id_ex_ctrl.is_csr;
   assign ex_hold     = mdu_busy || (id_ex_v && id_ex_ctrl.is_mdu && !mdu_done) || csr_vs_mret ||
-                       (id_ex_v && id_ex_ctrl.is_rvv && rvv_native_busy);
+                       (id_ex_v && id_ex_ctrl.is_rvv &&
+                        (rvv_native_busy || (rvv_arith_in_ex && !ex_exc && !rvv_native_done)));
 
   always_comb begin
     stall_id = 1'b0;
@@ -1731,7 +1764,7 @@ module riscv_core_top #(
     end else if (ebreak_commit) begin
       f_redirect_pc = ex_mem_pc + 64'd4;
     end else if (dbg_resume_pulse) begin
-      f_redirect_pc = if_id_v ? if_id_pc : pc_f;
+      f_redirect_pc = if_id_v ? if_id_pc : (fetch_stage_valid ? fetch_stage_pc : pc_f);
     end else begin
       f_redirect    = 1'b0;
       f_redirect_pc = pc_f + 64'd4;
@@ -1742,10 +1775,59 @@ module riscv_core_top #(
   // Sequential: fetch pc and pipeline registers
   // ===========================================================================
   logic id_ex_accept;
+  logic front_to_id;
+  logic [63:0] front_pc;
+  logic [31:0] front_insn;
+  logic front_rvc, front_ptaken;
+  logic [63:0] front_ptarget;
+  wire id_ready = !if_id_v || id_ex_accept;
 
   assign id_ex_accept = !mem_stall && !ex_hold && !stall_id && !flush_front;
-  assign f_consume    = f_insn_valid && (!if_id_v || id_ex_accept) && !flush_front && !fetch_stopped;
-  assign f_pause      = mem_stall || ex_hold || stall_id;
+
+  if (ENABLE_FETCH_STAGE) begin : g_fetch_stage
+    // One extra registered entry decouples fetch from a stalled ID stage.
+    // Prediction metadata is captured with its instruction and PC.
+    // An older buffered instruction must drain before a younger fetch fault.
+    assign front_to_id = fetch_stage_valid && id_ready && !f_redirect &&
+                         !halted_q && !halt_pending_q && !wfi_active_q;
+    assign f_pause = fetch_stage_valid && !front_to_id;
+    assign f_consume = f_insn_valid && !f_pause && !f_redirect && !fetch_stopped;
+
+    always_ff @(posedge clk or negedge rst_n) begin
+      if (!rst_n) begin
+        fetch_stage_valid <= 1'b0;
+        fetch_stage_pc <= '0;
+        front_insn <= '0;
+        front_rvc <= 1'b0;
+        front_ptaken <= 1'b0;
+        front_ptarget <= '0;
+      end else if (f_redirect) begin
+        fetch_stage_valid <= 1'b0;
+      end else if (f_consume) begin
+        fetch_stage_valid <= 1'b1;
+        fetch_stage_pc <= f_insn_pc;
+        front_insn <= f_insn;
+        front_rvc <= f_insn_len == 2'd2;
+        front_ptaken <= f_pred_taken;
+        front_ptarget <= f_pred_target;
+      end else if (front_to_id) begin
+        fetch_stage_valid <= 1'b0;
+      end
+    end
+
+    assign front_pc = fetch_stage_pc;
+  end else begin : g_direct_fetch
+    assign fetch_stage_valid = 1'b0;
+    assign fetch_stage_pc = '0;
+    assign f_consume = f_insn_valid && id_ready && !flush_front && !fetch_stopped;
+    assign f_pause = mem_stall || ex_hold || stall_id;
+    assign front_to_id = f_consume;
+    assign front_pc = f_insn_pc;
+    assign front_insn = f_insn;
+    assign front_rvc = f_insn_len == 2'd2;
+    assign front_ptaken = f_pred_taken;
+    assign front_ptarget = f_pred_target;
+  end
 
   always_ff @(posedge clk or negedge rst_n) begin
     if (!rst_n) begin
@@ -1764,15 +1846,15 @@ module riscv_core_top #(
                              : (f_insn_pc + ((f_insn_len == 2'd2) ? 64'd2 : 64'd4));
       end
 
-      if (flush_front) begin
+      if (flush_front || (ENABLE_FETCH_STAGE && dbg_resume_pulse)) begin
         if_id_v <= 1'b0;
-      end else if (f_consume) begin
+      end else if (front_to_id) begin
         if_id_v       <= 1'b1;
-        if_id_pc      <= f_insn_pc;
-        if_id_rvc     <= (f_insn_len == 2'd2);
-        if_id_insn    <= f_insn;
-        if_id_ptaken  <= f_pred_taken;
-        if_id_ptarget <= f_pred_target;
+        if_id_pc      <= front_pc;
+        if_id_rvc     <= front_rvc;
+        if_id_insn    <= front_insn;
+        if_id_ptaken  <= front_ptaken;
+        if_id_ptarget <= front_ptarget;
       end else if (id_ex_accept) begin
         if_id_v <= 1'b0;
       end
@@ -1793,7 +1875,7 @@ module riscv_core_top #(
       id_ex_rs2_data <= 64'd0;
       id_ex_ptaken   <= 1'b0;
       id_ex_ptarget  <= 64'd0;
-    end else if (flush_front) begin
+    end else if (flush_front || (ENABLE_FETCH_STAGE && dbg_resume_pulse)) begin
       id_ex_v <= 1'b0;
     end else if (mem_stall || ex_hold) begin
       // Hold the EX stage -- but CAPTURE a forwarded operand first.

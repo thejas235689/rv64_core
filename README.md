@@ -1,8 +1,13 @@
-# rv64_core — RV64IMAFDC core with caches, Sv39, RVV and keyed boot authentication
+# RV64 Core RTL and Verification
 
-A synthesizable 64-bit RISC-V core and the cocotb verification environment that
-proves it correct, delivered as a project tree you can build, simulate and push
-to a private repository as-is.
+A single-hart RV64 SystemVerilog core with an in-order pipeline, instruction and
+data caches, Sv39/Sv48 translation, and custom numeric execution units. The
+cocotb regression exercises the integrated core. The ISA profile records
+advertised extensions and known limitations.
+
+- [ISA profile](isa/rv64_profile.yaml)
+- [RTL specification and acceptance criteria](docs/RTL_FEATURE_SPEC.md)
+- [Verification plan](docs/TESTPLAN.md)
 
 ---
 
@@ -29,7 +34,7 @@ to a private repository as-is.
 
    **V is not advertised.** The native M-mode subset implements `vsetvli`,
    `vsetivli`, and masked or unmasked integer `vadd`, `vsub`, `vand`, `vor`, and
-   `vxor` at LMUL=1 and SEW=8/16/32/64. It shares the 64-bit vector registers
+   `vxor` at LMUL=1/2/4/8 and SEW=8/16/32/64. It shares the 64-bit vector registers
    with the existing control window (`0x780`–`0x78F`). Native loads/stores,
    vector CSRs and VS context management are outside this
    subset. Q, Zfh and Zacas remain unimplemented.
@@ -85,13 +90,21 @@ their 32-bit equivalents, and the fetch presents a 128-bit window over two beats
 instruction's own length (2 or 4) in the primary path, the not-taken branch redirect,
 the `auipc`/`jal` link value and the `wfi` resume. `misa` advertises C (bit 2).
 
-**Not in this core:** cache coherence, cache inclusion or write-back, prefetch, an
+**Not in this core:** cache coherence, cache inclusion or write-back, an
 out-of-order backend, and the four research blocks (DNA, neuromorphic, photonic,
 interconnect). CLINT, UART, DMI, PLIC-lite and the L2 arbiter exist as verified standalone
 blocks but are **not** instantiated -- they are memory-mapped and the core has no
 peripheral bus to reach them. `docs/ROADMAP.md` maps the target feature list
 against what exists, and `docs/COMPLETION_PLAN.md` sets out the phased path to a
 complete, verified implementation with effort estimates and exit criteria.
+
+To opt in to instruction stride prefetch, set `ENABLE_STRIDE_PREFETCH=1` and
+set `PREFETCH_BASE` and exclusive `PREFETCH_LIMIT` to a physical RAM window where
+reads have no side effects. The core authorizes speculation only for bare
+machine-mode fetches with all PMP entries disabled. A window overlapping the
+on-core boot ROM is excluded when the ROM is enabled. A speculative request
+can withdraw before handshake if authorization changes. Accepted responses are
+drained and discarded after revocation.
 
 ## 3. Tree
 
@@ -155,6 +168,7 @@ python3 sim/run.py --suite plic    # PLIC-lite unit tests
 python3 sim/run.py --suite pmp     # PMP matcher unit tests
 python3 sim/run.py --testcase test_alu
 python3 sim/run.py --sim verilator # alternate simulator
+python3 sim/run.py --sim verilator --suite stride # opt-in prefetch checks
 ```
 
 The UVM environment needs a simulator that supports UVM — Icarus and Verilator
@@ -274,6 +288,18 @@ verified -- 10756 checks, 0 mismatches:
 RNS with {3,5,7}/{3,5,7,11}/{3,5,7,11,13}. Verified by 15364 vector checks and by
 `rv64_numeric_test` through the UVM environment. See
 `docs/VERIFICATION_REPORT.md`.
+
+The posit8 quire accumulates exact products in signed Q40.24. Use
+`NUM_PQGET` (funct7 `0x1c`) with `fmt=0` for the raw accumulator or
+`fmt=3` for an 8-bit posit result in the low bits. Rounded reads select the
+nearest value, with ties going to the even encoding. Values beyond maxpos
+saturate and set `SATURATE` and `INEXACT`. Other unequal rounded results set
+`INEXACT`. Reading either form preserves the accumulator.
+
+The separate posit<16,1> quire accumulates exact products in signed Q72.56.
+Use `fmt=1` for clear, accumulate and low-word readback. Use `NUM_PQGET`
+with `fmt=4` for the high word. An overflow or NaR operand leaves the
+accumulator intact and sets the corresponding numeric flag.
 
 ## 7. Xcetask
 

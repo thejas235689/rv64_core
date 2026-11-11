@@ -200,50 +200,115 @@ module rv64_num_unit (
     adapt_lost_self = adapt_lost(a, cfg_prec);
   end
 
-  // Posit<8,1> ranges from 2^-12 to 2^12, so Q12 fractional precision
-  // represents every input exactly. Decode negatives by taking the two's
-  // complement of the whole encoding before interpreting the regime.
-  function automatic logic signed [25:0] posit8_q12(input logic [7:0] value);
-    logic [7:0] magnitude;
-    logic [25:0] significand;
+  // For es=1, 2*(width-2) fractional bits represent minpos exactly.
+  // The sign-extended operand gives a two's-complement encoding across widths.
+  function automatic logic signed [57:0] posit_fixed(
+    input logic signed [15:0] value, input int width
+  );
+    logic [15:0] magnitude;
+    logic [57:0] significand;
     logic regime, scanning;
     int run, fraction_bits, exponent, scale;
-    magnitude = value[7] ? -value : value;
-    regime = magnitude[6];
+    magnitude = value[15] ? -value : value;
+    regime = magnitude[width-2];
     run = 0;
     scanning = 1'b1;
-    for (int bit_index = 6; bit_index >= 0; bit_index--) begin
-      if (scanning && magnitude[bit_index] == regime) run++;
-      else scanning = 1'b0;
+    for (int bit_index = 14; bit_index >= 0; bit_index--) begin
+      if (bit_index <= width-2) begin
+        if (scanning && magnitude[bit_index] == regime) run++;
+        else scanning = 1'b0;
+      end
     end
     exponent = 0;
     fraction_bits = 0;
-    if (run < 6) begin
-      exponent = int'(magnitude[5-run]);
-      fraction_bits = 5-run;
+    if (run < width-2) begin
+      fraction_bits = width-3-run;
+      exponent = int'(magnitude[fraction_bits]);
     end
-    significand = (26'd1 << fraction_bits)
-                | (26'(magnitude) & ((26'd1 << fraction_bits) - 26'd1));
-    scale = 12 + 2 * (regime ? run - 1 : -run) + exponent - fraction_bits;
+    significand = (58'd1 << fraction_bits)
+                | (58'(magnitude) & ((58'd1 << fraction_bits) - 58'd1));
+    scale = 2 * (width-2) + 2 * (regime ? run-1 : -run) + exponent - fraction_bits;
     if (magnitude == 0) return '0;
     significand = significand << scale;
-    return value[7] ? -$signed(significand) : $signed(significand);
+    return value[15] ? -$signed(significand) : $signed(significand);
+  endfunction
+
+  function automatic logic signed [25:0] posit8_q12(input logic [7:0] value);
+    return 26'(posit_fixed(16'($signed(value)), 8));
   endfunction
 
   logic signed [63:0] posit_quire_q;
-  wire pq_format_ok = fmt == FMT_P8;
+  wire pq8_format = fmt == FMT_P8;
+  wire pq16_format = fmt == FMT_P16;
   wire pq_operands_ok = !(|a[63:8]) && !(|b[63:8]) &&
                         a[7:0] != 8'h80 && b[7:0] != 8'h80;
   wire signed [51:0] pq_product = posit8_q12(a[7:0]) * posit8_q12(b[7:0]);
   wire signed [64:0] pq_sum = 65'(posit_quire_q) + 65'(pq_product);
   wire pq_overflow = pq_sum[64] != pq_sum[63];
 
+  // Posit16 spans 2^-28 to 2^28. Its exact products use 56 fractional bits.
+  logic signed [127:0] posit16_quire_q;
+  wire pq16_operands_ok = !(|a[63:16]) && !(|b[63:16]) &&
+                         a[15:0] != 16'h8000 && b[15:0] != 16'h8000;
+  wire signed [115:0] pq16_product =
+      posit_fixed($signed(a[15:0]), 16) * posit_fixed($signed(b[15:0]), 16);
+  wire signed [128:0] pq16_sum = 129'(posit16_quire_q) + 129'(pq16_product);
+  wire pq16_overflow = pq16_sum[128] != pq16_sum[127];
+
+  // Positive posit encodings are monotonic. Find the largest encoding whose
+  // exact value does not exceed the quire magnitude, then compare against the
+  // next encoding's midpoint. Ties select an even encoding, including zero.
+  function automatic logic [63:0] posit8_magnitude_q24(input logic [6:0] code);
+    return {26'd0, $unsigned(posit8_q12({1'b0, code})), 12'd0};
+  endfunction
+
+  logic [7:0] pq_rounded;
+  logic pq_inexact, pq_saturate;
+  always_comb begin : round_posit_quire
+    logic [63:0] magnitude, lower_value, upper_value;
+    logic [7:0] low, high, mid;
+    logic [6:0] selected;
+    logic [64:0] twice_value, twice_midpoint;
+
+    magnitude = posit_quire_q[63] ? -$unsigned(posit_quire_q) : $unsigned(posit_quire_q);
+    low = 8'd0;
+    high = 8'd127;
+    for (int step = 0; step < 7; step++) begin
+      mid = (low + high + 8'd1) >> 1;
+      if (posit8_magnitude_q24(mid[6:0]) <= magnitude)
+        low = mid;
+      else
+        high = mid - 8'd1;
+    end
+
+    lower_value = posit8_magnitude_q24(low[6:0]);
+    upper_value = posit8_magnitude_q24(low == 8'd127 ? 7'd127 : low[6:0] + 7'd1);
+    twice_value = {magnitude, 1'b0};
+    twice_midpoint = {1'b0, lower_value} + {1'b0, upper_value};
+    selected = low[6:0];
+    if (low != 8'd127 &&
+        (twice_value > twice_midpoint || (twice_value == twice_midpoint && low[0])))
+      selected = low[6:0] + 7'd1;
+
+    pq_rounded = posit_quire_q[63] ? -{1'b0, selected} : {1'b0, selected};
+    pq_inexact = magnitude != posit8_magnitude_q24(selected);
+    pq_saturate = low == 8'd127 && magnitude > lower_value;
+  end
+
   always_ff @(posedge clk or negedge rst_n) begin
-    if (!rst_n) posit_quire_q <= '0;
-    else if (op_valid && pq_format_ok) begin
-      if (op == NUM_PQCLR) posit_quire_q <= '0;
-      else if (op == NUM_PQACC && pq_operands_ok && !pq_overflow)
-        posit_quire_q <= pq_sum[63:0];
+    if (!rst_n) begin
+      posit_quire_q <= '0;
+      posit16_quire_q <= '0;
+    end else if (op_valid) begin
+      if (op == NUM_PQCLR) begin
+        if (pq8_format) posit_quire_q <= '0;
+        if (pq16_format) posit16_quire_q <= '0;
+      end else if (op == NUM_PQACC) begin
+        if (pq8_format && pq_operands_ok && !pq_overflow)
+          posit_quire_q <= pq_sum[63:0];
+        if (pq16_format && pq16_operands_ok && !pq16_overflow)
+          posit16_quire_q <= pq16_sum[127:0];
+      end
     end
   end
 
@@ -258,6 +323,13 @@ module rv64_num_unit (
     .b     (b),
     .y     (wide_y),
     .flags (wide_flags)
+  );
+
+  logic [63:0] unum_result;
+  logic unum_invalid, unum_overflow, unum_inexact;
+  rv64_num_unum u_unum (
+    .fmt(fmt), .a(a), .b(b), .result(unum_result), .invalid(unum_invalid),
+    .overflow(unum_overflow), .inexact(unum_inexact)
   );
 
   // ---- result and flags ----------------------------------------------------
@@ -304,14 +376,27 @@ module rv64_num_unit (
         if (quire_ovf) flags[FLAG_QUIRE_OVF] = 1'b1;
       end
 
-      NUM_PQCLR, NUM_PQGET: begin
-        if (pq_format_ok && op == NUM_PQGET) y = posit_quire_q;
-        flags[FLAG_INVALID] = !pq_format_ok;
+      NUM_PQCLR: flags[FLAG_INVALID] = !(pq8_format || pq16_format);
+
+      NUM_PQGET: begin
+        if (pq8_format) y = posit_quire_q;
+        else if (pq16_format) y = posit16_quire_q[63:0];
+        else if (fmt == FMT_PQ_HIGH_P16) y = posit16_quire_q[127:64];
+        else if (fmt == FMT_PQ_ROUND_P8) begin
+          y = {56'd0, pq_rounded};
+          flags[FLAG_INEXACT] = pq_inexact;
+          flags[FLAG_SATURATE] = pq_saturate;
+        end else flags[FLAG_INVALID] = 1'b1;
       end
 
       NUM_PQACC: begin
-        flags[FLAG_INVALID] = !pq_format_ok || !pq_operands_ok;
-        flags[FLAG_QUIRE_OVF] = pq_format_ok && pq_operands_ok && pq_overflow;
+        if (pq8_format) begin
+          flags[FLAG_INVALID] = !pq_operands_ok;
+          flags[FLAG_QUIRE_OVF] = pq_operands_ok && pq_overflow;
+        end else if (pq16_format) begin
+          flags[FLAG_INVALID] = !pq16_operands_ok;
+          flags[FLAG_QUIRE_OVF] = pq16_operands_ok && pq16_overflow;
+        end else flags[FLAG_INVALID] = 1'b1;
       end
 
       NUM_QCLR: y = 64'd0;
@@ -333,6 +418,13 @@ module rv64_num_unit (
       NUM_SDADD, NUM_SDSUB: begin
         y     = wide_y;
         flags = wide_flags;
+      end
+
+      NUM_UNUM: begin
+        y = unum_result;
+        flags[FLAG_INVALID] = unum_invalid;
+        flags[FLAG_OVERFLOW] = unum_overflow;
+        flags[FLAG_INEXACT] = unum_inexact;
       end
 
       default: begin

@@ -9,7 +9,9 @@
 // =============================================================================
 `default_nettype none
 
-module rv64_fetch (
+module rv64_fetch #(
+  parameter bit ENABLE_EXPANSION_CACHE = 1'b1
+) (
   input  logic        clk,
   input  logic        rst_n,
 
@@ -75,12 +77,38 @@ module rv64_fetch (
   assign insn_raw = win[{pc_i[2:1], 4'b0000} +: 32];
   assign straddle = (pc_i[2:0] == 3'd6) && (insn_raw[1:0] == 2'b11);
 
-  logic [31:0] cur_insn;
-  logic        rvc_illegal;
-  rv64_rvc_expand u_rvc (
-    .cin(insn_raw[15:0]), .cout(cur_insn), .illegal(rvc_illegal), .is_ebreak()
-  );
+  // Expansion is a pure function of the compressed encoding. Keying by
+  // the current bytes keeps translation, permissions and FENCE.I behavior
+  // on the normal fetch path, even when a different PC reuses an entry.
+  localparam int EXPANSION_ENTRIES = 8;
+  logic [EXPANSION_ENTRIES-1:0] expansion_valid_q;
+  logic [15:0] expansion_tag_q [EXPANSION_ENTRIES];
+  logic [31:0] expansion_data_q [EXPANSION_ENTRIES];
+  wire [2:0] expansion_index = insn_raw[15:13] ^ insn_raw[9:7] ^ insn_raw[4:2];
   wire is_rvc = (insn_raw[1:0] != 2'b11);
+  wire expansion_hit = ENABLE_EXPANSION_CACHE && is_rvc &&
+                       expansion_valid_q[expansion_index] &&
+                       expansion_tag_q[expansion_index] == insn_raw[15:0];
+
+  logic [31:0] expanded_insn;
+  logic rvc_illegal;
+  rv64_rvc_expand u_rvc (
+    .cin(is_rvc && !expansion_hit ? insn_raw[15:0] : 16'b0),
+    .cout(expanded_insn), .illegal(rvc_illegal), .is_ebreak()
+  );
+  wire [31:0] cur_insn = expansion_hit ? expansion_data_q[expansion_index]
+                                        : expanded_insn;
+
+  always_ff @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+      expansion_valid_q <= '0;
+    end else if (ENABLE_EXPANSION_CACHE && !redirect && consume && insn_valid &&
+                 is_rvc && !expansion_hit && !rvc_illegal) begin
+      expansion_valid_q[expansion_index] <= 1'b1;
+      expansion_tag_q[expansion_index] <= insn_raw[15:0];
+      expansion_data_q[expansion_index] <= expanded_insn;
+    end
+  end
 
   rv64_predecode u_pre (
     .insn           (insn),
