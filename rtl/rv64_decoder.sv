@@ -58,7 +58,7 @@ module rv64_decoder (
         if (funct3 == 3'b111) begin
           ctrl.is_rvv = !insn[31] || insn[31:30] == 2'b11;
           ctrl.reg_we = ctrl.is_rvv;
-        end else if (insn[25]) begin
+        end else begin
           case (funct6)
             6'b000000, 6'b001001, 6'b001010, 6'b001011:
               ctrl.is_rvv = funct3 == 3'b000 || funct3 == 3'b011 || funct3 == 3'b100;

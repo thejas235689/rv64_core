@@ -135,8 +135,11 @@ module rv64_vunit (
 
   assign native_vl = native_bad_type ? 7'd0
                    : native_avl >= {57'd0, native_max} ? native_max : native_avl[6:0];
+  // A masked integer operation cannot overwrite the register holding its mask.
+  wire native_mask_overlap = !native_insn[25] && native_insn[11:7] == 0;
   assign native_illegal = !native_setvl &&
-                          (native_vill_q || vtype_q[5] || lmul_sel != 0 || vstart_q != 0);
+                          (native_vill_q || vtype_q[5] || lmul_sel != 0 ||
+                           vstart_q != 0 || native_mask_overlap);
   assign native_busy = go_q || native_go_q || el_walk_q || grp_walk_q || grp_commit_q || load_we_q;
 
   // ---- register file -------------------------------------------------------

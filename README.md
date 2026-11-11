@@ -28,10 +28,10 @@ to a private repository as-is.
    recorded in the profile and pinned by the conformance test.
 
    **V is not advertised.** The native M-mode subset implements `vsetvli`,
-   `vsetivli`, and unmasked integer `vadd`, `vsub`, `vand`, `vor`, and
+   `vsetivli`, and masked or unmasked integer `vadd`, `vsub`, `vand`, `vor`, and
    `vxor` at LMUL=1 and SEW=8/16/32/64. It shares the 64-bit vector registers
    with the existing control window (`0x780`–`0x78F`). Native loads/stores,
-   masked execution, vector CSRs and VS context management are outside this
+   vector CSRs and VS context management are outside this
    subset. Q, Zfh and Zacas remain unimplemented.
 2. **Microarchitecture** — in-order IF/ID/EX/MEM/WB pipeline. Full EX/MEM and
    MEM/WB operand forwarding plus a WB→ID write-through bypass, load-use
