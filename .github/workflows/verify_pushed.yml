@@ -25,4 +25,4 @@ jobs:
         run: |
           chmod +x ci/verify_pushed.sh
           REPO_URL="https://github.com/${{ github.repository }}.git" \
-            ./ci/verify_pushed.sh "${{ github.ref_name }}"
+            ./ci/verify_pushed.sh "${{ github.event_name == 'pull_request' && github.head_ref || github.ref_name }}"

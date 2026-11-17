@@ -31,7 +31,7 @@ module rv64_fetch (
   output logic        insn_valid,
   output logic [63:0] insn_pc,
   output logic [31:0] insn,
-  output logic [1:0]  insn_len,
+  output logic [2:0]  insn_len,
   output logic        fault_valid,
   output logic [63:0] fault_pc,
 
@@ -110,7 +110,7 @@ module rv64_fetch (
   // Default to 4 when the beat is invalid: f_consume is already false then, so the
   // length is only observed for a real instruction, and it can never be the garbage
   // value computed from a stale insn_raw.
-  assign insn_len   = !insn_valid ? 2'd4 : (is_rvc ? 2'd2 : 2'd4);
+  assign insn_len   = !insn_valid ? 3'd4 : (is_rvc ? 3'd2 : 3'd4);
 
   assign fault_valid = fault_q;
   assign fault_pc    = fault_addr_q;

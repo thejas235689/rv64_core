@@ -58,11 +58,19 @@ jobs:
     timeout-minutes: 60
     env:
       # One place to change it. Everything below uses this, never a bare python3.
-      PYTHON: /usr/local/bin/python3
+      PYTHON: python3
       # Repository variable, empty by default: nothing is excused unless written down.
       ALLOWED_SKIP_TESTS: ${{ vars.ALLOWED_SKIP_TESTS }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Resolve Python executable for regression scripts
+        run: echo "PYTHON=$(command -v python3)" >> "$GITHUB_ENV"
 
       - name: Install simulator
         run: |
@@ -83,7 +91,7 @@ jobs:
 
       - name: Assert the interpreter is the pinned one
         run: |
-          "$PYTHON" -c 'import sys; assert sys.executable == "/usr/local/bin/python3", sys.executable; print("pinned interpreter:", sys.executable, sys.version.split()[0])'
+          "$PYTHON" -c 'import shutil,sys; assert sys.executable == shutil.which("python3"), (sys.executable, shutil.which("python3")); print("pinned interpreter:", sys.executable, sys.version.split()[0])'
           "$PYTHON" -c 'import cocotb; print("cocotb", cocotb.__version__)'
           "$PYTHON" -c 'import yaml; print("pyyaml", yaml.__version__)'
           echo "bare python3 resolves to: $(command -v python3 || echo none)"
@@ -143,6 +151,13 @@ jobs:
         env:
           BATCH_SIZE: "8"
           BATCH_TIMEOUT: "900"
+
+      - name: Targeted posit and quire regression
+        if: always()
+        # Explicitly exercises the variable-width posit regime decoder and
+        # quire operations changed in this PR; this test is not in the core
+        # batch list, so keep it as a dedicated gate.
+        run: '"$PYTHON" sim/run.py --testcase test_posit_quire'
 
       - name: PLIC-lite regression (batched, honest scoring)
         run: bash ci/run_batches.sh

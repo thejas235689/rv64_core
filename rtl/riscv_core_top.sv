@@ -279,7 +279,7 @@ module riscv_core_top #(
   logic        f_insn_valid;
   logic [63:0] f_insn_pc;
   logic [31:0] f_insn;
-  logic [1:0]  f_insn_len;
+  logic [2:0]  f_insn_len;
   logic        f_fault_valid;
   logic [63:0] f_fault_pc;
   logic        f_req_valid;
@@ -287,6 +287,7 @@ module riscv_core_top #(
   logic        f_consume, f_pause, f_redirect;
   // ---- write-through data cache between the LSU and the bus ----------------
   logic        dc_req_valid, dc_req_we, dc_req_ready, dc_rsp_valid, dc_rsp_error;
+  logic        dc_mgmt_done;
   logic [63:0] dc_req_addr, dc_req_wdata, dc_rsp_rdata;
   logic [7:0]  dc_req_wstrb;
   logic [31:0] dc_hits, dc_misses;
@@ -380,6 +381,7 @@ module riscv_core_top #(
                      ((ex_mem_insn[24:20] == 5'd0) || (ex_mem_insn[24:20] == 5'd4))),
     .mgmt_zero      (ex_mem_insn[24:20] == 5'd4),   // cbo.zero vs cbo.inval
     .mgmt_addr      (ex_mem_addr),
+    .mgmt_done      (dc_mgmt_done),
     .bypass         (amcce_bypass),
     .acc_hit        (dc_acc_hit),
     .acc_miss       (dc_acc_miss),
@@ -1603,7 +1605,7 @@ module riscv_core_top #(
         pc_f <= f_redirect_pc;
       end else if (f_consume) begin
         pc_f <= f_pred_taken ? f_pred_target
-                             : (f_insn_pc + ((f_insn_len == 2'd2) ? 64'd2 : 64'd4));
+                             : (f_insn_pc + ((f_insn_len == 3'd2) ? 64'd2 : 64'd4));
       end
 
       if (flush_front) begin
@@ -1611,7 +1613,7 @@ module riscv_core_top #(
       end else if (f_consume) begin
         if_id_v       <= 1'b1;
         if_id_pc      <= f_insn_pc;
-        if_id_rvc     <= (f_insn_len == 2'd2);
+        if_id_rvc     <= (f_insn_len == 3'd2);
         if_id_insn    <= f_insn;
         if_id_ptaken  <= f_pred_taken;
         if_id_ptarget <= f_pred_target;
