@@ -74,6 +74,7 @@ BATCH_SIZE="${BATCH_SIZE:-8}"
 BATCH_TIMEOUT="${BATCH_TIMEOUT:-900}"
 LOGDIR="${LOGDIR:-ci/logs}"
 ALLOWED_SKIP_TESTS="${ALLOWED_SKIP_TESTS:-}"
+skip=0
 
 is_allowed_skip() {
   local t="$1" a
@@ -146,7 +147,7 @@ fi
 # had passed.
 SIMERR_RE='(:[0-9]+: (syntax )?error:|^Traceback \(most recent call last\):|^[A-Za-z]*Error:|^RuntimeError|Segmentation fault|core dumped|Killed|command not found|Simulation (error|aborted)|UVM_FATAL|UVM_ERROR[[:space:]]*:[[:space:]]*[1-9])'
 
-total=0; pass=0; fail=0; skip=0
+total=$skip; pass=0; fail=0
 declare -a failed_names=()
 
 echo "run_batches: suite=$SUITE module=$MODULE_FILE tests=${#TESTS[@]} batch=$BATCH_SIZE timeout=${BATCH_TIMEOUT}s"
