@@ -66,8 +66,15 @@ def satya_available():
     return shutil.which(os.environ.get("SATYA", "satya")) is not None
 
 
-SATYA_AVAILABLE = satya_available()
-SATYA_SKIP = "Satya PSS solver not on PATH (set SATYA=... to enable the PSS tests)"
+# CI exports an explicit probe result so simulator wrappers cannot change
+# PATH and make Python disagree with the workflow's Satya availability check.
+# Outside CI, fall back to probing the configured executable directly.
+SATYA_AVAILABLE = (
+    os.environ.get("SATYA_AVAILABLE") == "1"
+    if "SATYA_AVAILABLE" in os.environ
+    else satya_available()
+)
+SATYA_SKIP = "Satya PSS solver unavailable (set SATYA or SATYA_AVAILABLE=1 to enable the PSS tests)"
 
 COV = {}
 
