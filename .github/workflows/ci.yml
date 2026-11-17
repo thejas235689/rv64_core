@@ -58,8 +58,6 @@ jobs:
     env:
       # One place to change it. Everything below uses this, never a bare python3.
       PYTHON: python3
-      # Repository variable, empty by default: nothing is excused unless written down.
-      ALLOWED_SKIP_TESTS: ${{ vars.ALLOWED_SKIP_TESTS || '' }}
     steps:
       - uses: actions/checkout@v4
 
@@ -151,9 +149,11 @@ jobs:
           SATYA_BIN="${SATYA:-satya}"
           if command -v "$SATYA_BIN" >/dev/null 2>&1; then
             echo "Satya solver found: $(command -v "$SATYA_BIN")"
+            echo "SATYA_AVAILABLE=1" >> "$GITHUB_ENV"
             echo "PSS tests will run as mandatory tests."
           else
             echo "Satya solver unavailable: $SATYA_BIN"
+            echo "SATYA_AVAILABLE=0" >> "$GITHUB_ENV"
             echo "::warning::Satya is not installed; Satya-dependent PSS tests will report SKIP, not PASS. This is not a full PSS verification pass."
           fi
 
