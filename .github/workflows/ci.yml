@@ -154,7 +154,8 @@ jobs:
           else
             echo "Satya solver unavailable: $SATYA_BIN"
             echo "SATYA_AVAILABLE=0" >> "$GITHUB_ENV"
-            echo "::warning::Satya is not installed; Satya-dependent PSS tests will report SKIP, not PASS. This is not a full PSS verification pass."
+            echo "ALLOWED_SKIP_TESTS=test_pss_alu test_pss_alu_drives_core test_pss_memory test_pss_word" >> "$GITHUB_ENV"
+            echo "::warning::Satya is not installed; four Satya-dependent PSS tests will be excluded and reported SKIP. This is not a full PSS verification pass."
           fi
 
       - name: Core regression (batched, honest scoring)
