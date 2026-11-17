@@ -80,21 +80,8 @@ privilege:
   sret: true
   mret: true
   csr_privilege_check: "csr_addr[9:8] must be <= current privilege, else illegal instruction (cause 2)"
-  # Recorded, not waived. Each entry is asserted by the conformance test, so if
-  # the RTL is fixed the profile has to be updated in the same commit.
-  deviations:
-    - name: ecall_cause
-      observed_cause: 11
-      observed: "ecall raises cause 11 (ECALL_M) from every privilege mode"
-      spec_requires: "11 from M, 9 from S, 8 from U"
-      evidence: >-
-        rtl/riscv_core_top.sv assigns CAUSE_ECALL_M unconditionally at the ecall
-        decode; CAUSE_ECALL_S and CAUSE_ECALL_U are declared in rv64_pkg.sv and
-        used nowhere. Measured: an ecall executed in S-mode or U-mode reports
-        cause 11.
-      pinned_by: >-
-        test_isa_s_executes and test_isa_u_executes assert this cause, and prove
-        the mode really was entered from mstatus.MPP after the trap instead.
+  # Architectural synchronous exception causes for ECALL by originating mode.
+  ecall_causes: {M: 11, S: 9, U: 8}
 
 # -----------------------------------------------------------------------------
 # Extensions that are implemented but are NOT misa letters. These are claimed,
