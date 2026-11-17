@@ -340,3 +340,22 @@ usual choice for hardware designs. The MIT option is shorter and simpler. Unless
 you explicitly state otherwise, any contribution you intentionally submit for
 inclusion in this work shall be dual-licensed as above, with no additional terms
 or conditions.
+
+
+## Development backlog: nine remaining work packages (November 2026)
+
+The following are **planned/partial development efforts, not shipped or verified capabilities**. Implementation status must be confirmed by code, regression results and an approved PR on the relevant branch. The existing masked native-RVV work in [PR #21](https://github.com/thejas235689/rv64_core/pull/21) is **open** against `feature/rtl-parallel-integration` and is not counted as merged.
+
+| Work package | Tracking issue | Owner role | Status |
+| --- | --- | --- | --- |
+| RVV grouping, native memory and context | [#22](https://github.com/thejas235689/rv64_core/issues/22) | rvv-agent | Partial |
+| Posit and quire expansion | [#23](https://github.com/thejas235689/rv64_core/issues/23) | posit-agent | Partial |
+| Signed LNS arithmetic | [#24](https://github.com/thejas235689/rv64_core/issues/24) | lns-agent | Partial |
+| Authorized core-level stride prefetch | [#25](https://github.com/thejas235689/rv64_core/issues/25) | prefetch-agent | Partial |
+| TAGE, indirect and multipath predictor | [#26](https://github.com/thejas235689/rv64_core/issues/26) | branch-agent | Partial |
+| Trace/uop cache, fusion and multi-stream | [#27](https://github.com/thejas235689/rv64_core/issues/27) | frontend-agent | Partial |
+| Custom Unum | [#28](https://github.com/thejas235689/rv64_core/issues/28) | unum-agent | Not implemented |
+| Nonblocking coherent caches | [#29](https://github.com/thejas235689/rv64_core/issues/29) | cache-agent | Not implemented |
+| Seven-stage, superscalar and OoO | [#30](https://github.com/thejas235689/rv64_core/issues/30) | pipeline-agent | Not implemented |
+
+See [full technical contract](docs/NINE_WORKPACKAGES_SPEC.md) and [agent assignments](AGENTS.md). These work packages are large, independent research/engineering efforts. No subagent execution or CI success is implied by adding tracking documents.
