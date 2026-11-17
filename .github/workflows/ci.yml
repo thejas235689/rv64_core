@@ -59,10 +59,10 @@ jobs:
       # One place to change it. Everything below uses this, never a bare python3.
       PYTHON: python3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -140,23 +140,35 @@ jobs:
           BATCH_SIZE: "6"
           BATCH_TIMEOUT: "600"
 
-      - name: Detect optional Satya PSS solver
-        # The solver is not installed by the default GitHub runner. Do not let
-        # its absence masquerade as an RTL failure; record exactly which PSS
-        # checks are not exercised. If Satya is present, all PSS tests remain
-        # mandatory and their failures fail CI.
+      # Satya is maintained in the companion repository. Build that exact
+      # PSS engine revision instead of installing the unrelated PyPI package
+      # with the same name or silently skipping the processor PSS tests.
+      - name: Checkout Satya PSS engine
+        uses: actions/checkout@v7
+        with:
+          repository: thejas235689/satya
+          ref: 2c97a8f80cd5efc53d3cfa30edb4e20907b82186
+          path: satya-src
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build and install Satya PSS engine
         run: |
-          SATYA_BIN="${SATYA:-satya}"
-          if command -v "$SATYA_BIN" >/dev/null 2>&1; then
-            echo "Satya solver found: $(command -v "$SATYA_BIN")"
-            echo "SATYA_AVAILABLE=1" >> "$GITHUB_ENV"
-            echo "PSS tests will run as mandatory tests."
-          else
-            echo "Satya solver unavailable: $SATYA_BIN"
-            echo "SATYA_AVAILABLE=0" >> "$GITHUB_ENV"
-            echo "ALLOWED_SKIP_TESTS=test_pss_alu test_pss_alu_drives_core test_pss_memory test_pss_word" >> "$GITHUB_ENV"
-            echo "::warning::Satya is not installed; four Satya-dependent PSS tests will be excluded and reported SKIP. This is not a full PSS verification pass."
-          fi
+          cargo build --manifest-path satya-src/Cargo.toml --release
+          mkdir -p "$RUNNER_TEMP/satya/bin"
+          install -m 0755 satya-src/target/release/satya "$RUNNER_TEMP/satya/bin/satya"
+          echo "$RUNNER_TEMP/satya/bin" >> "$GITHUB_PATH"
+          echo "SATYA=$RUNNER_TEMP/satya/bin/satya" >> "$GITHUB_ENV"
+
+      - name: Verify Satya PSS engine and model before regression
+        run: |
+          "$SATYA" backends
+          "$SATYA" gen pss/cpu/rv64_cpu_pss.pss --action alu_op --backend json --seed 3 > "$RUNNER_TEMP/satya-smoke.json"
+          "$PYTHON" -c 'import json,sys; d=json.load(open(sys.argv[1])); assert d.get("steps"), d; print("Satya PSS smoke test: generated", len(d["steps"]), "step(s)")' "$RUNNER_TEMP/satya-smoke.json"
+          echo "SATYA_AVAILABLE=1" >> "$GITHUB_ENV"
+          echo "PSS tests are mandatory; no Satya-dependent tests may be skipped."
+
 
       - name: Core regression (batched, honest scoring)
         # Batches keep each invocation inside the step limit; run_batches.sh
@@ -184,7 +196,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cocotb-results
           # results.xml lands in the build dir, not next to the testbench. The
@@ -194,3 +206,41 @@ jobs:
             sim/sim_build_*/results.xml
             ci/logs/
           if-no-files-found: warn
+
+  verilator-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # sim/run.py imports cocotb_tools.runner even for --list-rtl.
+      # Install the dependency before asking it for the canonical RTL list.
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+
+      - name: Install RTL-list dependencies
+        run: python -m pip install --quiet cocotb
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends verilator
+
+      - name: Lint the canonical RTL source list
+        run: |
+          set -euo pipefail
+          mkdir -p ci/logs
+          mapfile -t RTL < <(python sim/run.py --list-rtl)
+          echo "Verilator: $(verilator --version)"
+          echo "RTL sources: ${#RTL[@]}"
+          if [ "${#RTL[@]}" -lt 40 ]; then
+            echo "RTL source list is incomplete; refusing to run an empty lint"
+            exit 1
+          fi
+          for f in "${RTL[@]}"; do
+            [ -f "$f" ] || { echo "missing RTL source: $f"; exit 1; }
+          done
+          verilator --lint-only --timing -sv -Wall -Wno-fatal \
+            --top-module riscv_core_top "${RTL[@]}" 2>&1 | tee ci/logs/verilator-lint.log

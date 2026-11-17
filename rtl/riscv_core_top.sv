@@ -258,7 +258,7 @@ module riscv_core_top #(
   // ===========================================================================
   logic        trap_taken, trap_to_csr, mem_trap;
   logic        irq_take, wfi_irq_take, fetch_fault_take;
-  logic        redirect_ex, ebreak_commit, mret_commit, sret_commit, ex_advance;
+  logic        redirect_ex, ebreak_commit, mret_commit, sret_commit, fence_i_commit, ex_advance;
   logic [1:0]  cur_priv;
   logic        trap_to_s;
   logic [63:0] csr_stvec, csr_satp;
@@ -423,10 +423,8 @@ module riscv_core_top #(
     .fill_rsp_valid (rom_sel_q ? rom_rsp_valid : if_rsp_valid),
     .fill_rsp_data  (rom_sel_q ? rom_rsp_rdata : if_rsp_data),
     .fill_rsp_error (rom_sel_q ? rom_rsp_error : if_rsp_error),
-    // tied low: this port was unconnected, which left the FSM's invalidate branch
-    // undefined. Driving it from fence.i is a separate change -- no fence.i commit
-    // signal exists in the core yet.
-    .invalidate     (1'b0),
+    // A committed fence.i serializes the front end and invalidates every line.
+    .invalidate     (fence_i_commit),
     .hit_count      (ic_hits),
     .miss_count     (ic_misses)
   );
@@ -1270,8 +1268,12 @@ module riscv_core_top #(
       ex_exc_cause = CAUSE_ILLEGAL;
       ex_exc_tval  = {32'd0, id_ex_insn};
     end else if (id_ex_ctrl.is_ecall) begin
-      ex_exc       = 1'b1;
-      ex_exc_cause = CAUSE_ECALL_M;
+      ex_exc = 1'b1;
+      unique case (cur_priv)
+        2'b00:   ex_exc_cause = CAUSE_ECALL_U;
+        2'b01:   ex_exc_cause = CAUSE_ECALL_S;
+        default: ex_exc_cause = CAUSE_ECALL_M;
+      endcase
     end else if (id_ex_ctrl.is_ebreak && !EBREAK_ENTERS_DEBUG) begin
       ex_exc       = 1'b1;
       ex_exc_cause = CAUSE_BREAKPOINT;
@@ -1500,6 +1502,12 @@ module riscv_core_top #(
   assign mret_commit = ex_mem_v && ex_mem_is_mret && !mem_trap;
   assign sret_commit = ex_mem_v && ex_mem_is_sret && !mem_trap;
   assign ebreak_commit = ex_mem_v && ex_mem_is_ebreak && EBREAK_ENTERS_DEBUG && !mem_trap;
+  // fence.i reaches MEM only after all older stores have completed. Commit it
+  // here, invalidate the I-cache, and restart fetch at the following instruction
+  // so no instruction prefetched before the fence can execute afterward.
+  assign fence_i_commit = ex_mem_v && !mem_stall && !mem_trap &&
+                          (ex_mem_insn[6:0] == 7'b0001111) &&
+                          (ex_mem_insn[14:12] == 3'b001);
 
   assign bpu_upd_valid = ex_advance && id_ex_v && !trap_taken &&
                          (id_ex_ctrl.is_branch || id_ex_ctrl.is_jal || id_ex_ctrl.is_jalr);
@@ -1560,7 +1568,7 @@ module riscv_core_top #(
   assign dbg_resume_pulse = dbg_resume_req && halted_q;
   // MRET and EBREAK both redirect the front end: whatever was fetched behind
   // them is wrong-path and must be squashed, exactly like a branch redirect.
-  assign flush_front = trap_taken || redirect_ex || ebreak_commit || mret_commit;
+  assign flush_front = trap_taken || redirect_ex || ebreak_commit || mret_commit || fence_i_commit;
 
   always_comb begin
     f_redirect    = 1'b1;
@@ -1573,6 +1581,8 @@ module riscv_core_top #(
     end else if (redirect_ex) begin
       f_redirect_pc = redirect_pc_ex;
     end else if (ebreak_commit) begin
+      f_redirect_pc = ex_mem_pc + 64'd4;
+    end else if (fence_i_commit) begin
       f_redirect_pc = ex_mem_pc + 64'd4;
     end else if (dbg_resume_pulse) begin
       f_redirect_pc = if_id_v ? if_id_pc : pc_f;
@@ -1717,7 +1727,7 @@ module riscv_core_top #(
       ex_mem_exc        <= 1'b0;
       ex_mem_exc_cause  <= 64'd0;
       ex_mem_exc_tval   <= 64'd0;
-    end else if (trap_taken || mret_commit || ebreak_commit) begin
+    end else if (trap_taken || mret_commit || ebreak_commit || fence_i_commit) begin
       // A trap, an MRET or an EBREAK that commits in MEM must also stop the
       // younger instruction sitting in EX from advancing into MEM. Clearing
       // if_id/id_ex alone is not enough: the EX instruction is transferred to
