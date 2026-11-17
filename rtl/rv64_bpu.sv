@@ -244,9 +244,9 @@ module rv64_bpu (
         // perceptron: nudge each weight toward the outcome
         for (int i = 0; i < PW; i++) begin
           if (ghr[i] == upd_taken) begin
-            if (wtab[pidx_upd][i] != 6'sd31) wtab[pidx_of(upd_pc)][i] <= wtab[pidx_of(upd_pc)][i] + 6'sd1;
+            if (wtab[pidx_upd][i] != 6'sd31) wtab[pidx_upd][i] <= wtab[pidx_upd][i] + 6'sd1;
           end else begin
-            if (wtab[pidx_of(upd_pc)][i] != -6'sd32) wtab[pidx_of(upd_pc)][i] <= wtab[pidx_of(upd_pc)][i] - 6'sd1;
+            if (wtab[pidx_upd][i] != -6'sd32) wtab[pidx_upd][i] <= wtab[pidx_upd][i] - 6'sd1;
           end
         end
         ghr <= {ghr[6:0], upd_taken};
@@ -264,18 +264,6 @@ module rv64_bpu (
       end
     end
   end
-
-  function automatic logic [4:0] pidx_of(input logic [63:0] pc);
-    return pc[6:2];
-  endfunction
-
-  function automatic logic [7:0] idx_of(input logic [63:0] pc);
-    return pc[9:2];
-  endfunction
-
-  function automatic logic [7:0] gidx_of(input logic [63:0] pc);
-    return pc[9:2] ^ ghr;
-  endfunction
 
 endmodule
 `default_nettype wire
