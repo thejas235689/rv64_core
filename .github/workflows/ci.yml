@@ -59,10 +59,10 @@ jobs:
       # One place to change it. Everything below uses this, never a bare python3.
       PYTHON: python3
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
@@ -144,7 +144,7 @@ jobs:
       # PSS engine revision instead of installing the unrelated PyPI package
       # with the same name or silently skipping the processor PSS tests.
       - name: Checkout Satya PSS engine
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: thejas235689/satya
           ref: 2c97a8f80cd5efc53d3cfa30edb4e20907b82186
@@ -196,7 +196,7 @@ jobs:
 
       - name: Upload results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: cocotb-results
           # results.xml lands in the build dir, not next to the testbench. The
@@ -211,12 +211,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # sim/run.py imports cocotb_tools.runner even for --list-rtl.
       # Install the dependency before asking it for the canonical RTL list.
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: '3.12'
 
