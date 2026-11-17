@@ -286,7 +286,8 @@ module riscv_core_top #(
   logic [63:0] f_req_addr;
   logic        f_consume, f_pause, f_redirect;
   // ---- write-through data cache between the LSU and the bus ----------------
-  logic        dc_req_valid, dc_req_we, dc_req_ready, dc_rsp_valid, dc_rsp_error;\n  logic        dc_mgmt_done;
+  logic        dc_req_valid, dc_req_we, dc_req_ready, dc_rsp_valid, dc_rsp_error;
+  logic        dc_mgmt_done;
   logic [63:0] dc_req_addr, dc_req_wdata, dc_rsp_rdata;
   logic [7:0]  dc_req_wstrb;
   logic [31:0] dc_hits, dc_misses;
@@ -379,7 +380,8 @@ module riscv_core_top #(
                      (ex_mem_insn[14:12] == 3'b010) &&
                      ((ex_mem_insn[24:20] == 5'd0) || (ex_mem_insn[24:20] == 5'd4))),
     .mgmt_zero      (ex_mem_insn[24:20] == 5'd4),   // cbo.zero vs cbo.inval
-    .mgmt_addr      (ex_mem_addr),\n    .mgmt_done      (dc_mgmt_done),
+    .mgmt_addr      (ex_mem_addr),
+    .mgmt_done      (dc_mgmt_done),
     .bypass         (amcce_bypass),
     .acc_hit        (dc_acc_hit),
     .acc_miss       (dc_acc_miss),
