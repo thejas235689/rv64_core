@@ -1690,6 +1690,37 @@ async def test_sv39_identity(dut):
 
 
 @cocotb.test()
+async def test_fence_i_invalidates_icache(dut):
+    """A committed fence.i flushes prefetched instructions and invalidates I-cache."""
+    program = "\n".join([
+        "addi x5, x0, 1",
+        "fence.i",
+        "addi x6, x0, 2",
+        "ecall",
+    ])
+    words, _ = assemble(program)
+    iss = ISS()
+    iss.load_words(0, words)
+
+    h = Harness(dut)
+    await h.startup()
+    h.clear()
+    await h.load(words)
+    await h.reset()
+    await h.run(max_cycles=20000, stop_on_ecall=True)
+
+    iss_trace = iss.run_to(len(h.trace))
+    compare(h, iss_trace, "fence-i-invalidate")
+    assert h.gpr(5) == 1 and h.gpr(6) == 2, (
+        f"execution did not resume after fence.i: x5={h.gpr(5)}, x6={h.gpr(6)}")
+
+    core = dut.u_core if hasattr(dut, "u_core") else dut
+    misses = int(core.ic_misses.value)
+    assert misses >= 2, (
+        f"fence.i did not force an instruction-cache refetch; misses={misses}")
+
+
+@cocotb.test()
 async def test_icache_hits(dut):
     """The instruction cache must actually hit, not merely be present.
 
