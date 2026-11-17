@@ -153,6 +153,7 @@ jobs:
           BATCH_TIMEOUT: "900"
 
       - name: Targeted posit and quire regression
+        if: always()
         # Explicitly exercises the variable-width posit regime decoder and
         # quire operations changed in this PR; this test is not in the core
         # batch list, so keep it as a dedicated gate.
