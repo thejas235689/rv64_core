@@ -1711,8 +1711,10 @@ async def test_fence_i_invalidates_icache(dut):
 
     iss_trace = iss.run_to(len(h.trace))
     compare(h, iss_trace, "fence-i-invalidate")
-    assert h.gpr(5) == 1 and h.gpr(6) == 2, (
-        f"execution did not resume after fence.i: x5={h.gpr(5)}, x6={h.gpr(6)}")
+    x5 = await h.read_gpr(5)
+    x6 = await h.read_gpr(6)
+    assert x5 == 1 and x6 == 2, (
+        f"execution did not resume after fence.i: x5={x5}, x6={x6}")
 
     core = dut.u_core if hasattr(dut, "u_core") else dut
     misses = int(core.ic_misses.value)
