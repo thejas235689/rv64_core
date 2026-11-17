@@ -182,13 +182,10 @@ MPP_SETUP = {
 MPP_CODE = {"S": 1, "U": 0}
 
 
-def ecall_cause(profile=None):
-    """The cause this core raises for an ecall, as the profile records it."""
+def ecall_cause(mode, profile=None):
+    """Architectural ECALL cause for the originating privilege mode."""
     p = profile or PROFILE
-    for dev in (p.get("privilege", {}).get("deviations") or []):
-        if dev.get("name") == "ecall_cause":
-            return int(dev["observed_cause"])
-    return None
+    return int(p["privilege"]["ecall_causes"][mode])
 
 
 async def run_program(h, src, max_cycles=3000):
@@ -389,30 +386,28 @@ async def test_isa_u_executes(dut):
 # --------------------------------------------------------------------------- 3. not claimed
 @cocotb.test()
 async def test_ecall_cause_matches_profile(dut):
-    """The ecall cause this core raises must be the one the profile records.
-
-    The profile records a deviation here (privilege.deviations[ecall_cause]):
-    this core raises cause 11 from every privilege mode, where the spec wants 9
-    from S and 8 from U.  Pinning the recorded value means the RTL cannot be
-    fixed without the profile being updated in the same commit, and the profile
-    cannot quietly start claiming spec behaviour the RTL does not have.
-    """
-    recorded = ecall_cause()
-    assert recorded is not None, (
-        "the profile no longer records an ecall_cause deviation; if the RTL was "
-        "fixed, delete this test and record the spec causes instead")
+    """ECALL must report the architectural cause for M, S and U origins."""
     h = Harness(dut)
     await h.startup()
-    src = MODE_PROGRAM.format(mpp_setup=MPP_SETUP["S"]).replace(
-        "privcheck:\n    csrrs x9, mscratch, x0\n", "")
-    causes, _gpr, _trace, _labels = await run_program(h, src)
-    assert causes, "the ecall from S-mode raised no trap at all"
-    assert causes[0] == recorded, (
-        f"ecall from S-mode raised cause {causes[0]}, the profile records "
-        f"{recorded}; causes={describe(causes)}")
-    dut._log.info(f"ecall from S-mode raises cause {causes[0]}, as the profile "
-                  f"records (spec wants 9)")
 
+    # M-mode ECALL.
+    causes, _gpr, _trace, _labels = await run_program(
+        h, PRELUDE + "    ecall\n")
+    expected = ecall_cause("M")
+    assert causes and causes[0] == expected, (
+        f"M-mode ecall cause={causes[0] if causes else None}, expected {expected}")
+
+    # S/U-mode ECALLs trap to M (delegation defaults are clear); the first cause
+    # in the log is the originating-mode ECALL, followed by the M-mode handler.
+    for mode in ("S", "U"):
+        src = MODE_PROGRAM.format(mpp_setup=MPP_SETUP[mode]).replace(
+            "privcheck:\n    csrrs x9, mscratch, x0\n", "")
+        causes, _gpr, _trace, _labels = await run_program(h, src)
+        expected = ecall_cause(mode)
+        assert causes and causes[0] == expected, (
+            f"{mode}-mode ecall cause={causes[0] if causes else None}, "
+            f"expected {expected}; causes={describe(causes)}")
+        dut._log.info(f"{mode}-mode ECALL cause {causes[0]} matches the ISA profile")
 
 @cocotb.test()
 async def test_not_claimed_extensions(dut):
