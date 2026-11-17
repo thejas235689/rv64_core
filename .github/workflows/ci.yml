@@ -36,11 +36,10 @@ name: regression
 #    caught. The "ISA conformance" step now reads isa/rv64_profile.yaml and fails
 #    on any of them.
 #
-# Note on the PSS tests: test_pss_alu, test_pss_memory and test_pss_word need the
-# external `satya` solver. Without it they fail, and a test that cannot run is
-# reported as FAIL, not quietly skipped. To declare that dependency absent, set
-# the repository variable ALLOWED_SKIP_TESTS to those names; the job then ends
-# "PASS WITH SKIPS" rather than claiming a clean pass.
+# Note on PSS tests: the Satya-dependent tests use Cocotb's native skip flag
+# when the external `satya` executable is unavailable. They are then reported
+# as SKIP in the regression summary, not as PASS or FAIL. When Satya is present,
+# generator/solver errors remain real test failures.
 # -----------------------------------------------------------------------------
 
 on:
@@ -155,8 +154,7 @@ jobs:
             echo "PSS tests will run as mandatory tests."
           else
             echo "Satya solver unavailable: $SATYA_BIN"
-            echo "ALLOWED_SKIP_TESTS=test_pss_alu test_pss_memory test_pss_word" >> "$GITHUB_ENV"
-            echo "::warning::PSS tests are explicitly skipped because Satya is not installed; this is not a full verification pass."
+            echo "::warning::Satya is not installed; Satya-dependent PSS tests will report SKIP, not PASS. This is not a full PSS verification pass."
           fi
 
       - name: Core regression (batched, honest scoring)
