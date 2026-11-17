@@ -100,7 +100,33 @@ else
                         | sed 's/async def //' | sort)
 fi
 
+# Exclude tests whose external dependency was explicitly detected as absent.
+# Do this before invoking Cocotb: a skipped dependency must never be executed and
+# then retroactively relabelled as SKIP after it fails.
+declare -a runnable_tests=()
+declare -a dependency_skipped_tests=()
+for t in "${TESTS[@]}"; do
+  if is_allowed_skip "$t"; then
+    dependency_skipped_tests+=("$t")
+  else
+    runnable_tests+=("$t")
+  fi
+done
+TESTS=("${runnable_tests[@]}")
+
+if [ "${#dependency_skipped_tests[@]}" -gt 0 ]; then
+  echo "External dependency unavailable; these tests are NOT RUN:"
+  for t in "${dependency_skipped_tests[@]}"; do
+    printf '  %-40s SKIP  declared absent dependency -- proves nothing\\n' "$t"
+  done
+  skip=${#dependency_skipped_tests[@]}
+fi
+
 if [ "${#TESTS[@]}" -eq 0 ]; then
+  if [ "$skip" -gt 0 ]; then
+    echo "RESULT: PASS WITH SKIPS ($skip test(s) proved nothing)"
+    exit 0
+  fi
   echo "FATAL: discovered no tests in $MODULE_FILE -- refusing to report a green suite" >&2
   exit 2
 fi
