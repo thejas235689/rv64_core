@@ -413,9 +413,15 @@ module rv64_num_wide (
         out = 128'sd0;
       end else begin
         // length of the run of identical bits starting at bit n-2
-        for (j = n - 2; j >= 0; j = j - 1) begin
-          if (!stopped && (body[j] == body[n-2])) run = run + 1;
-          else stopped = 1'b1;
+        // Fixed upper bound makes the loop statically unrollable by
+        // synthesis frontends. Posit widths are 8, 16, or 32, so bit 30 is
+        // the largest possible starting position (n-2). For narrower
+        // formats, the guard skips positions above the active payload.
+        for (j = 30; j >= 0; j = j - 1) begin
+          if (j <= (n - 2)) begin
+            if (!stopped && (body[j] == body[n-2])) run = run + 1;
+            else stopped = 1'b1;
+          end
         end
         if (body[n-2]) k = run - 1;
         else           k = -run;
