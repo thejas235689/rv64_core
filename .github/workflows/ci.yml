@@ -152,6 +152,12 @@ jobs:
           BATCH_SIZE: "8"
           BATCH_TIMEOUT: "900"
 
+      - name: Targeted posit and quire regression
+        # Explicitly exercises the variable-width posit regime decoder and
+        # quire operations changed in this PR; this test is not in the core
+        # batch list, so keep it as a dedicated gate.
+        run: "$PYTHON" sim/run.py --testcase test_posit_quire
+
       - name: PLIC-lite regression (batched, honest scoring)
         run: bash ci/run_batches.sh
         env:
