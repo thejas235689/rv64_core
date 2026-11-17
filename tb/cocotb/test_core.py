@@ -2280,7 +2280,7 @@ async def test_pss_alu_drives_core(dut):
     assert out.returncode == 0, out.stderr
     words = [int(l, 16) for l in out.stdout.split() if l.strip()]
     import re
-    m = re.search(r"-> \\{([^}]*)\\}", out.stderr)
+    m = re.search(r"-> \{([^}]*)\}", out.stderr)
     summary = eval("{" + m.group(1) + "}") if m else None
 
     assert summary is not None, "could not parse the generator summary"
