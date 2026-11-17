@@ -1727,7 +1727,7 @@ module riscv_core_top #(
       ex_mem_exc        <= 1'b0;
       ex_mem_exc_cause  <= 64'd0;
       ex_mem_exc_tval   <= 64'd0;
-    end else if (trap_taken || mret_commit || ebreak_commit) begin
+    end else if (trap_taken || mret_commit || ebreak_commit || fence_i_commit) begin
       // A trap, an MRET or an EBREAK that commits in MEM must also stop the
       // younger instruction sitting in EX from advancing into MEM. Clearing
       // if_id/id_ex alone is not enough: the EX instruction is transferred to
