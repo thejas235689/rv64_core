@@ -2339,8 +2339,7 @@ async def _pss_run(dut, action, seed=5):
     return vals, summary
 
 
-@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
-@cocotb.test()
+@cocotb.test(skip=not SATYA_AVAILABLE)
 async def test_pss_alu(dut):
     """PSS alu_op: the solved op executes and x7 matches the solver's operands."""
     vals, s = await _pss_run(dut, "alu_op")
@@ -2350,8 +2349,7 @@ async def test_pss_alu(dut):
     assert vals.get(7) == exp, f"alu_op x7={vals.get(7)}, expected {exp}"
 
 
-@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
-@cocotb.test()
+@cocotb.test(skip=not SATYA_AVAILABLE)
 async def test_pss_word(dut):
     """PSS word_op: bit 31 differs from bit 32, so sign-extension is exercised."""
     vals, s = await _pss_run(dut, "word_op")
@@ -2363,8 +2361,7 @@ async def test_pss_word(dut):
     assert vals.get(7) == v, f"word_op x7={vals.get(7):016x}, expected {v:016x}"
 
 
-@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
-@cocotb.test()
+@cocotb.test(skip=not SATYA_AVAILABLE)
 async def test_pss_memory(dut):
     """PSS memory_op: a sized store then the same-sized load at the solved offset."""
     vals, s = await _pss_run(dut, "memory_op")
