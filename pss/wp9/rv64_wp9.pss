@@ -1,0 +1,72 @@
+// Nine-work-package portable intent model.
+// Satya-style unnamed constraints, int indices, and explicit 0/1 bools.
+// PSS does NOT directly verify RTL; generation requires backend mapping.
+component rv64_wp9_c {
+  action rvv_grouped {
+    rand int in [1..8] lmul;
+    rand int in [0..3] sew_class;
+    rand int in [0..1] masked;
+    rand int in [0..1] memory_access;
+    rand int in [0..1] inject_page_fault;
+    rand int in [0..1] context_switch;
+  };
+  action posit_quire {
+    rand int in [0..2] posit_width;  // 8,16,32; wider widths pending RTL
+    rand int in [0..3] operation;
+    rand int in [1..16] accumulations;
+    rand int in [0..1] rounded_readback;
+    rand int in [0..1] special_value;
+  };
+  action lns_signed {
+    rand int in [0..3] operation; // add/sub/mul/div
+    rand int in [0..1] lhs_negative;
+    rand int in [0..1] rhs_negative;
+    rand int in [0..4] magnitude_class;
+    rand int in [0..1] near_cancellation;
+  };
+  action stride_prefetch {
+    rand int in [0..1] enabled;
+    rand int in [0..7] stride_class;
+    rand int in [0..1] privileged;
+    rand int in [0..1] deny_access;
+    rand int in [0..1] invalidate;
+    rand int in [0..1] memory_backpressure;
+  };
+  action branch_predict {
+    rand int in [0..2] predictor; // TAGE, indirect, multipath
+    rand int in [0..1] mispredict;
+    rand int in [0..1] indirect_branch;
+    rand int in [0..1] history_alias;
+    rand int in [0..1] speculative_rollback;
+  };
+  action frontend {
+    rand int in [0..2] source; // trace, uop, multistream
+    rand int in [0..1] fusion;
+    rand int in [0..1] fence_i;
+    rand int in [0..1] cross_page;
+    rand int in [0..1] branch_redirect;
+  };
+  action unum_arithmetic {
+    rand int in [0..4] operation;
+    rand int in [0..1] exceptional_encoding;
+    rand int in [0..1] negative_operand;
+    rand int in [0..1] interval_uncertainty;
+    rand int in [0..4] magnitude_class;
+  };
+  action cache_coherence {
+    rand int in [0..2] access; // read/write/atomic
+    rand int in [0..1] dirty_eviction;
+    rand int in [0..1] secondary_miss;
+    rand int in [0..1] mshr_full;
+    rand int in [0..1] snoop_race;
+    rand int in [0..1] retry;
+  };
+  action pipeline_advanced {
+    rand int in [0..2] mode; // seven-stage/superscalar/OoO
+    rand int in [0..1] data_hazard;
+    rand int in [0..1] branch_flush;
+    rand int in [0..1] precise_exception;
+    rand int in [0..1] memory_replay;
+    rand int in [0..1] interrupt;
+  };
+};
