@@ -66,8 +66,15 @@ def satya_available():
     return shutil.which(os.environ.get("SATYA", "satya")) is not None
 
 
-SATYA_AVAILABLE = satya_available()
-SATYA_SKIP = "Satya PSS solver not on PATH (set SATYA=... to enable the PSS tests)"
+# CI exports an explicit probe result so simulator wrappers cannot change
+# PATH and make Python disagree with the workflow's Satya availability check.
+# Outside CI, fall back to probing the configured executable directly.
+SATYA_AVAILABLE = (
+    os.environ.get("SATYA_AVAILABLE") == "1"
+    if "SATYA_AVAILABLE" in os.environ
+    else satya_available()
+)
+SATYA_SKIP = "Satya PSS solver unavailable (set SATYA or SATYA_AVAILABLE=1 to enable the PSS tests)"
 
 COV = {}
 
@@ -2262,7 +2269,7 @@ async def test_fcsr(dut):
     fs = (vals.get(7, 0) >> 13) & 0x3
     assert fs == 1, f"mstatus.FS = {fs}, expected 1 (Initial)"
 
-@cocotb.test()
+@cocotb.test(skip=not SATYA_AVAILABLE)
 async def test_pss_alu_drives_core(dut):
     """A Satya-solved PSS constraint drives the core.
 
@@ -2274,18 +2281,14 @@ async def test_pss_alu_drives_core(dut):
     import os, subprocess, sys
     gen = os.path.join(os.path.dirname(__file__), "..", "..", "pss", "gen_pss_program.py")
     satya = os.environ.get("SATYA", "satya")
-    try:
-        out = subprocess.run(["python3", gen, "alu_op", "--seed", "3"],
-                             capture_output=True, text=True, timeout=60,
-                             env=dict(os.environ, SATYA=satya))
-        assert out.returncode == 0, out.stderr
-        words = [int(l, 16) for l in out.stdout.split() if l.strip()]
-        import re
-        m = re.search(r"-> \{([^}]*)\}", out.stderr)
-        summary = eval("{" + m.group(1) + "}") if m else None
-    except Exception as e:
-        dut._log.warning(f"PSS generator unavailable ({e}); skipping")
-        return
+    out = subprocess.run(["python3", gen, "alu_op", "--seed", "3"],
+                         capture_output=True, text=True, timeout=60,
+                         env=dict(os.environ, SATYA=satya))
+    assert out.returncode == 0, out.stderr
+    words = [int(l, 16) for l in out.stdout.split() if l.strip()]
+    import re
+    m = re.search(r"-> \{([^}]*)\}", out.stderr)
+    summary = eval("{" + m.group(1) + "}") if m else None
 
     assert summary is not None, "could not parse the generator summary"
     h = Harness(dut)
@@ -2338,8 +2341,7 @@ async def _pss_run(dut, action, seed=5):
     return vals, summary
 
 
-@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
-@cocotb.test()
+@cocotb.test(skip=not SATYA_AVAILABLE)
 async def test_pss_alu(dut):
     """PSS alu_op: the solved op executes and x7 matches the solver's operands."""
     vals, s = await _pss_run(dut, "alu_op")
@@ -2349,8 +2351,7 @@ async def test_pss_alu(dut):
     assert vals.get(7) == exp, f"alu_op x7={vals.get(7)}, expected {exp}"
 
 
-@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
-@cocotb.test()
+@cocotb.test(skip=not SATYA_AVAILABLE)
 async def test_pss_word(dut):
     """PSS word_op: bit 31 differs from bit 32, so sign-extension is exercised."""
     vals, s = await _pss_run(dut, "word_op")
@@ -2362,8 +2363,7 @@ async def test_pss_word(dut):
     assert vals.get(7) == v, f"word_op x7={vals.get(7):016x}, expected {v:016x}"
 
 
-@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
-@cocotb.test()
+@cocotb.test(skip=not SATYA_AVAILABLE)
 async def test_pss_memory(dut):
     """PSS memory_op: a sized store then the same-sized load at the solved offset."""
     vals, s = await _pss_run(dut, "memory_op")
