@@ -99,8 +99,12 @@ module rv64_bpu (
   wire       tag_hit  = (gsh_tag[gidx] == pc_tag);
 
   // update-side view of the same test, declared before the sequential block
+  logic [7:0] idx_upd;
   logic [7:0] gidx_upd;
-  assign gidx_upd = idx_of(upd_pc) ^ ghr;
+  logic [4:0] pidx_upd;
+  assign idx_upd  = upd_pc[9:2];
+  assign gidx_upd = idx_upd ^ ghr;
+  assign pidx_upd = upd_pc[6:2];
   wire  tag_hit_upd = (gsh_tag[gidx_upd] == upd_pc[15:10]);
 
   assign c_bim  = bim[idx][1];
@@ -219,25 +223,28 @@ module rv64_bpu (
 
       // ---- predictors ------------------------------------------------------
       if (upd_valid && upd_is_cond) begin
-        bim[idx_of(upd_pc)]  <= upd_taken ? sat_inc(bim[idx_of(upd_pc)])
-                                          : sat_dec(bim[idx_of(upd_pc)]);
-        gsh[gidx_of(upd_pc)] <= upd_taken ? sat_inc(gsh[gidx_of(upd_pc)])
-                                          : sat_dec(gsh[gidx_of(upd_pc)]);
-        // tournament: reward the predictor that was right
-        if (gsh[gidx_of(upd_pc)][1] != bim[idx_of(upd_pc)][1]) begin
-          cho[idx_of(upd_pc)] <= gsh[gidx_of(upd_pc)][1] ? sat_inc(cho[idx_of(upd_pc)])
-                                                         : sat_dec(cho[idx_of(upd_pc)]);
-        end
-        // tagged history: a mismatched tag restarts the counter rather than
-        // letting an aliasing branch inherit it
+        bim[idx_upd] <= upd_taken ? sat_inc(bim[idx_upd])
+                                  : sat_dec(bim[idx_upd]);
+        // A tag miss starts a fresh weak-not-taken entry. Otherwise train the
+        // existing tagged counter. Keep exactly one non-reset NBA writer for
+        // each gshare entry; multiple dynamic-index writes trigger Verilator's
+        // delayed-write lowering failure and obscure the intended priority.
         if (!tag_hit_upd) begin
           gsh_tag[gidx_upd] <= upd_pc[15:10];
           gsh[gidx_upd]     <= 2'b01;
+        end else begin
+          gsh[gidx_upd] <= upd_taken ? sat_inc(gsh[gidx_upd])
+                                     : sat_dec(gsh[gidx_upd]);
+        end
+        // tournament: reward the predictor that was right
+        if (gsh[gidx_upd][1] != bim[idx_upd][1]) begin
+          cho[idx_upd] <= gsh[gidx_upd][1] ? sat_inc(cho[idx_upd])
+                                           : sat_dec(cho[idx_upd]);
         end
         // perceptron: nudge each weight toward the outcome
         for (int i = 0; i < PW; i++) begin
           if (ghr[i] == upd_taken) begin
-            if (wtab[pidx_of(upd_pc)][i] != 6'sd31) wtab[pidx_of(upd_pc)][i] <= wtab[pidx_of(upd_pc)][i] + 6'sd1;
+            if (wtab[pidx_upd][i] != 6'sd31) wtab[pidx_of(upd_pc)][i] <= wtab[pidx_of(upd_pc)][i] + 6'sd1;
           end else begin
             if (wtab[pidx_of(upd_pc)][i] != -6'sd32) wtab[pidx_of(upd_pc)][i] <= wtab[pidx_of(upd_pc)][i] - 6'sd1;
           end
