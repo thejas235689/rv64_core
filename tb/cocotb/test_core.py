@@ -56,19 +56,20 @@ def expected_misa():
 
 
 def satya_available():
-    """Is the Satya PSS solver on PATH?
+    """Is the Satya PSS engine executable available?
 
-    The PSS tests solve a constraint model with an external `satya` binary. It is
-    not part of this repository and not installable from PyPI, so on a machine
-    without it those tests must report SKIP rather than a fabricated FAIL: the RTL
-    has not been exercised either way.
+    Satya is built from the companion thejas235689/satya Rust repository.
+    Do not install the unrelated PyPI project named satya: it is a data-model
+    validation library, not this PSS solver. Local runs without the engine skip
+    these tests honestly; CI builds a pinned Satya revision and makes them
+    mandatory.
     """
     return shutil.which(os.environ.get("SATYA", "satya")) is not None
 
 
-# CI exports an explicit probe result so simulator wrappers cannot change
-# PATH and make Python disagree with the workflow's Satya availability check.
-# Outside CI, fall back to probing the configured executable directly.
+# CI exports an explicit probe result after building the pinned Satya engine,
+# so simulator wrappers cannot change PATH and make Python disagree with the
+# workflow's required-tool check. Outside CI, probe the configured executable.
 SATYA_AVAILABLE = (
     os.environ.get("SATYA_AVAILABLE") == "1"
     if "SATYA_AVAILABLE" in os.environ
