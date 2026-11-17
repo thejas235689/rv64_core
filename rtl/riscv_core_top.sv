@@ -279,7 +279,7 @@ module riscv_core_top #(
   logic        f_insn_valid;
   logic [63:0] f_insn_pc;
   logic [31:0] f_insn;
-  logic [1:0]  f_insn_len;
+  logic [2:0]  f_insn_len;
   logic        f_fault_valid;
   logic [63:0] f_fault_pc;
   logic        f_req_valid;
@@ -1603,7 +1603,7 @@ module riscv_core_top #(
         pc_f <= f_redirect_pc;
       end else if (f_consume) begin
         pc_f <= f_pred_taken ? f_pred_target
-                             : (f_insn_pc + ((f_insn_len == 2'd2) ? 64'd2 : 64'd4));
+                             : (f_insn_pc + ((f_insn_len == 3'd2) ? 64'd2 : 64'd4));
       end
 
       if (flush_front) begin
@@ -1611,7 +1611,7 @@ module riscv_core_top #(
       end else if (f_consume) begin
         if_id_v       <= 1'b1;
         if_id_pc      <= f_insn_pc;
-        if_id_rvc     <= (f_insn_len == 2'd2);
+        if_id_rvc     <= (f_insn_len == 3'd2);
         if_id_insn    <= f_insn;
         if_id_ptaken  <= f_pred_taken;
         if_id_ptarget <= f_pred_target;
