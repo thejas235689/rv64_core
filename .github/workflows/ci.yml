@@ -194,3 +194,31 @@ jobs:
             sim/sim_build_*/results.xml
             ci/logs/
           if-no-files-found: warn
+
+  verilator-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Verilator
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends verilator
+
+      - name: Lint the canonical RTL source list
+        run: |
+          set -euo pipefail
+          mkdir -p ci/logs
+          mapfile -t RTL < <(python3 sim/run.py --list-rtl)
+          echo "Verilator: $(verilator --version)"
+          echo "RTL sources: ${#RTL[@]}"
+          if [ "${#RTL[@]}" -lt 40 ]; then
+            echo "RTL source list is incomplete; refusing to run an empty lint"
+            exit 1
+          fi
+          for f in "${RTL[@]}"; do
+            [ -f "$f" ] || { echo "missing RTL source: $f"; exit 1; }
+          done
+          verilator --lint-only --timing -sv -Wall -Wno-fatal \
+            --top-module riscv_core_top "${RTL[@]}" 2>&1 | tee ci/logs/verilator-lint.log
