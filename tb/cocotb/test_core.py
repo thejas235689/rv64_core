@@ -2262,8 +2262,7 @@ async def test_fcsr(dut):
     fs = (vals.get(7, 0) >> 13) & 0x3
     assert fs == 1, f"mstatus.FS = {fs}, expected 1 (Initial)"
 
-@cocotb.test()
-@cocotb.skipif(not SATYA_AVAILABLE, reason=SATYA_SKIP)
+@cocotb.test(skip=not SATYA_AVAILABLE)
 async def test_pss_alu_drives_core(dut):
     """A Satya-solved PSS constraint drives the core.
 
@@ -2275,18 +2274,14 @@ async def test_pss_alu_drives_core(dut):
     import os, subprocess, sys
     gen = os.path.join(os.path.dirname(__file__), "..", "..", "pss", "gen_pss_program.py")
     satya = os.environ.get("SATYA", "satya")
-    try:
-        out = subprocess.run(["python3", gen, "alu_op", "--seed", "3"],
-                             capture_output=True, text=True, timeout=60,
-                             env=dict(os.environ, SATYA=satya))
-        assert out.returncode == 0, out.stderr
-        words = [int(l, 16) for l in out.stdout.split() if l.strip()]
-        import re
-        m = re.search(r"-> \{([^}]*)\}", out.stderr)
-        summary = eval("{" + m.group(1) + "}") if m else None
-    except Exception as e:
-        dut._log.warning(f"PSS generator unavailable ({e}); skipping")
-        return
+    out = subprocess.run(["python3", gen, "alu_op", "--seed", "3"],
+                         capture_output=True, text=True, timeout=60,
+                         env=dict(os.environ, SATYA=satya))
+    assert out.returncode == 0, out.stderr
+    words = [int(l, 16) for l in out.stdout.split() if l.strip()]
+    import re
+    m = re.search(r"-> \\{([^}]*)\\}", out.stderr)
+    summary = eval("{" + m.group(1) + "}") if m else None
 
     assert summary is not None, "could not parse the generator summary"
     h = Harness(dut)
